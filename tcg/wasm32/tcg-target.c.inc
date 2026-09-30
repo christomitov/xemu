@@ -185,7 +185,7 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define W_RETURN_CALL   0x12
 
 /*
- * Successor linking (XEMU_WASM_LINK=0 disables): each module imports its two
+ * Successor linking (off by default, XEMU_WASM_LINK=1 enables: measured 2-3% slower): each module imports its two
  * goto_tb successors as functions (chain.s0/s1), bound when it is
  * instantiated, and tail-calls them while the link is still valid, instead
  * of returning to the C dispatcher for every block transition. Unlike
@@ -196,7 +196,7 @@ static bool wasm_link_enabled(void)
 {
     if (wasm_link < 0) {
         const char *e = getenv("XEMU_WASM_LINK");
-        wasm_link = !(e && *e == '0');
+        wasm_link = e && *e == '1';
     }
     return wasm_link;
 }
@@ -1379,6 +1379,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
     wasm_count_tb_exec(s);
 #ifdef EMSCRIPTEN
     wasm_count(s, &xemu_wasm_stats.n_tb_selfloop);
+    wasm_phase(s, "spin");
 #endif
     wasm_i64_const(s, 0);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
@@ -3175,6 +3176,9 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm8(s, W_END);
+
+    /* entering a TB: profile as "jit" (a self loop marks itself "spin") */
+    wasm_phase(s, NULL);
 
     /* loop { if (BLOCK_PTR <= 0) { region 0 ... */
     wasm8(s, W_LOOP);
