@@ -1755,8 +1755,49 @@ static void gen_flush_fp(DisasContext *s)
             return; \
         }} while(0)
 
+#ifdef EMSCRIPTEN
+/*
+ * Soft-FPU (wasm) inline versions of the trivial x87 stack helpers: same
+ * effect as helper_fpush/fpop/enter_mmx, but without a helper call, which
+ * profiling showed dominating guest MMX/x87 code (tens of millions/s).
+ */
+static void gen_soft_fptag_st(TCGv_i32 idx, int tag)
+{
+    TCGv_ptr p = tcg_temp_new_ptr();
+    tcg_gen_ext_i32_ptr(p, idx);
+    tcg_gen_add_ptr(p, p, tcg_env);
+    tcg_gen_st8_i32(tcg_constant_i32(tag), p, offsetof(CPUX86State, fptags[0]));
+}
+
+static void gen_soft_fpush(void)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+    tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, fpstt));
+    tcg_gen_subi_i32(t, t, 1);
+    tcg_gen_andi_i32(t, t, 7);
+    tcg_gen_st_i32(t, tcg_env, offsetof(CPUX86State, fpstt));
+    gen_soft_fptag_st(t, 0); /* validate stack entry */
+}
+
+static void gen_soft_fpop(void)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+    tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, fpstt));
+    gen_soft_fptag_st(t, 1); /* invalidate stack entry */
+    tcg_gen_addi_i32(t, t, 1);
+    tcg_gen_andi_i32(t, t, 7);
+    tcg_gen_st_i32(t, tcg_env, offsetof(CPUX86State, fpstt));
+}
+#endif
+
 static void gen_fpush(DisasContext *s)
 {
+#ifdef EMSCRIPTEN
+    if (!g_use_hard_fpu) {
+        gen_soft_fpush();
+        return;
+    }
+#endif
     GEN_HELPER_FALLBACK_v_v(fpush);
 
     tcg_gen_subi_i32(fpstt, fpstt, 1);
@@ -1768,6 +1809,12 @@ static void gen_fpush(DisasContext *s)
 
 static void gen_fpop(DisasContext *s)
 {
+#ifdef EMSCRIPTEN
+    if (!g_use_hard_fpu) {
+        gen_soft_fpop();
+        return;
+    }
+#endif
     GEN_HELPER_FALLBACK_v_v(fpop);
 
     gen_set_fptag(0, 1); /* invalidate stack entry */
@@ -1816,6 +1863,16 @@ static void gen_fxchg_ST0_STN(DisasContext *s, int st_index)
 
 static void gen_enter_mmx(DisasContext *s)
 {
+#ifdef EMSCRIPTEN
+    if (!g_use_hard_fpu) {
+        /* helper_enter_mmx: fpstt = 0, all 8 tags valid (0) */
+        TCGv_i32 z = tcg_constant_i32(0);
+        tcg_gen_st_i32(z, tcg_env, offsetof(CPUX86State, fpstt));
+        tcg_gen_st_i32(z, tcg_env, offsetof(CPUX86State, fptags[0]));
+        tcg_gen_st_i32(z, tcg_env, offsetof(CPUX86State, fptags[4]));
+        return;
+    }
+#endif
     GEN_HELPER_FALLBACK_v_v(enter_mmx);
 
     gen_flush_fp((DisasContext *)tcg_ctx->disas_ctx);
