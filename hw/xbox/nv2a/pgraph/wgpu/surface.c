@@ -458,17 +458,12 @@ void pgraph_wgpu_download_dirty_surfaces(NV2AState *d)
     qemu_event_set(&r->surf.dirty_surfaces_download_complete);
 }
 
+static void disarm_cpu_access_callback(NV2AState *d, SurfaceBinding *surface);
+
 static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
                                     hwaddr len, bool write)
 {
     NV2AState *d = (NV2AState *)opaque;
-    {
-        static int n;
-        if (n++ < 5) {
-            fprintf(stderr, "[wgpu] surface cpu access addr=%" HWADDR_PRIx
-                    " len=%" HWADDR_PRIx " write=%d\n", addr, len, write);
-        }
-    }
     qemu_mutex_lock(&d->pgraph.lock);
 
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
@@ -496,6 +491,17 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
         if (write) {
             surface->upload_pending = true;
         }
+
+        /*
+         * One trap per GPU->CPU handover is enough: once any pending
+         * download has completed (we wait below) VRAM is current, and a
+         * write has marked the surface for re-upload. Keep trapping and
+         * every further CPU access (millions/s when a game writes video
+         * frames into a render surface) pays for this callback.
+         * Re-armed by pgraph_wgpu_surface_rearm_cpu_trap() once the GPU
+         * copy is current again (GPU draw or upload).
+         */
+        disarm_cpu_access_callback(d, surface);
     }
 
     qemu_mutex_unlock(&d->pgraph.lock);
@@ -517,6 +523,9 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 
 static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
 {
+    if (surface->access_cb) {
+        return; /* already armed */
+    }
     if (tcg_enabled()) {
         if (surface->width && surface->height) {
             surface->access_cb = mem_access_callback_insert(
@@ -529,10 +538,38 @@ static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
 }
 
 static void unregister_cpu_access_callback(NV2AState *d,
-                                           SurfaceBinding const *surface)
+                                           SurfaceBinding *surface)
 {
-    if (tcg_enabled()) {
+    if (tcg_enabled() && surface->access_cb) {
         mem_access_callback_remove_by_ref(qemu_get_cpu(0), surface->access_cb);
+    }
+    surface->access_cb = NULL;
+}
+
+/* pgraph.lock held */
+static void disarm_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
+{
+    if (surface->access_cb) {
+        XSTAT_INC(n_watch_disarm);
+        unregister_cpu_access_callback(d, surface);
+    }
+}
+
+/*
+ * The GPU copy of @surface just became authoritative again (it was drawn to,
+ * or VRAM was uploaded into it): trap the next CPU access. pgraph.lock held.
+ */
+void pgraph_wgpu_surface_rearm_cpu_trap(NV2AState *d, SurfaceBinding *surface)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+    SurfaceBinding *s;
+
+    /* only surfaces still in the live list are trapped */
+    QTAILQ_FOREACH(s, &r->surf.surfaces, entry) {
+        if (s == surface) {
+            register_cpu_access_callback(d, surface);
+            return;
+        }
     }
 }
 
@@ -946,6 +983,8 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_2);
 
     surface->initialized = true;
+    /* GPU copy == VRAM again: trap the next CPU write */
+    pgraph_wgpu_surface_rearm_cpu_trap(d, surface);
 }
 
 static void compare_surfaces(SurfaceBinding const *a, SurfaceBinding const *b)

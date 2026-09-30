@@ -28,6 +28,7 @@
     X(ns_mmio)           /* time in device read/write handlers */            \
     X(n_watch_access)    /* CPU accesses trapped on GPU-surface pages */     \
     X(ns_vcpu_surface_wait) /* vCPU blocked on GPU surface readback */       \
+    X(n_watch_disarm)    /* surface traps disarmed after first access */     \
     X(n_vcpu_bql_wait)   /* contended BQL acquisitions by the vCPU */        \
     X(ns_vcpu_bql_wait)                                                      \
     /* main loop */                                                          \

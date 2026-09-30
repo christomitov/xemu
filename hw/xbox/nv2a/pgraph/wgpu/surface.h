@@ -126,4 +126,7 @@ void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
                                       WGPUCommandEncoder enc,
                                       const uint32_t *z24s8);
 
+/* re-enable CPU access trapping for a surface whose GPU copy is current */
+void pgraph_wgpu_surface_rearm_cpu_trap(NV2AState *d, SurfaceBinding *surface);
+
 #endif
