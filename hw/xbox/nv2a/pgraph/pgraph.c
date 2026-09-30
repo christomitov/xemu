@@ -354,6 +354,24 @@ void pgraph_destroy(PGRAPHState *pg)
     qemu_mutex_destroy(&pg->lock);
 }
 
+#ifdef EMSCRIPTEN
+/* Called from the wasm gui tick (~60 Hz): ask the renderer thread to
+ * present the current frame, without waiting for it. */
+void nv2a_wasm_request_present(void)
+{
+    NV2AState *d = g_nv2a;
+    if (!d || !d->pgraph.renderer ||
+        d->pgraph.renderer->type != CONFIG_DISPLAY_RENDERER_WEBGPU ||
+        qatomic_read(&d->pgraph.sync_pending)) {
+        return;
+    }
+    qemu_mutex_lock(&d->pfifo.lock);
+    qatomic_set(&d->pgraph.sync_pending, true);
+    pfifo_kick(d);
+    qemu_mutex_unlock(&d->pfifo.lock);
+}
+#endif
+
 int nv2a_get_framebuffer_surface(void)
 {
     NV2AState *d = g_nv2a;

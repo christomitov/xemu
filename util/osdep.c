@@ -83,6 +83,9 @@ static int qemu_mprotect__osdep(void *addr, size_t size, int prot)
         return -1;
     }
     return 0;
+#elif defined(EMSCRIPTEN)
+    /* wasm linear memory has no page protection; the libc stub only logs */
+    return 0;
 #else
     if (mprotect(addr, size, prot)) {
         error_report("%s: mprotect failed: %s", __func__, strerror(errno));

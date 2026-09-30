@@ -3131,6 +3131,15 @@ void qemu_init(int argc, char **argv)
     fprintf(stderr, "[init] argv: pre-usb\n");
     fake_argv[fake_argc++] = strdup("-device");
     fake_argv[fake_argc++] = strdup("usb-hub,port=1,ports=4");
+#ifdef EMSCRIPTEN
+    /* Player 1 controller (fed by the page): internal hub on root-hub
+     * port 1.3, XID gamepad on its port 1 -- same topology as
+     * xemu_input_bind() on native. */
+    fake_argv[fake_argc++] = strdup("-device");
+    fake_argv[fake_argc++] = strdup("usb-hub,port=1.3,ports=3");
+    fake_argv[fake_argc++] = strdup("-device");
+    fake_argv[fake_argc++] = strdup("usb-xbox-gamepad,index=0,port=1.3.1");
+#endif
 #ifndef EMSCRIPTEN
     /* Interrupt/trace logging floods the browser boot log and throttles the
      * vCPU; keep it native-only for debugging. */

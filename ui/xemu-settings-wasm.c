@@ -35,7 +35,12 @@ static void xemu_settings_wasm_init(void)
 bool xemu_settings_load(void)
 {
     memset(&g_config, 0, sizeof(g_config));
-    g_config.display.renderer = CONFIG_DISPLAY_RENDERER_NULL;
+    /* The page sets XEMU_RENDERER=webgpu when navigator.gpu is available;
+     * otherwise fall back to the null renderer + MEMFS framebuffer export. */
+    const char *r = getenv("XEMU_RENDERER");
+    g_config.display.renderer = (r && !strcmp(r, "webgpu"))
+                                    ? CONFIG_DISPLAY_RENDERER_WEBGPU
+                                    : CONFIG_DISPLAY_RENDERER_NULL;
     g_config.net.enable = false;
 
     /* Fixed MEMFS layout; the host page preloads these files before main().

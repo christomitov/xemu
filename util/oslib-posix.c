@@ -743,10 +743,12 @@ void *qemu_alloc_stack(size_t *sz)
     }
 
     /* Stack grows down -- guard page at the bottom. */
+#ifndef EMSCRIPTEN /* no page protection in wasm; the stub only logs */
     if (mprotect(ptr, pagesz, PROT_NONE) != 0) {
         perror("failed to set up stack guard page");
         abort();
     }
+#endif
 
 #ifdef CONFIG_DEBUG_STACK_USAGE
     for (ptr2 = ptr + pagesz; ptr2 < ptr + *sz; ptr2 += sizeof(uint32_t)) {
