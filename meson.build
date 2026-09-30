@@ -875,6 +875,7 @@ if host_os == 'emscripten'
   emulator_link_args += ['-sDEFAULT_PTHREAD_STACK_SIZE=8MB',
                          '-sSTACK_SIZE=16MB',
                          '-sSTACK_OVERFLOW_CHECK=2',
+                         '-lnodefs.js',
                          '--profiling-funcs']
 endif
 midl = not_found
