@@ -511,19 +511,20 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 
 #endif
 
-#define FPU_ADD(size, a, b) float ## size ## _add(a, b, &env->sse_status)
-#define FPU_SUB(size, a, b) float ## size ## _sub(a, b, &env->sse_status)
-#define FPU_MUL(size, a, b) float ## size ## _mul(a, b, &env->sse_status)
-#define FPU_DIV(size, a, b) float ## size ## _div(a, b, &env->sse_status)
+/* ffp_*: exact host-FP fast paths for float32, see tcg/fast_fp.h */
+#define FPU_ADD(size, a, b) ffp_float ## size ## _add(a, b, &env->sse_status)
+#define FPU_SUB(size, a, b) ffp_float ## size ## _sub(a, b, &env->sse_status)
+#define FPU_MUL(size, a, b) ffp_float ## size ## _mul(a, b, &env->sse_status)
+#define FPU_DIV(size, a, b) ffp_float ## size ## _div(a, b, &env->sse_status)
 
 /* Note that the choice of comparison op here is important to get the
  * special cases right: for min and max Intel specifies that (-0,0),
  * (NaN, anything) and (anything, NaN) return the second argument.
  */
 #define FPU_MIN(size, a, b)                                     \
-    (float ## size ## _lt(a, b, &env->sse_status) ? (a) : (b))
+    (ffp_float ## size ## _lt(a, b, &env->sse_status) ? (a) : (b))
 #define FPU_MAX(size, a, b)                                     \
-    (float ## size ## _lt(b, a, &env->sse_status) ? (a) : (b))
+    (ffp_float ## size ## _lt(b, a, &env->sse_status) ? (a) : (b))
 
 SSE_HELPER_S(add, FPU_ADD)
 SSE_HELPER_S(sub, FPU_SUB)
@@ -536,7 +537,7 @@ void glue(helper_sqrtps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
     int i;
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_S(i) = float32_sqrt(s->ZMM_S(i), &env->sse_status);
+        d->ZMM_S(i) = ffp_float32_sqrt(s->ZMM_S(i), &env->sse_status);
     }
 }
 
@@ -552,7 +553,7 @@ void glue(helper_sqrtpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 void helper_sqrtss(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
-    d->ZMM_S(0) = float32_sqrt(s->ZMM_S(0), &env->sse_status);
+    d->ZMM_S(0) = ffp_float32_sqrt(s->ZMM_S(0), &env->sse_status);
     for (i = 1; i < 2 << SHIFT; i++) {
         d->ZMM_L(i) = v->ZMM_L(i);
     }
@@ -658,8 +659,8 @@ void glue(helper_cvtdq2pd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #if SHIFT == 1
 void helper_cvtpi2ps(CPUX86State *env, ZMMReg *d, MMXReg *s)
 {
-    d->ZMM_S(0) = int32_to_float32(s->MMX_L(0), &env->sse_status);
-    d->ZMM_S(1) = int32_to_float32(s->MMX_L(1), &env->sse_status);
+    d->ZMM_S(0) = ffp_int32_to_float32(s->MMX_L(0), &env->sse_status);
+    d->ZMM_S(1) = ffp_int32_to_float32(s->MMX_L(1), &env->sse_status);
 }
 
 void helper_cvtpi2pd(CPUX86State *env, ZMMReg *d, MMXReg *s)
@@ -670,7 +671,7 @@ void helper_cvtpi2pd(CPUX86State *env, ZMMReg *d, MMXReg *s)
 
 void helper_cvtsi2ss(CPUX86State *env, ZMMReg *d, uint32_t val)
 {
-    d->ZMM_S(0) = int32_to_float32(val, &env->sse_status);
+    d->ZMM_S(0) = ffp_int32_to_float32(val, &env->sse_status);
 }
 
 void helper_cvtsi2sd(CPUX86State *env, ZMMReg *d, uint32_t val)
@@ -725,13 +726,33 @@ WRAP_FLOATCONV(int64_t, float32_to_int64, float32, INT64_MIN)
 WRAP_FLOATCONV(int64_t, float32_to_int64_round_to_zero, float32, INT64_MIN)
 WRAP_FLOATCONV(int64_t, float64_to_int64, float64, INT64_MIN)
 WRAP_FLOATCONV(int64_t, float64_to_int64_round_to_zero, float64, INT64_MIN)
+
+/* Exact fast paths for in-range, non-NaN, non-denormal inputs. */
+static inline int32_t ffp_x86_float32_to_int32(float32 a, float_status *s)
+{
+    int32_t r;
+    if (ffp_f32_to_int32(a, s->float_rounding_mode, s, &r)) {
+        return r;
+    }
+    return x86_float32_to_int32(a, s);
+}
+
+static inline int32_t ffp_x86_float32_to_int32_round_to_zero(float32 a,
+                                                            float_status *s)
+{
+    int32_t r;
+    if (ffp_f32_to_int32(a, float_round_to_zero, s, &r)) {
+        return r;
+    }
+    return x86_float32_to_int32_round_to_zero(a, s);
+}
 #endif
 
 void glue(helper_cvtps2dq, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
 {
     int i;
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_L(i) = x86_float32_to_int32(s->ZMM_S(i), &env->sse_status);
+        d->ZMM_L(i) = ffp_x86_float32_to_int32(s->ZMM_S(i), &env->sse_status);
     }
 }
 
@@ -749,8 +770,8 @@ void glue(helper_cvtpd2dq, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
 #if SHIFT == 1
 void helper_cvtps2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
 {
-    d->MMX_L(0) = x86_float32_to_int32(s->ZMM_S(0), &env->sse_status);
-    d->MMX_L(1) = x86_float32_to_int32(s->ZMM_S(1), &env->sse_status);
+    d->MMX_L(0) = ffp_x86_float32_to_int32(s->ZMM_S(0), &env->sse_status);
+    d->MMX_L(1) = ffp_x86_float32_to_int32(s->ZMM_S(1), &env->sse_status);
 }
 
 void helper_cvtpd2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
@@ -761,7 +782,7 @@ void helper_cvtpd2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
 
 int32_t helper_cvtss2si(CPUX86State *env, ZMMReg *s)
 {
-    return x86_float32_to_int32(s->ZMM_S(0), &env->sse_status);
+    return ffp_x86_float32_to_int32(s->ZMM_S(0), &env->sse_status);
 }
 
 int32_t helper_cvtsd2si(CPUX86State *env, ZMMReg *s)
@@ -787,7 +808,7 @@ void glue(helper_cvttps2dq, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
 {
     int i;
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_L(i) = x86_float32_to_int32_round_to_zero(s->ZMM_S(i),
+        d->ZMM_L(i) = ffp_x86_float32_to_int32_round_to_zero(s->ZMM_S(i),
                                                          &env->sse_status);
     }
 }
@@ -807,8 +828,8 @@ void glue(helper_cvttpd2dq, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
 #if SHIFT == 1
 void helper_cvttps2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
 {
-    d->MMX_L(0) = x86_float32_to_int32_round_to_zero(s->ZMM_S(0), &env->sse_status);
-    d->MMX_L(1) = x86_float32_to_int32_round_to_zero(s->ZMM_S(1), &env->sse_status);
+    d->MMX_L(0) = ffp_x86_float32_to_int32_round_to_zero(s->ZMM_S(0), &env->sse_status);
+    d->MMX_L(1) = ffp_x86_float32_to_int32_round_to_zero(s->ZMM_S(1), &env->sse_status);
 }
 
 void helper_cvttpd2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
@@ -819,7 +840,7 @@ void helper_cvttpd2pi(CPUX86State *env, MMXReg *d, ZMMReg *s)
 
 int32_t helper_cvttss2si(CPUX86State *env, ZMMReg *s)
 {
-    return x86_float32_to_int32_round_to_zero(s->ZMM_S(0), &env->sse_status);
+    return ffp_x86_float32_to_int32_round_to_zero(s->ZMM_S(0), &env->sse_status);
 }
 
 int32_t helper_cvttsd2si(CPUX86State *env, ZMMReg *s)
@@ -845,9 +866,12 @@ void glue(helper_rsqrtps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
     int old_flags = get_float_exception_flags(&env->sse_status);
     int i;
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_S(i) = float32_div(float32_one,
-                                  float32_sqrt(s->ZMM_S(i), &env->sse_status),
-                                  &env->sse_status);
+        if (!ffp_f32_rsqrt(s->ZMM_S(i), &env->sse_status, &d->ZMM_S(i))) {
+            d->ZMM_S(i) = float32_div(float32_one,
+                                      float32_sqrt(s->ZMM_S(i),
+                                                   &env->sse_status),
+                                      &env->sse_status);
+        }
     }
     set_float_exception_flags(old_flags, &env->sse_status);
 }
@@ -857,9 +881,11 @@ void helper_rsqrtss(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s)
 {
     int old_flags = get_float_exception_flags(&env->sse_status);
     int i;
-    d->ZMM_S(0) = float32_div(float32_one,
-                              float32_sqrt(s->ZMM_S(0), &env->sse_status),
-                              &env->sse_status);
+    if (!ffp_f32_rsqrt(s->ZMM_S(0), &env->sse_status, &d->ZMM_S(0))) {
+        d->ZMM_S(0) = float32_div(float32_one,
+                                  float32_sqrt(s->ZMM_S(0), &env->sse_status),
+                                  &env->sse_status);
+    }
     set_float_exception_flags(old_flags, &env->sse_status);
     for (i = 1; i < 2 << SHIFT; i++) {
         d->ZMM_L(i) = v->ZMM_L(i);
@@ -872,7 +898,10 @@ void glue(helper_rcpps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
     int old_flags = get_float_exception_flags(&env->sse_status);
     int i;
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_S(i) = float32_div(float32_one, s->ZMM_S(i), &env->sse_status);
+        if (!ffp_f32_rcp(s->ZMM_S(i), &env->sse_status, &d->ZMM_S(i))) {
+            d->ZMM_S(i) = float32_div(float32_one, s->ZMM_S(i),
+                                      &env->sse_status);
+        }
     }
     set_float_exception_flags(old_flags, &env->sse_status);
 }
@@ -882,7 +911,9 @@ void helper_rcpss(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s)
 {
     int old_flags = get_float_exception_flags(&env->sse_status);
     int i;
-    d->ZMM_S(0) = float32_div(float32_one, s->ZMM_S(0), &env->sse_status);
+    if (!ffp_f32_rcp(s->ZMM_S(0), &env->sse_status, &d->ZMM_S(0))) {
+        d->ZMM_S(0) = float32_div(float32_one, s->ZMM_S(0), &env->sse_status);
+    }
     for (i = 1; i < 2 << SHIFT; i++) {
         d->ZMM_L(i) = v->ZMM_L(i);
     }
@@ -1053,9 +1084,9 @@ static inline bool FPU_GE(FloatRelation x)
 #define FPU_FALSE(x) (x == float_relation_equal && 0)
 
 #define FPU_CMPQ(size, a, b) \
-    float ## size ## _compare_quiet(a, b, &env->sse_status)
+    ffp_float ## size ## _compare_quiet(a, b, &env->sse_status)
 #define FPU_CMPS(size, a, b) \
-    float ## size ## _compare(a, b, &env->sse_status)
+    ffp_float ## size ## _compare(a, b, &env->sse_status)
 
 #else
 #define SSE_HELPER_CMP(name, F, C) SSE_HELPER_CMP_P(name, F, C)
@@ -1109,7 +1140,7 @@ void helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
-    ret = float32_compare_quiet(s0, s1, &env->sse_status);
+    ret = ffp_float32_compare_quiet(s0, s1, &env->sse_status);
     CC_SRC = comis_eflags[ret + 1];
     CC_OP = CC_OP_EFLAGS;
 }
@@ -1121,7 +1152,7 @@ void helper_comiss(CPUX86State *env, Reg *d, Reg *s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
-    ret = float32_compare(s0, s1, &env->sse_status);
+    ret = ffp_float32_compare(s0, s1, &env->sse_status);
     CC_SRC = comis_eflags[ret + 1];
     CC_OP = CC_OP_EFLAGS;
 }
