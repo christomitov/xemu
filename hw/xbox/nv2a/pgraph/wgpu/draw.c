@@ -1028,6 +1028,18 @@ static bool begin_pre_draw(PGRAPHState *pg, uint32_t topology)
         return false;
     }
 
+    /*
+     * Reserve occlusion query capacity first: finishing resets the uniform
+     * ring, which would let later uploads overwrite this draw's uniforms
+     * before its command buffer is submitted.
+     */
+    if (!pg->clearing && pg->zpass_pixel_count_enable &&
+        ds->in_command_buffer &&
+        (ds->num_queries_in_flight >= WGPU_MAX_QUERIES_IN_FLIGHT ||
+         ds->num_gpu_queries >= WGPU_MAX_GPU_QUERIES)) {
+        pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_NEED_BUFFER_SPACE);
+    }
+
     if (!pg->clearing) {
         /* vk: pgraph_vk_update_descriptor_sets */
         ds->bind_group = pgraph_wgpu_update_bind_group(pg);
@@ -1037,14 +1049,6 @@ static bool begin_pre_draw(PGRAPHState *pg, uint32_t topology)
         /* the pipeline must still be cached (the shaders module could only
          * have finished, which does not evict) */
         assert(ds->pipeline_binding);
-    }
-
-    /* reserve occlusion query capacity */
-    if (!pg->clearing && pg->zpass_pixel_count_enable &&
-        ds->in_command_buffer &&
-        (ds->num_queries_in_flight >= WGPU_MAX_QUERIES_IN_FLIGHT ||
-         ds->num_gpu_queries >= WGPU_MAX_GPU_QUERIES)) {
-        pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_NEED_BUFFER_SPACE);
     }
 
     pgraph_wgpu_ensure_command_buffer(pg);
