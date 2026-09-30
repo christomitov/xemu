@@ -55,8 +55,32 @@ typedef struct WasmTBHeader {
     void *link_hdr[2];
     uint32_t link_fidx[2];
     uint32_t icount;            /* guest insns (stats), set when compiled */
-    uint32_t pad2;
+    /*
+     * For merging into region modules (tcg/wasm32.c): the function body
+     * (after the locals, without the final "end") inside the module bytes,
+     * and relocations into it (WasmReloc, ascending offsets).
+     */
+    uint32_t body_off;
+    uint32_t body_len;
+    const struct WasmReloc *reloc_ptr;
+    uint32_t reloc_count;
+    uint32_t pad3;
 } WasmTBHeader;
+
+/*
+ * WASM_RELOC_CALL: 5-byte padded ULEB call index of imported helper #arg
+ *   (0-based, in the TB's import_ptr order) at body offset @off.
+ * WASM_RELOC_GOTO: exit of goto_tb slot @arg (0/1) or goto_ptr (arg = 0xff)
+ *   with the successor's header in L32_0; code may be inserted at @off.
+ *   @depth: br depth from @off to the TB's own loop.
+ */
+enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2 };
+typedef struct WasmReloc {
+    uint32_t off;
+    uint8_t kind;
+    uint8_t arg;
+    uint16_t depth;
+} WasmReloc;
 
 #define WASM_TB_LINK_HDR_OFF    32
 #define WASM_TB_LINK_FIDX_OFF   40
