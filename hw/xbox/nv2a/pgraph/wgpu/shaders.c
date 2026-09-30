@@ -561,12 +561,18 @@ static void upload_uniforms(PGRAPHWgpuState *r, ShaderBinding *binding)
     for (int i = 0; i < 2; i++) {
         needed += ROUND_UP(blocks[i]->total_size, s->uniform_alignment);
     }
+    bool all = !s->uniforms_uploaded;
     if (s->uniform_offset + needed > s->uniform_buffer_size) {
         /* Never overwrite regions possibly used by unsubmitted draws */
         create_uniform_buffer(r);
+        all = true;     /* the other block's offset is in the old buffer */
     }
 
     for (int i = 0; i < 2; i++) {
+        /* an unchanged block keeps its (still intact) earlier slice */
+        if (!all && hashes[i] == s->uniform_hashes[i]) {
+            continue;
+        }
         s->uniform_block_offsets[i] = s->uniform_offset;
         wgpuQueueWriteBuffer(r->queue, s->uniform_buffer, s->uniform_offset,
                              blocks[i]->allocation, blocks[i]->total_size);
