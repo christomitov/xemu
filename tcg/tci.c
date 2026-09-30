@@ -26,6 +26,70 @@
 #include "tcg-has.h"
 #include <ffi.h>
 #include "tci-direct-call.c.inc"
+#include "tci-helper-meta.h"
+
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+/*
+ * Helper-call profile for the page's Stats report: call counts per helper,
+ * keyed by name pointer in a small open-addressing table (vCPU thread only
+ * writes; the page reads a formatted snapshot).
+ */
+#define HELPER_PROF_SLOTS 512
+static struct { const char *name; uint64_t calls; } helper_prof[HELPER_PROF_SLOTS];
+
+static inline void helper_prof_hit(const char *name)
+{
+    uintptr_t h = ((uintptr_t)name >> 3) * 2654435761u;
+    for (unsigned i = 0; i < HELPER_PROF_SLOTS; i++) {
+        unsigned slot = (h + i) & (HELPER_PROF_SLOTS - 1);
+        if (helper_prof[slot].name == name) {
+            helper_prof[slot].calls++;
+            return;
+        }
+        if (!helper_prof[slot].name) {
+            helper_prof[slot].name = name;
+            helper_prof[slot].calls = 1;
+            return;
+        }
+    }
+}
+
+/* "name=calls;..." for the 24 most-called helpers since start */
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_helper_top(void)
+{
+    static char buf[2048];
+    int idx[24], n = 0;
+    for (int k = 0; k < 24; k++) {
+        int best = -1;
+        for (int i = 0; i < HELPER_PROF_SLOTS; i++) {
+            bool taken = false;
+            for (int j = 0; j < n; j++) {
+                taken |= idx[j] == i;
+            }
+            if (!taken && helper_prof[i].name &&
+                (best < 0 || helper_prof[i].calls > helper_prof[best].calls)) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        idx[n++] = best;
+    }
+    int len = 0;
+    buf[0] = 0;
+    for (int j = 0; j < n && len < (int)sizeof(buf) - 64; j++) {
+        len += snprintf(buf + len, sizeof(buf) - len, "%s=%llu;",
+                        helper_prof[idx[j]].name,
+                        (unsigned long long)helper_prof[idx[j]].calls);
+    }
+    return buf;
+}
+#define HELPER_PROF_HIT(name) helper_prof_hit(name)
+#else
+#define HELPER_PROF_HIT(name) do { } while (0)
+#endif
 
 
 #define ctpop_tr    glue(ctpop, TCG_TARGET_REG_BITS)
@@ -389,7 +453,9 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 if (use_ffi < 0) {
                     use_ffi = getenv("XEMU_TCI_FFI") != NULL;
                 }
-                unsigned sig = use_ffi ? UINT_MAX : *(unsigned *)(cif + 1);
+                const TCIHelperMeta *meta = (const TCIHelperMeta *)(cif + 1);
+                unsigned sig = use_ffi ? UINT_MAX : meta->direct_sig;
+                HELPER_PROF_HIT(meta->name);
                 uint64_t rv;
                 XSTAT_INC(n_helper);
                 if (tci_direct_call(sig, func, stack, &rv)) {

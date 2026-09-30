@@ -1460,6 +1460,7 @@ static TCGHelperInfo info_helper_st128_mmu = {
 };
 
 #ifdef CONFIG_TCG_INTERPRETER
+#include "tci-helper-meta.h"
 static ffi_type *typecode_to_ffi(int argmask)
 {
     /*
@@ -1533,7 +1534,7 @@ static ffi_cif *init_ffi_layout(TCGHelperInfo *info)
     unsigned typemask = info->typemask;
     struct {
         ffi_cif cif;
-        unsigned direct_sig;
+        TCIHelperMeta meta; /* read by tci.c as (TCIHelperMeta *)(cif + 1) */
         ffi_type *args[];
     } *ca;
     ffi_status status;
@@ -1547,7 +1548,8 @@ static ffi_cif *init_ffi_layout(TCGHelperInfo *info)
     ca = g_malloc0(sizeof(*ca) + nargs * sizeof(ffi_type *));
     ca->cif.rtype = typecode_to_ffi(typemask & 7);
     ca->cif.nargs = nargs;
-    ca->direct_sig = tci_direct_sig(typemask, nargs);
+    ca->meta.direct_sig = tci_direct_sig(typemask, nargs);
+    ca->meta.name = info->name;
 
     if (nargs != 0) {
         ca->cif.arg_types = ca->args;
