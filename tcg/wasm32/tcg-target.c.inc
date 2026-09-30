@@ -162,6 +162,9 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
  * unwind: saved before any call that may suspend, reloaded on a rewind.
  */
 #define LREG(r)             (8 + (r))
+/* BLOCK_PTR (the resumable region to run) as a local, too: saved to its
+ * global with the registers before a call that may unwind */
+#define LBLOCK              LREG(TCG_TARGET_NB_REGS)
 
 /* Function indices: imports first, then the TB function itself. */
 #define CHECK_UNWINDING_IDX 0   /* helper.u: 1 unless Asyncify unwinds */
@@ -392,6 +395,8 @@ static void wasm_save_regs(TCGContext *s)
         wasm_var(s, W_LOCAL_GET, LREG(r));
         wasm_var(s, W_GLOBAL_SET, r);
     }
+    wasm_var(s, W_LOCAL_GET, LBLOCK);
+    wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
 }
 
 /* Push a host address: register @base (i32) plus @offset. */
@@ -778,7 +783,7 @@ static void add_block_placeholder(int label, int pos)
 static void wasm_new_block(TCGContext *s)
 {
     wasm8(s, W_END);
-    wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_GET, LBLOCK);
     wasm_i64_const(s, ++block_idx);
     wasm8(s, W_I64_LE_U);
     wasm_if(s, W_BLOCKTYPE_VOID);
@@ -791,7 +796,7 @@ static void wasm_new_block(TCGContext *s)
 static void wasm_new_resumable_block(TCGContext *s)
 {
     wasm_i64_const(s, block_idx + 1);
-    wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm_new_block(s);
 }
 
@@ -822,7 +827,7 @@ static void wasm_br_to_label(TCGContext *s, TCGLabel *l, bool br_if)
     wasm8(s, 0x80);
     wasm8(s, 0x80);
     wasm8(s, 0x00);
-    wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_SET, LBLOCK);
     if (get_block_of_label(l->id) != -1) {
         /* backward: continue the loop */
         wasm_br(s, depth + 1);
@@ -1351,7 +1356,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
     wasm_if(s, W_BLOCKTYPE_VOID);
     wasm_count_tb_exec(s);
     wasm_i64_const(s, 0);
-    wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm_br(s, depth + 2);     /* the loop */
     wasm8(s, W_END);
 
@@ -3061,7 +3066,7 @@ static void tcg_out_tb_start(TCGContext *s)
 
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 0);
     wasm_i64_const(s, 0);
-    wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_SET, LBLOCK);
 
     /* Asyncify rewind: the registers saved before the unwinding call */
     wasm8(s, W_ELSE);
@@ -3069,12 +3074,14 @@ static void tcg_out_tb_start(TCGContext *s)
         wasm_var(s, W_GLOBAL_GET, r);
         wasm_var(s, W_LOCAL_SET, LREG(r));
     }
+    wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm8(s, W_END);
 
     /* loop { if (BLOCK_PTR <= 0) { region 0 ... */
     wasm8(s, W_LOOP);
     wasm8(s, W_BLOCKTYPE_VOID);
-    wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
+    wasm_var(s, W_LOCAL_GET, LBLOCK);
     wasm8(s, W_I64_EQZ);
     wasm_if(s, W_BLOCKTYPE_VOID);
 }
@@ -3229,9 +3236,9 @@ static int tcg_out_tb_end(TCGContext *s)
     sec = mod_section_begin(&w, 10);
     mod_uleb(&w, 1);
     body = mod_uleb5_placeholder(&w);
-    /* locals: 4 x i32, 2 x i64, 1 x f64, 16 x i64 (the TCG registers) */
+    /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
-    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x10\x7e", 9);
+    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
     {
         uint8_t *code = w.p;
         if (w.p + code_len <= w.end) {

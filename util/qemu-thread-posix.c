@@ -89,12 +89,36 @@ void qemu_mutex_destroy(QemuMutex *mutex)
         error_exit(err, __func__);
 }
 
+#ifdef EMSCRIPTEN
+#include "qemu/xemu-wasm-stats.h"
+/* set on the vCPU thread: its blocking waits are named in the profile */
+__thread int xemu_wasm_is_vcpu;
+
+static const char *wait_site(const char *kind, const char *file, int line)
+{
+    char buf[160];
+    const char *base = strrchr(file, '/');
+    snprintf(buf, sizeof(buf), "%s:%s:%d", kind, base ? base + 1 : file, line);
+    return g_intern_string(buf);
+}
+#endif
+
 void qemu_mutex_lock_impl(QemuMutex *mutex, const char *file, const int line)
 {
     int err;
 
     assert(mutex->initialized);
     qemu_mutex_pre_lock(mutex, file, line);
+#ifdef EMSCRIPTEN
+    if (xemu_wasm_is_vcpu && pthread_mutex_trylock(&mutex->lock) != 0) {
+        const char *old = xemu_wasm_phase[XPHASE_VCPU];
+        XPHASE_SET(XPHASE_VCPU, wait_site("lock", file, line));
+        err = pthread_mutex_lock(&mutex->lock);
+        XPHASE_SET(XPHASE_VCPU, old);
+    } else if (xemu_wasm_is_vcpu) {
+        err = 0;    /* got it with the trylock */
+    } else
+#endif
     err = pthread_mutex_lock(&mutex->lock);
     if (err)
         error_exit(err, __func__);
@@ -226,7 +250,18 @@ void qemu_cond_wait_impl(QemuCond *cond, QemuMutex *mutex, const char *file, con
 
     assert(cond->initialized);
     qemu_mutex_pre_unlock(mutex, file, line);
+#ifdef EMSCRIPTEN
+    const char *old_ = xemu_wasm_phase[XPHASE_VCPU];
+    if (xemu_wasm_is_vcpu) {
+        XPHASE_SET(XPHASE_VCPU, wait_site("cond", file, line));
+    }
+#endif
     err = pthread_cond_wait(&cond->cond, &mutex->lock);
+#ifdef EMSCRIPTEN
+    if (xemu_wasm_is_vcpu) {
+        XPHASE_SET(XPHASE_VCPU, old_);
+    }
+#endif
     qemu_mutex_post_lock(mutex, file, line);
     if (err)
         error_exit(err, __func__);

@@ -193,6 +193,10 @@ static int rr_cpu_count(void)
 static void *rr_cpu_thread_fn(void *arg)
 {
 #ifdef EMSCRIPTEN
+    extern __thread int xemu_wasm_is_vcpu;
+    xemu_wasm_is_vcpu = 1;
+#endif
+#ifdef EMSCRIPTEN
     { extern void xemu_wasm_assert_stack(unsigned long, const char *);
       xemu_wasm_assert_stack(8*1024*1024 - 1024*1024, "vcpu rr"); }
 #endif

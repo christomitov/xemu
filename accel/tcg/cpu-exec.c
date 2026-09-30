@@ -1057,6 +1057,15 @@ static int cpu_exec_setjmp(CPUState *cpu, SyncClocks *sc)
     if (unlikely(sigsetjmp(cpu->jmp_env, 0) != 0)) {
         XSTAT_INC(n_cpu_exit);
         XPHASE_SET(XPHASE_VCPU, "dispatch");
+#ifdef EMSCRIPTEN
+        {
+            /* why the vCPU longjmp'ed out of the TB (a JS throw on wasm) */
+            extern void xemu_wasm_count(const char *key);
+            char k[32];
+            snprintf(k, sizeof(k), "exit:%x", cpu->exception_index);
+            xemu_wasm_count(g_intern_string(k));
+        }
+#endif
         cpu_exec_longjmp_cleanup(cpu);
     }
 
