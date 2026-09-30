@@ -389,12 +389,25 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
     }
 }
 
+const char *pgraph_wgpu_dl_reason;
+
 static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
 {
     if (!(surface->download_pending || force) || !surface->width ||
         !surface->height) {
         return;
     }
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_count(const char *key);
+        char key[128];
+        snprintf(key, sizeof(key), "%s %s %ux%u fmt%u",
+                 pgraph_wgpu_dl_reason ? pgraph_wgpu_dl_reason : "?",
+                 surface->color ? "color" : "zeta", surface->width,
+                 surface->height, surface->shape.color_format);
+        xemu_wasm_count(g_intern_string(key));
+    }
+#endif
 
     // FIXME: Respect write enable at last TOU?
 
@@ -437,6 +450,7 @@ void pgraph_wgpu_process_pending_downloads(NV2AState *d)
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
     SurfaceBinding *surface;
 
+    pgraph_wgpu_dl_reason = "cpu-access";
     QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
         download_surface(d, surface, false);
     }
@@ -450,6 +464,7 @@ void pgraph_wgpu_download_dirty_surfaces(NV2AState *d)
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
 
     SurfaceBinding *surface;
+    pgraph_wgpu_dl_reason = "dirty-all";
     QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
         pgraph_wgpu_surface_download_if_dirty(d, surface);
     }
@@ -646,6 +661,7 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
             trace_nv2a_pgraph_surface_evict_overlapping(
                 other_surface->vram_addr, other_surface->width,
                 other_surface->height, other_surface->pitch);
+            pgraph_wgpu_dl_reason = "overlap-evict";
             pgraph_wgpu_surface_download_if_dirty(d, other_surface);
             invalidate_surface(d, other_surface);
         }
@@ -834,6 +850,7 @@ static void expire_old_surfaces(NV2AState *d)
         int last_used = d->pgraph.frame_time - s->frame_time;
         if (last_used >= max_surface_frame_time_delta) {
             trace_nv2a_pgraph_surface_evict_reason("old", s->vram_addr);
+            pgraph_wgpu_dl_reason = "expire-old";
             pgraph_wgpu_surface_download_if_dirty(d, s);
             invalidate_surface(d, s);
         }
@@ -1211,6 +1228,7 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
+                pgraph_wgpu_dl_reason = "incompatible-rebind";
                 pgraph_wgpu_surface_download_if_dirty(d, surface);
                 invalidate_surface(d, surface);
             }
@@ -1416,6 +1434,7 @@ void pgraph_wgpu_surface_flush(NV2AState *d)
     QTAILQ_FOREACH_SAFE(s, &r->surf.surfaces, entry, next) {
         // FIXME: We should download all surfaces to ram, but need to
         //        investigate corruption issue
+        pgraph_wgpu_dl_reason = "flush-all";
         pgraph_wgpu_surface_download_if_dirty(d, s);
         invalidate_surface(d, s);
     }

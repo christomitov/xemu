@@ -716,6 +716,7 @@ void pgraph_wgpu_render_display(NV2AState *d)
             d, d->pcrtc.start + p.line_offset);
         if (s && s->color) {
             pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_PRESENTING);
+            pgraph_wgpu_dl_reason = "display";
             pgraph_wgpu_surface_download_if_dirty(d, s);
         }
     }

@@ -633,6 +633,55 @@ EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_size(int w, int h)
     xemu_wasm_display_h = h;
 }
 
+/*
+ * Keyed event counts (interned strings), e.g. why surfaces get downloaded.
+ * Single writer (pfifo thread) in practice; reported as downloads_top.
+ */
+#define COUNT_SLOTS 256
+static struct {
+    const char *key;
+    uint32_t n;
+} count_tab[COUNT_SLOTS];
+
+void xemu_wasm_count(const char *key)
+{
+    uintptr_t h = ((uintptr_t)key >> 3) * 2654435761u;
+    for (unsigned i = 0; i < COUNT_SLOTS; i++) {
+        unsigned slot = (h + i) & (COUNT_SLOTS - 1);
+        if (count_tab[slot].key == key || !count_tab[slot].key) {
+            count_tab[slot].key = key;
+            count_tab[slot].n++;
+            return;
+        }
+    }
+}
+
+/* "key=n;..." top 16, cumulative */
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
+{
+    static char buf[4096];
+    bool used[COUNT_SLOTS] = { false };
+    int len = 0;
+
+    buf[0] = 0;
+    for (int k = 0; k < 16; k++) {
+        int best = -1;
+        for (int i = 0; i < COUNT_SLOTS; i++) {
+            if (!used[i] && count_tab[i].key &&
+                (best < 0 || count_tab[i].n > count_tab[best].n)) {
+                best = i;
+            }
+        }
+        if (best < 0 || len > (int)sizeof(buf) - 200) {
+            break;
+        }
+        used[best] = true;
+        len += snprintf(buf + len, sizeof(buf) - len, "%s=%u;",
+                        count_tab[best].key, count_tab[best].n);
+    }
+    return buf;
+}
+
 /* page reads the struct directly from the wasm heap */
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
 {

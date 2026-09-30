@@ -922,6 +922,7 @@ DEF_METHOD(NV097, FLIP_STALL)
 {
     trace_nv2a_pgraph_flip_stall();
     d->pgraph.renderer->ops.surface_update(d, false, true, true);
+    XSTAT_INC(n_flip);     /* guest frames, any renderer */
     d->pgraph.renderer->ops.flip_stall(d);
     nv2a_profile_flip_stall();
     pg->waiting_for_flip = true;

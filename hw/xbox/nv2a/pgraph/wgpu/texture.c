@@ -1630,6 +1630,17 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         // FIXME: Restructure to support rendering surfaces to cubemap faces
 
         // Writeback any surfaces which this texture may index
+        if (!surface) {
+            pgraph_wgpu_dl_reason = "tex-overlap";
+        } else {
+            char why[128];
+            snprintf(why, sizeof(why),
+                     "tex-fallback tex:fmt%u %ux%u p%u lv%u cube%d sw%d",
+                     state.color_format, state.width, state.height,
+                     state.pitch, state.levels, state.cubemap,
+                     surface->swizzle);
+            pgraph_wgpu_dl_reason = g_intern_string(why);
+        }
         pgraph_wgpu_download_surfaces_in_range_if_dirty(
             pg, texture_vram_offset, texture_length);
     }
