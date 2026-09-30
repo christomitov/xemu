@@ -228,5 +228,6 @@ void pgraph_wgpu_bind_shaders(PGRAPHState *pg);
 /* Upload uniforms for the current draw and return a bind group for group 0
  * (uniform buffers + the 4 texture stages from r->tex.texture_bindings). */
 WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg);
+void pgraph_wgpu_uniform_offsets(PGRAPHState *pg, uint32_t out[2]);
 
 #endif

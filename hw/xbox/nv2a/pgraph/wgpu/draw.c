@@ -1104,8 +1104,12 @@ static void begin_draw(PGRAPHState *pg)
     /* WebGPU validates the viewport against the attachment size */
     vp_width = MAX(1, MIN(vp_width, ds->pass_width));
     vp_height = MAX(1, MIN(vp_height, ds->pass_height));
-    wgpuRenderPassEncoderSetViewport(ds->pass, 0, 0, vp_width, vp_height, 0.0f,
-                                     1.0f);
+    if (ds->pass_vp[0] != vp_width || ds->pass_vp[1] != vp_height) {
+        wgpuRenderPassEncoderSetViewport(ds->pass, 0, 0, vp_width, vp_height,
+                                         0.0f, 1.0f);
+        ds->pass_vp[0] = vp_width;
+        ds->pass_vp[1] = vp_height;
+    }
 
     /* Surface clip */
     /* FIXME: Consider moving to PSH w/ window clip */
@@ -1125,12 +1129,27 @@ static void begin_draw(PGRAPHState *pg)
     ymin = MIN(ymin, ds->pass_height);
     scissor_width = MIN(scissor_width, ds->pass_width - xmin);
     scissor_height = MIN(scissor_height, ds->pass_height - ymin);
-    wgpuRenderPassEncoderSetScissorRect(ds->pass, xmin, ymin, scissor_width,
-                                        scissor_height);
+    if (ds->pass_sc[0] != xmin || ds->pass_sc[1] != ymin ||
+        ds->pass_sc[2] != scissor_width || ds->pass_sc[3] != scissor_height) {
+        wgpuRenderPassEncoderSetScissorRect(ds->pass, xmin, ymin,
+                                            scissor_width, scissor_height);
+        ds->pass_sc[0] = xmin;
+        ds->pass_sc[1] = ymin;
+        ds->pass_sc[2] = scissor_width;
+        ds->pass_sc[3] = scissor_height;
+    }
 
     if (!pg->clearing) {
-        wgpuRenderPassEncoderSetBindGroup(ds->pass, 0, ds->bind_group, 0,
-                                          NULL);
+        uint32_t off[2];
+        pgraph_wgpu_uniform_offsets(pg, off);
+        uint32_t gen = r->shaders.bind_group_gen;
+        if (ds->pass_bg_gen != gen ||
+            memcmp(ds->pass_bg_off, off, sizeof(off))) {
+            wgpuRenderPassEncoderSetBindGroup(ds->pass, 0, ds->bind_group, 2,
+                                              off);
+            ds->pass_bg_gen = gen;
+            memcpy(ds->pass_bg_off, off, sizeof(off));
+        }
         pgraph_wgpu_begin_gpu_query_if_needed(pg);
     }
 
@@ -1450,6 +1469,9 @@ void pgraph_wgpu_clear_surface(NV2AState *d, uint32_t parameter)
         scissor_height = MIN(scissor_height, ds->pass_height - ymin);
         wgpuRenderPassEncoderSetScissorRect(ds->pass, xmin, ymin,
                                             scissor_width, scissor_height);
+        /* this clear's scissor/blend/stencil: re-send the draw state next */
+        memset(ds->pass_sc, 0xff, sizeof(ds->pass_sc));
+        ds->pass_pipeline = NULL;
         if (do_color) {
             WGPUColor blend_constant = { color[0], color[1], color[2],
                                          color[3] };
@@ -1506,10 +1528,19 @@ static void draw_indexed(NV2AState *d, const PrimConv *pc)
 
     begin_draw(pg);
     if (pgraph_wgpu_set_vertex_buffers(pg)) {
-        wgpuRenderPassEncoderSetIndexBuffer(
-            ds->pass, ds->storage_buffers[WGPU_BUFFER_INDEX].buffer,
-            WGPUIndexFormat_Uint32, index_offset, index_size);
-        wgpuRenderPassEncoderDrawIndexed(ds->pass, ds->num_indices, 1, 0, 0,
+        /*
+         * The index buffer is append-only with a fixed size (running out of
+         * space finishes the pass): bind it whole once per pass and select
+         * this draw's slice with firstIndex.
+         */
+        if (!ds->pass_index_bound) {
+            wgpuRenderPassEncoderSetIndexBuffer(
+                ds->pass, ds->storage_buffers[WGPU_BUFFER_INDEX].buffer,
+                WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+            ds->pass_index_bound = true;
+        }
+        wgpuRenderPassEncoderDrawIndexed(ds->pass, ds->num_indices, 1,
+                                         index_offset / sizeof(uint32_t), 0,
                                          0);
     }
     end_draw(pg);

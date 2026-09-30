@@ -170,6 +170,8 @@ typedef struct PGRAPHWgpuShaderState {
     /* statistics */
     unsigned int num_compiled;
     int64_t compile_time_us;
+    /* bumped on every bind group (re)creation: handles can be reused */
+    uint32_t bind_group_gen;
 } PGRAPHWgpuShaderState;
 
 /*
