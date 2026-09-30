@@ -155,6 +155,13 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define L64_0               5
 #define L64_1               6
 #define LF64_0              7
+/*
+ * TCG registers live in i64 locals (V8 can keep those in machine registers;
+ * every global access is a load/store through the instance). The module
+ * globals of the same index are only their backing store across an Asyncify
+ * unwind: saved before any call that may suspend, reloaded on a rewind.
+ */
+#define LREG(r)             (8 + (r))
 
 /* Function indices: imports first, then the TB function itself. */
 #define CHECK_UNWINDING_IDX 0   /* helper.u: 1 unless Asyncify unwinds */
@@ -362,7 +369,7 @@ static inline void wasm_br(TCGContext *s, uint32_t depth)
 /* Push TCG register @r as i64. */
 static inline void wasm_get_r(TCGContext *s, TCGReg r)
 {
-    wasm_var(s, W_GLOBAL_GET, r);
+    wasm_var(s, W_LOCAL_GET, LREG(r));
 }
 
 /* Push the low 32 bits of TCG register @r as i32. */
@@ -375,7 +382,16 @@ static inline void wasm_get_r32(TCGContext *s, TCGReg r)
 /* Pop i64 into TCG register @r. */
 static inline void wasm_set_r(TCGContext *s, TCGReg r)
 {
-    wasm_var(s, W_GLOBAL_SET, r);
+    wasm_var(s, W_LOCAL_SET, LREG(r));
+}
+
+/* Registers -> their globals, before a call that may unwind (Asyncify). */
+static void wasm_save_regs(TCGContext *s)
+{
+    for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+        wasm_var(s, W_LOCAL_GET, LREG(r));
+        wasm_var(s, W_GLOBAL_SET, r);
+    }
 }
 
 /* Push a host address: register @base (i32) plus @offset. */
@@ -1054,6 +1070,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         }
     }
 
+    if (may_suspend) {
+        wasm_save_regs(s);
+    }
     wasm_phase(s, info->name);
     wasm_var(s, W_CALL, func_idx);
     wasm_phase(s, NULL);
@@ -1262,6 +1281,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm8(s, W_I64_EXTEND_I32_U);
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
+    wasm_save_regs(s);
     wasm_phase(s, "mem_slow_ld");
     wasm_var(s, W_CALL, func_idx);
     wasm_phase(s, NULL);
@@ -1304,6 +1324,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     }
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
+    wasm_save_regs(s);
     wasm_phase(s, "mem_slow_st");
     wasm_var(s, W_CALL, func_idx);
     wasm_phase(s, NULL);
@@ -3031,20 +3052,23 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_ctx_load_i32(s, WASM_CTX_DO_INIT_OFF);
     wasm_if(s, W_BLOCKTYPE_VOID);
 
-    wasm_get_r(s, TCG_AREG0);
-    wasm8(s, W_I64_EQZ);
-    wasm_if(s, W_BLOCKTYPE_VOID);
     wasm_ctx_load_i32(s, WASM_CTX_ENV_OFF);
     wasm8(s, W_I64_EXTEND_I32_U);
     wasm_set_r(s, TCG_AREG0);
     wasm_ctx_load_i32(s, WASM_CTX_STACK_OFF);
     wasm8(s, W_I64_EXTEND_I32_U);
     wasm_set_r(s, TCG_REG_CALL_STACK);
-    wasm8(s, W_END);
 
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 0);
     wasm_i64_const(s, 0);
     wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+
+    /* Asyncify rewind: the registers saved before the unwinding call */
+    wasm8(s, W_ELSE);
+    for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+        wasm_var(s, W_GLOBAL_GET, r);
+        wasm_var(s, W_LOCAL_SET, LREG(r));
+    }
     wasm8(s, W_END);
 
     /* loop { if (BLOCK_PTR <= 0) { region 0 ... */
@@ -3205,8 +3229,9 @@ static int tcg_out_tb_end(TCGContext *s)
     sec = mod_section_begin(&w, 10);
     mod_uleb(&w, 1);
     body = mod_uleb5_placeholder(&w);
-    /* locals: 4 x i32, 2 x i64, 1 x f64 */
-    mod_bytes(&w, "\x03\x04\x7f\x02\x7e\x01\x7c", 7);
+    /* locals: 4 x i32, 2 x i64, 1 x f64, 16 x i64 (the TCG registers) */
+    QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
+    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x10\x7e", 9);
     {
         uint8_t *code = w.p;
         if (w.p + code_len <= w.end) {
