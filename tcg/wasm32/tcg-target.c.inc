@@ -366,6 +366,16 @@ static void wasm_count(TCGContext *s, uint64_t *ctr)
     wasm_mem(s, W_I64_STORE, 0);
 }
 
+/* publish what the vCPU is doing for the sampling profile (NULL = jit) */
+static void wasm_phase(TCGContext *s, const char *name)
+{
+#ifdef EMSCRIPTEN
+    wasm_i32_const(s, (int32_t)(uintptr_t)&xemu_wasm_phase[XPHASE_VCPU]);
+    wasm_i32_const(s, (int32_t)(uintptr_t)name);
+    wasm_mem(s, W_I32_STORE, 0);
+#endif
+}
+
 /* a TB execution that never leaves generated code (self loop) */
 static void wasm_count_tb_exec(TCGContext *s)
 {
@@ -994,7 +1004,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         }
     }
 
+    wasm_phase(s, info->name);
     wasm_var(s, W_CALL, func_idx);
+    wasm_phase(s, NULL);
 
     switch (rettype) {
     case dh_typecode_void:
@@ -1200,7 +1212,9 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm8(s, W_I64_EXTEND_I32_U);
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
+    wasm_phase(s, "mem_slow_ld");
     wasm_var(s, W_CALL, func_idx);
+    wasm_phase(s, NULL);
     wasm_set_r(s, data);
     wasm_handle_unwinding(s);
     wasm8(s, W_END);
@@ -1240,7 +1254,9 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     }
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
+    wasm_phase(s, "mem_slow_st");
     wasm_var(s, W_CALL, func_idx);
+    wasm_phase(s, NULL);
     wasm_handle_unwinding(s);
     wasm8(s, W_END);
 }

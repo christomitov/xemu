@@ -20,6 +20,7 @@
  */
 
 #include "nv2a_int.h"
+#include "qemu/xemu-wasm-stats.h"
 
 typedef struct RAMHTEntry {
     uint32_t handle;
@@ -186,7 +187,9 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
 
         // TODO: this is fucked
         qemu_mutex_unlock(&d->pfifo.lock);
+        XPHASE_SET(XPHASE_GPU, "lock_pgraph");
         qemu_mutex_lock(&d->pgraph.lock);
+        XPHASE_SET(XPHASE_GPU, NULL);
 
         // Switch contexts if necessary
         if (can_fifo_access(d)) {
@@ -199,7 +202,9 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
         }
 
         qemu_mutex_unlock(&d->pgraph.lock);
+        XPHASE_SET(XPHASE_GPU, "lock_pfifo");
         qemu_mutex_lock(&d->pfifo.lock);
+        XPHASE_SET(XPHASE_GPU, NULL);
 
     } else if (method >= 0x100) {
         // method passed to engine
@@ -221,7 +226,9 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
 
         // TODO: this is fucked
         qemu_mutex_unlock(&d->pfifo.lock);
+        XPHASE_SET(XPHASE_GPU, "lock_pgraph");
         qemu_mutex_lock(&d->pgraph.lock);
+        XPHASE_SET(XPHASE_GPU, NULL);
 
         if (can_fifo_access(d)) {
             num_proc =
@@ -230,7 +237,9 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
         }
 
         qemu_mutex_unlock(&d->pgraph.lock);
+        XPHASE_SET(XPHASE_GPU, "lock_pfifo");
         qemu_mutex_lock(&d->pfifo.lock);
+        XPHASE_SET(XPHASE_GPU, NULL);
     } else {
         assert(!"Unrecognized pfifo puller method");
     }
@@ -484,7 +493,9 @@ void *pfifo_thread(void *arg)
             qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
 
             // Both the pusher and puller are waiting for some action
+            XPHASE_SET(XPHASE_GPU, "idle");
             qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
+            XPHASE_SET(XPHASE_GPU, NULL);
         }
 #ifdef EMSCRIPTEN
         xemu_wasm_lowmem_check("pfifo post-wait");

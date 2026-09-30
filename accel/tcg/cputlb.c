@@ -1994,10 +1994,12 @@ static uint64_t int_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
 #ifdef EMSCRIPTEN
         {
             int64_t t0_ = xemu_wasm_stats_now_ns();
+            XPHASE_SET(XPHASE_VCPU, memory_region_name(mr));
             r = memory_region_dispatch_read(mr, mr_offset, &val,
                                             this_mop, full->attrs);
             int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
             XSTAT_ADD(ns_mmio, dt_);
+            XPHASE_SET(XPHASE_VCPU, NULL);
             xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
         }
 #else
@@ -2584,10 +2586,12 @@ static uint64_t int_st_mmio_leN(CPUState *cpu, CPUTLBEntryFull *full,
 #ifdef EMSCRIPTEN
         {
             int64_t t0_ = xemu_wasm_stats_now_ns();
+            XPHASE_SET(XPHASE_VCPU, memory_region_name(mr));
             r = memory_region_dispatch_write(mr, mr_offset, val_le,
                                              this_mop, full->attrs);
             int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
             XSTAT_ADD(ns_mmio, dt_);
+            XPHASE_SET(XPHASE_VCPU, NULL);
             xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
         }
 #else

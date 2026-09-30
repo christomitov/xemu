@@ -247,14 +247,21 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
         } else if (h->counter < wasm32_jit_threshold) {
             h->counter++;
+            XPHASE_SET(XPHASE_VCPU, "tci");
             res = tci_exec_tb(env, h->tci_ptr);
+            XPHASE_SET(XPHASE_VCPU, NULL);
         } else if (!can_add_instance()) {
+            XPHASE_SET(XPHASE_VCPU, "jit_evict");
             remove_instances();
             check_instances_collected();
+            XPHASE_SET(XPHASE_VCPU, "tci");
             res = tci_exec_tb(env, h->tci_ptr);
+            XPHASE_SET(XPHASE_VCPU, NULL);
         } else {
+            XPHASE_SET(XPHASE_VCPU, "jit_compile");
             fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
                                       h->import_ptr, h->import_size / 4);
+            XPHASE_SET(XPHASE_VCPU, NULL);
             add_instance(h, fidx);
             if (unlikely(wasm32_jit_debug > 0)) {
                 wasm32_jit_debug--;

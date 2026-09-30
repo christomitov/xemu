@@ -82,7 +82,25 @@ void xemu_wasm_mmio_prof(const char *region, int64_t ns);
 #define XSTAT_ADD(f, v) (xemu_wasm_stats.f += (uint64_t)(v))
 #define XSTAT_T0() int64_t xstat_t0_ = xemu_wasm_stats_now_ns()
 #define XSTAT_T1(f) (xemu_wasm_stats.f += xemu_wasm_stats_now_ns() - xstat_t0_)
+
+/*
+ * Sampling profile: each profiled thread publishes what it is doing now as a
+ * static string (NULL = its default: "jit" for the vCPU, "pfifo" for the GPU
+ * thread); the main loop samples both every iteration (~1 kHz) and the page
+ * reports the shares. Marks are one store each, so they can sit on hot paths.
+ */
+#define XPHASE_VCPU 0
+#define XPHASE_GPU 1
+extern const char *volatile xemu_wasm_phase[2];
+void xemu_wasm_phase_sample(void);
+#define XPHASE_PUSH(t, name) \
+    const char *xphase_old_ = xemu_wasm_phase[t]; xemu_wasm_phase[t] = (name)
+#define XPHASE_POP(t) (xemu_wasm_phase[t] = xphase_old_)
+#define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
 #else
+#define XPHASE_PUSH(t, name) do { } while (0)
+#define XPHASE_POP(t) do { } while (0)
+#define XPHASE_SET(t, name) do { } while (0)
 #define XSTAT_INC(f) do { } while (0)
 #define XSTAT_ADD(f, v) do { } while (0)
 #define XSTAT_T0() do { } while (0)
