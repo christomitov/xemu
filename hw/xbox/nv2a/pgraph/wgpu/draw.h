@@ -30,6 +30,14 @@ typedef struct WgpuStorageBuffer {
     const char *label;
     size_t buffer_offset; /* append offset, reset by pgraph_wgpu_finish */
     size_t buffer_size;
+    /*
+     * Append-only buffers (index, inline vertex): appends are staged here
+     * and the dirty range [staged_lo, staged_hi) goes to the GPU with one
+     * writeBuffer right before the draw command buffer is submitted
+     * (pgraph_wgpu_flush_staged), instead of one or two per draw.
+     */
+    uint8_t *staging;
+    size_t staged_lo, staged_hi;
 } WgpuStorageBuffer;
 
 typedef struct WgpuMemorySyncRequirement {
@@ -202,6 +210,7 @@ bool pgraph_wgpu_buffer_has_space_for(PGRAPHState *pg, int index, size_t size,
 size_t pgraph_wgpu_append_to_buffer(PGRAPHState *pg, int index, void **data,
                                     size_t *sizes, size_t count,
                                     size_t alignment);
+void pgraph_wgpu_flush_staged(PGRAPHState *pg);
 
 /* command.c */
 void pgraph_wgpu_ensure_command_buffer(PGRAPHState *pg);

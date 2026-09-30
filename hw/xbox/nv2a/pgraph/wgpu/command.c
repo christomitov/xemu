@@ -241,6 +241,7 @@ void pgraph_wgpu_finish(PGRAPHState *pg, FinishReason finish_reason)
 
         nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT);
         XSTAT_INC(n_submit);
+        pgraph_wgpu_flush_staged(pg);   /* this command buffer's appends */
         wgpuQueueSubmit(r->queue, 1, &cmd);
         wgpuCommandBufferRelease(cmd);
         ds->submit_count += 1;
