@@ -890,9 +890,53 @@ static void wasm_set_tci_tb_ptr(TCGContext *s)
     wasm_mem(s, W_I32_STORE, 0);
 }
 
+/*
+ * Can this helper suspend via Asyncify (reach device I/O -> coroutine/fiber
+ * switch)? Only then does the call need a resumable block and the
+ * "is Asyncify unwinding?" JS check afterwards, which otherwise costs a JS
+ * round trip per helper call (tens of millions/s for x87/SSE-heavy code).
+ * Conservative: anything not known to be pure register/flag/lookup work
+ * keeps the check.
+ */
+static bool wasm_helper_may_suspend(const TCGHelperInfo *info)
+{
+    const char *n = info->name;
+    static const char *const touches_memory[] = {
+        "save", "rstor", "env", "fldt", "fstt", "fbld", "fbst", "maskmov",
+        "ld_", "st_", "cmpxchg", "atomic", "in", "out",
+    };
+
+    if (!n) {
+        return true;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(touches_memory); i++) {
+        if (strstr(n, touches_memory[i])) {
+            return true;
+        }
+    }
+    if (g_str_has_prefix(n, "cc_compute") || !strcmp(n, "lookup_tb_ptr")) {
+        return false;
+    }
+    /* x87 register ops (fadd_ST0_FT0, fmov_*, flds_ST0 (value arg), ...) */
+    if (n[0] == 'f') {
+        return false;
+    }
+    /* SSE/MMX register ops and conversions */
+    if (g_str_has_suffix(n, "_xmm") || g_str_has_suffix(n, "_mmx") ||
+        g_str_has_suffix(n, "ss") || g_str_has_suffix(n, "ps") ||
+        g_str_has_suffix(n, "sd") || g_str_has_suffix(n, "pd") ||
+        g_str_has_prefix(n, "cvt") || g_str_has_prefix(n, "comis") ||
+        g_str_has_prefix(n, "ucomis") || g_str_has_prefix(n, "rcp") ||
+        g_str_has_prefix(n, "rsqrt")) {
+        return false;
+    }
+    return true;
+}
+
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
                       const TCGHelperInfo *info)
 {
+    bool may_suspend = wasm_helper_may_suspend(info);
     unsigned typemask = info->typemask;
     int rettype = typemask & 7;
     int nargs = helper_nargs(typemask);
@@ -907,7 +951,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
 #ifdef EMSCRIPTEN
     wasm_count(s, &xemu_wasm_stats.n_helper);
 #endif
-    wasm_new_resumable_block(s);
+    if (may_suspend) {
+        wasm_new_resumable_block(s);
+    }
     wasm_set_tci_tb_ptr(s);
 
     if (rettype == dh_typecode_i128) {
@@ -974,7 +1020,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     default:
         g_assert_not_reached();
     }
-    wasm_handle_unwinding(s);
+    if (may_suspend) {
+        wasm_handle_unwinding(s);
+    }
 }
 
 /*

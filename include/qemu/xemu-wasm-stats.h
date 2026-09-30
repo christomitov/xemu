@@ -53,6 +53,8 @@
     X(b_surf_download)                                                       \
     X(n_present)                                                             \
     X(ns_present)        /* display render + yield to the browser */         \
+    X(n_present_skipped) /* display ticks with nothing new to show */        \
+    X(ns_draw)           /* GPU thread time building/encoding draws */       \
     /* disk (host file layer, thread-pool workers) */                        \
     X(n_disk_read)                                                           \
     X(b_disk_read)                                                           \

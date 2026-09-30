@@ -1506,7 +1506,7 @@ static void draw_indexed(NV2AState *d, const PrimConv *pc)
     end_draw(pg);
 }
 
-void pgraph_wgpu_flush_draw(NV2AState *d)
+static void flush_draw_impl(NV2AState *d)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
@@ -1614,4 +1614,11 @@ void pgraph_wgpu_flush_draw(NV2AState *d)
         NV2A_DPRINTF("EMPTY NV097_SET_BEGIN_END\n");
         NV2A_UNCONFIRMED("EMPTY NV097_SET_BEGIN_END");
     }
+}
+
+void pgraph_wgpu_flush_draw(NV2AState *d)
+{
+    XSTAT_T0();
+    flush_draw_impl(d);
+    XSTAT_T1(ns_draw);
 }

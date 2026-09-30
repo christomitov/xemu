@@ -78,6 +78,10 @@ typedef struct PGRAPHWgpuDisplayState {
     WGPUBindGroup surface_bind_group;
     WGPUTextureView surface_bound_view;
     float xform_values[4];
+    /* what was presented last (to skip re-presenting an unchanged frame) */
+    SurfaceBinding *last_surface;
+    unsigned int last_draw_time, last_frame_time;
+    hwaddr last_scanout;
 
     /* PVIDEO video overlay (YUY2 converted to RGBA on the CPU) */
     WGPUTexture pvideo_texture;

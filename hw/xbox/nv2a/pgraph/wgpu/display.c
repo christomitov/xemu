@@ -510,6 +510,26 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
         return false;
     }
 
+    /*
+     * Nothing new to show? Skip the whole present (finish + draw + yield,
+     * ~5 ms): the canvas keeps the last frame. Anything that can change the
+     * scanned-out image bumps one of these: draws (draw_time), flips
+     * (frame_time), CPU writes (upload_pending), scanout address, overlay.
+     */
+    bool pvideo_on = (d->pvideo.regs[NV_PVIDEO_BUFFER] & NV_PVIDEO_BUFFER_0_USE);
+    if (surface == disp->last_surface && pg->draw_time == disp->last_draw_time &&
+        pg->frame_time == disp->last_frame_time &&
+        d->pcrtc.start == disp->last_scanout && !surface->upload_pending &&
+        !pvideo_on) {
+        XSTAT_INC(n_present_skipped);
+        *bg = NULL;
+        return true;
+    }
+    disp->last_surface = surface;
+    disp->last_draw_time = pg->draw_time;
+    disp->last_frame_time = pg->frame_time;
+    disp->last_scanout = d->pcrtc.start;
+
     /* render work for this surface may still be in the open encoder */
     pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_PRESENTING);
     pgraph_wgpu_upload_surface_data(d, surface, false);
@@ -567,6 +587,9 @@ void pgraph_wgpu_render_display(NV2AState *d)
             return;
         }
         bg = disp->bind_group;
+    }
+    if (!bg) {
+        return; /* unchanged since the last present */
     }
 
     DisplayUniforms u = { 0 };
