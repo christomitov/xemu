@@ -24,6 +24,7 @@
 #include "disas/dis-asm.h"
 #include "tcg-has.h"
 #include <ffi.h>
+#include "tci-direct-call.c.inc"
 
 
 #define ctpop_tr    glue(ctpop, TCG_TARGET_REG_BITS)
@@ -381,7 +382,23 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
 
                 /* Helper functions may need to access the "return address" */
                 tci_tb_ptr = (uintptr_t)tb_ptr;
-                ffi_call(cif, func, stack, call_slots);
+                /* direct call when the signature allows (no JS round trip
+                 * through libffi on emscripten); sig follows the cif */
+                static int use_ffi = -1;
+                if (use_ffi < 0) {
+                    use_ffi = getenv("XEMU_TCI_FFI") != NULL;
+                }
+                unsigned sig = use_ffi ? UINT_MAX : *(unsigned *)(cif + 1);
+                uint64_t rv;
+                if (tci_direct_call(sig, func, stack, &rv)) {
+                    if (len == 1) {
+                        *(uint32_t *)stack = (uint32_t)rv;
+                    } else if (len == 2) {
+                        memcpy(stack, &rv, 8);
+                    }
+                } else {
+                    ffi_call(cif, func, stack, call_slots);
+                }
             }
 
             switch (len) {
