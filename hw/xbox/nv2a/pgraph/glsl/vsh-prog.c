@@ -559,7 +559,13 @@ static const char* vsh_header =
 //   "#define _in(v) vec4(v)\n"
 //#endif
     "\n"
+    /* A compile-time infinity folds to an inf constant, which Tint (WGSL
+     * path) rejects with an ICE; derive it from a runtime value instead. */
+    "#ifdef VULKAN\n"
+    "#define INFINITY uintBitsToFloat(0x7F800000u | (uint(gl_VertexIndex) & 0u))\n"
+    "#else\n"
     "#define INFINITY (1.0 / 0.0)\n"
+    "#endif\n"
     "\n"
     "#define MOV(dest, mask, src) dest.mask = _MOV(_in(src)).mask\n"
     "vec4 _MOV(vec4 src)\n"

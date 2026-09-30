@@ -100,6 +100,24 @@ typedef struct UniformInfo {
 MString *pgraph_glsl_get_vtx_header(MString *out, bool location, bool smooth,
                                     bool in, bool prefix, bool array);
 
+/*
+ * As pgraph_glsl_get_vtx_header, but with no_geom set the per-primitive
+ * flat varyings normally produced by the geometry shader (vtxPos0..2, triMZ)
+ * are replaced by a single noperspective varying
+ *   vec2 vtxZ = (screen-space z, 1 / w)
+ * which the pixel shader interpolates instead (see GenPshGlslOptions.wgsl).
+ */
+MString *pgraph_glsl_get_vtx_header_ex(MString *out, bool location,
+                                       bool smooth, bool in, bool prefix,
+                                       bool array, bool no_geom);
+
+/*
+ * WGSL has no isnan/isinf (Tint's SPIR-V reader rejects OpIsNan/OpIsInf).
+ * For WGSL targets, append this after #version: it redirects isnan/isinf to
+ * bit-pattern based equivalents.
+ */
+void pgraph_glsl_append_wgsl_compat(MString *out);
+
 typedef struct PGRAPHState PGRAPHState;
 
 void pgraph_glsl_set_clip_range_uniform_value(PGRAPHState *pg,

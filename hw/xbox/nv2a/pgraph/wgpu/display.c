@@ -10,9 +10,12 @@
 #include "renderer.h"
 #include <emscripten.h>
 
+/* uv = xform.xy * screen_uv + xform.zw: selects the scanned-out region of a
+ * (possibly larger) render surface */
 static const char display_wgsl[] =
     "@group(0) @binding(0) var samp: sampler;\n"
     "@group(0) @binding(1) var tex: texture_2d<f32>;\n"
+    "@group(0) @binding(2) var<uniform> xform: vec4f;\n"
     "struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };\n"
     "@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {\n"
     "    var p = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));\n"
@@ -22,7 +25,7 @@ static const char display_wgsl[] =
     "    return o;\n"
     "}\n"
     "@fragment fn fs(v: VOut) -> @location(0) vec4f {\n"
-    "    return vec4f(textureSample(tex, samp, v.uv).rgb, 1.0);\n"
+    "    return vec4f(textureSample(tex, samp, v.uv * xform.xy + xform.zw).rgb, 1.0);\n"
     "}\n";
 
 void pgraph_wgpu_init_display(PGRAPHState *pg)
@@ -33,15 +36,18 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
     WGPUShaderModule module =
         pgraph_wgpu_create_wgsl_module(r, "display", display_wgsl);
 
-    WGPUBindGroupLayoutEntry entries[2] = {
+    WGPUBindGroupLayoutEntry entries[3] = {
         { .binding = 0, .visibility = WGPUShaderStage_Fragment,
           .sampler = { .type = WGPUSamplerBindingType_Filtering } },
         { .binding = 1, .visibility = WGPUShaderStage_Fragment,
           .texture = { .sampleType = WGPUTextureSampleType_Float,
                        .viewDimension = WGPUTextureViewDimension_2D } },
+        { .binding = 2, .visibility = WGPUShaderStage_Fragment,
+          .buffer = { .type = WGPUBufferBindingType_Uniform,
+                      .minBindingSize = 16 } },
     };
     disp->bind_group_layout = wgpuDeviceCreateBindGroupLayout(
-        r->device, &(WGPUBindGroupLayoutDescriptor){ .entryCount = 2,
+        r->device, &(WGPUBindGroupLayoutDescriptor){ .entryCount = 3,
                                                      .entries = entries });
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(
         r->device, &(WGPUPipelineLayoutDescriptor){
@@ -80,6 +86,12 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
                        .mipmapFilter = WGPUMipmapFilterMode_Nearest,
                        .lodMaxClamp = 32.0f,
                        .maxAnisotropy = 1 });
+
+    disp->xform = wgpuDeviceCreateBuffer(
+        r->device, &(WGPUBufferDescriptor){
+                       .label = { "display xform", WGPU_STRLEN },
+                       .usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst,
+                       .size = 16 });
 }
 
 static void release_source(PGRAPHWgpuDisplayState *disp)
@@ -105,6 +117,13 @@ void pgraph_wgpu_finalize_display(PGRAPHState *pg)
     PGRAPHWgpuDisplayState *disp = &r->display;
 
     release_source(disp);
+    if (disp->surface_bind_group) {
+        wgpuBindGroupRelease(disp->surface_bind_group);
+    }
+    if (disp->xform) {
+        wgpuBufferDestroy(disp->xform);
+        wgpuBufferRelease(disp->xform);
+    }
     g_free(disp->conv);
     if (disp->sampler) {
         wgpuSamplerRelease(disp->sampler);
@@ -115,6 +134,22 @@ void pgraph_wgpu_finalize_display(PGRAPHState *pg)
     if (disp->bind_group_layout) {
         wgpuBindGroupLayoutRelease(disp->bind_group_layout);
     }
+}
+
+static WGPUBindGroup create_bind_group(PGRAPHWgpuState *r,
+                                       WGPUTextureView view)
+{
+    PGRAPHWgpuDisplayState *disp = &r->display;
+    WGPUBindGroupEntry entries[3] = {
+        { .binding = 0, .sampler = disp->sampler },
+        { .binding = 1, .textureView = view },
+        { .binding = 2, .buffer = disp->xform, .size = 16 },
+    };
+    return wgpuDeviceCreateBindGroup(
+        r->device, &(WGPUBindGroupDescriptor){
+                       .layout = disp->bind_group_layout,
+                       .entryCount = 3,
+                       .entries = entries });
 }
 
 static void ensure_source(PGRAPHWgpuState *r, int width, int height)
@@ -137,18 +172,13 @@ static void ensure_source(PGRAPHWgpuState *r, int width, int height)
                        .mipLevelCount = 1,
                        .sampleCount = 1 });
     disp->view = wgpuTextureCreateView(disp->texture, NULL);
-    WGPUBindGroupEntry entries[2] = {
-        { .binding = 0, .sampler = disp->sampler },
-        { .binding = 1, .textureView = disp->view },
-    };
-    disp->bind_group = wgpuDeviceCreateBindGroup(
-        r->device, &(WGPUBindGroupDescriptor){
-                       .layout = disp->bind_group_layout,
-                       .entryCount = 2,
-                       .entries = entries });
+    disp->bind_group = create_bind_group(r, disp->view);
     disp->width = width;
     disp->height = height;
+}
 
+static void configure_canvas(PGRAPHWgpuState *r, int width, int height)
+{
     if (r->surface_width != width || r->surface_height != height) {
         WGPUSurfaceConfiguration cfg = {
             .device = r->device,
@@ -209,6 +239,9 @@ static bool upload_scanout(NV2AState *d, PGRAPHWgpuState *r)
     const uint8_t *src = d->vram_ptr + base;
 
     ensure_source(r, width, height);
+    configure_canvas(r, width, height);
+    float xform[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+    wgpuQueueWriteBuffer(r->queue, disp->xform, 0, xform, sizeof(xform));
 
     const void *data = src;
     uint32_t row_bytes = pitch;
@@ -249,13 +282,103 @@ static bool upload_scanout(NV2AState *d, PGRAPHWgpuState *r)
     return true;
 }
 
+/*
+ * Present straight from the render surface that covers the CRTC start
+ * address (no VRAM round trip), like the Vulkan backend's display path.
+ */
+static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
+                                WGPUBindGroup *bg)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuDisplayState *disp = &r->display;
+
+    VGADisplayParams vga_display_params;
+    d->vga.get_params(&d->vga, &vga_display_params);
+
+    SurfaceBinding *surface = pgraph_wgpu_surface_get_within(
+        d, d->pcrtc.start + vga_display_params.line_offset);
+    if (surface == NULL || !surface->color || !surface->width ||
+        !surface->height || !surface->view) {
+        return false;
+    }
+
+    int width = 0, height = 0;
+    d->vga.get_resolution(&d->vga, &width, &height);
+    if (d->vga.cr[NV_PRMCIO_INTERLACE_MODE] !=
+        NV_PRMCIO_INTERLACE_MODE_DISABLED) {
+        height *= 2;
+    }
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    /* render work for this surface may still be in the open encoder */
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_PRESENTING);
+    pgraph_wgpu_upload_surface_data(d, surface, false);
+
+    unsigned int sw = surface->width, sh = surface->height;
+    pgraph_apply_scaling_factor(pg, &sw, &sh);
+    unsigned int dw = width, dh = height;
+    pgraph_apply_scaling_factor(pg, &dw, &dh);
+    configure_canvas(r, dw, dh);
+
+    /* same mapping as the Vulkan display shader (minus its GL-compat
+     * flip): whole surface across, vertical scale by display/texture
+     * height and the CRTC line-offset ratio */
+    int line_ratio = vga_display_params.line_offset ?
+                         surface->pitch / vga_display_params.line_offset : 1;
+    if (line_ratio <= 0) {
+        line_ratio = 1;
+    }
+    float xform[4] = {
+        1.0f,
+        (float)dh / (float)sh / (float)line_ratio,
+        0.0f,
+        0.0f,
+    };
+    wgpuQueueWriteBuffer(r->queue, disp->xform, 0, xform, sizeof(xform));
+
+    /* fresh bind group per frame: surfaces (and their views) come and go */
+    if (disp->surface_bind_group) {
+        wgpuBindGroupRelease(disp->surface_bind_group);
+    }
+    disp->surface_bind_group = create_bind_group(r, surface->view);
+    surface->frame_time = pg->frame_time;
+    *bg = disp->surface_bind_group;
+    {
+        static int n;
+        if (n++ % 300 == 0) {
+            fprintf(stderr, "[wgpu] display surface %" HWADDR_PRIx " %ux%u "
+                    "fmt=%d draw_dirty=%d\n", surface->vram_addr,
+                    surface->width, surface->height, surface->host_fmt.format,
+                    surface->draw_dirty);
+        }
+    }
+    return true;
+}
+
 void pgraph_wgpu_render_display(NV2AState *d)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
     PGRAPHWgpuDisplayState *disp = &r->display;
+    WGPUBindGroup bg = NULL;
 
-    if (!upload_scanout(d, r) || !disp->bind_group) {
-        return;
+    if (getenv("XEMU_VRAM_DISPLAY")) {
+        /* debug: read the rendered surface back into VRAM, show VRAM */
+        VGADisplayParams p;
+        d->vga.get_params(&d->vga, &p);
+        SurfaceBinding *s = pgraph_wgpu_surface_get_within(
+            d, d->pcrtc.start + p.line_offset);
+        if (s && s->color) {
+            pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_PRESENTING);
+            pgraph_wgpu_surface_download_if_dirty(d, s);
+        }
+    }
+    if (getenv("XEMU_VRAM_DISPLAY") || !bind_render_surface(d, r, &bg)) {
+        if (!upload_scanout(d, r) || !disp->bind_group) {
+            return;
+        }
+        bg = disp->bind_group;
     }
 
     WGPUSurfaceTexture st;
@@ -278,7 +401,7 @@ void pgraph_wgpu_render_display(NV2AState *d)
         enc, &(WGPURenderPassDescriptor){ .colorAttachmentCount = 1,
                                           .colorAttachments = &ca });
     wgpuRenderPassEncoderSetPipeline(pass, disp->pipeline);
-    wgpuRenderPassEncoderSetBindGroup(pass, 0, disp->bind_group, 0, NULL);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
     wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
     wgpuRenderPassEncoderEnd(pass);
     WGPUCommandBuffer cb = wgpuCommandEncoderFinish(enc, NULL);
@@ -293,6 +416,9 @@ void pgraph_wgpu_render_display(NV2AState *d)
     /* A worker's OffscreenCanvas only presents when its task ends: yield to
      * the event loop (Asyncify unwinds the pfifo thread) so this frame shows. */
     emscripten_sleep(0);
+
+    extern volatile uint32_t xemu_wasm_present_count;
+    xemu_wasm_present_count++;
 
     static unsigned presented;
     if (++presented % 300 == 1) {

@@ -107,8 +107,38 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
         return;
     }
 
+    WGPUFeatureName wanted[] = {
+        WGPUFeatureName_Depth32FloatStencil8,
+        WGPUFeatureName_TextureCompressionBC,
+        WGPUFeatureName_DepthClipControl,
+        WGPUFeatureName_Float32Filterable,
+    };
+    WGPUFeatureName feats_on[ARRAY_SIZE(wanted)];
+    size_t nfeats = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(wanted); i++) {
+        if (wgpuAdapterHasFeature(r->adapter, wanted[i])) {
+            feats_on[nfeats++] = wanted[i];
+        }
+    }
+    r->has_depth32_stencil8 =
+        wgpuAdapterHasFeature(r->adapter, WGPUFeatureName_Depth32FloatStencil8);
+    r->has_bc_compression =
+        wgpuAdapterHasFeature(r->adapter, WGPUFeatureName_TextureCompressionBC);
+    r->has_unclipped_depth =
+        wgpuAdapterHasFeature(r->adapter, WGPUFeatureName_DepthClipControl);
+    r->has_float32_filterable =
+        wgpuAdapterHasFeature(r->adapter, WGPUFeatureName_Float32Filterable);
+
+    /* ask for the adapter's limits (defaults are too small for a 64 MiB
+     * VRAM mirror buffer on some adapters) */
+    WGPULimits adapter_limits = WGPU_LIMITS_INIT;
+    wgpuAdapterGetLimits(r->adapter, &adapter_limits);
+
     WGPUDeviceDescriptor ddesc = {
         .label = { "nv2a", WGPU_STRLEN },
+        .requiredFeatureCount = nfeats,
+        .requiredFeatures = feats_on,
+        .requiredLimits = &adapter_limits,
         .deviceLostCallbackInfo = { .mode = WGPUCallbackMode_AllowSpontaneous,
                                     .callback = on_device_lost },
         .uncapturedErrorCallbackInfo = { .callback = on_uncaptured_error },
@@ -123,6 +153,8 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
         return;
     }
     r->queue = wgpuDeviceGetQueue(r->device);
+    r->limits = (WGPULimits)WGPU_LIMITS_INIT;
+    wgpuDeviceGetLimits(r->device, &r->limits);
     fprintf(stderr, "[wgpu] init: device=%p, creating surface\n", (void *)r->device);
 
     WGPUEmscriptenSurfaceSourceCanvasHTMLSelector sel = {
@@ -142,8 +174,51 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
                                          : WGPUTextureFormat_BGRA8Unorm;
     wgpuSurfaceCapabilitiesFreeMembers(caps);
 
-    fprintf(stderr, "[wgpu] device ready, surface format %d\n",
-            r->surface_format);
+    fprintf(stderr, "[wgpu] device ready, surface format %d, features: "
+            "d32s8=%d bc=%d unclipped_depth=%d f32filter=%d\n",
+            r->surface_format, r->has_depth32_stencil8, r->has_bc_compression,
+            r->has_unclipped_depth, r->has_float32_filterable);
+}
+
+static void on_buffer_mapped(WGPUMapAsyncStatus status, WGPUStringView msg,
+                             void *u1, void *u2)
+{
+    if (status != WGPUMapAsyncStatus_Success) {
+        fprintf(stderr, "[wgpu] mapAsync failed (%d): %.*s\n", status,
+                (int)msg.length, msg.data);
+    }
+    *(bool *)u1 = status == WGPUMapAsyncStatus_Success;
+}
+
+void pgraph_wgpu_read_buffer_sync(PGRAPHWgpuState *r, WGPUBuffer buffer,
+                                  size_t offset, size_t size, void *dst)
+{
+    bool ok = false;
+    pgraph_wgpu_wait(r, wgpuBufferMapAsync(
+        buffer, WGPUMapMode_Read, offset, size,
+        (WGPUBufferMapCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
+                                     .callback = on_buffer_mapped,
+                                     .userdata1 = &ok }));
+    if (ok) {
+        const void *src = wgpuBufferGetConstMappedRange(buffer, offset, size);
+        memcpy(dst, src, size);
+    } else {
+        memset(dst, 0, size);
+    }
+    wgpuBufferUnmap(buffer);
+}
+
+static void on_work_done(WGPUQueueWorkDoneStatus status, WGPUStringView msg,
+                         void *u1, void *u2)
+{
+}
+
+void pgraph_wgpu_wait_queue_idle(PGRAPHWgpuState *r)
+{
+    pgraph_wgpu_wait(r, wgpuQueueOnSubmittedWorkDone(
+        r->queue, (WGPUQueueWorkDoneCallbackInfo){
+                      .mode = WGPUCallbackMode_WaitAnyOnly,
+                      .callback = on_work_done }));
 }
 
 static void pgraph_wgpu_init(NV2AState *d, Error **errp)
@@ -156,7 +231,17 @@ static void pgraph_wgpu_init(NV2AState *d, Error **errp)
     if (*errp) {
         return;
     }
+
+    pgraph_wgpu_init_buffers(d);
+    pgraph_wgpu_init_surfaces(pg);
+    pgraph_wgpu_init_shaders(pg);
+    pgraph_wgpu_init_pipelines(pg);
+    pgraph_wgpu_init_textures(pg);
+    pgraph_wgpu_init_reports(pg);
     pgraph_wgpu_init_display(pg);
+
+    pgraph_wgpu_update_vertex_ram_buffer(pg, 0, d->vram_ptr,
+                                         memory_region_size(d->vram));
 }
 
 static void pgraph_wgpu_finalize(NV2AState *d)
@@ -167,7 +252,17 @@ static void pgraph_wgpu_finalize(NV2AState *d)
     if (!r) {
         return;
     }
-    pgraph_wgpu_finalize_display(pg);
+    if (r->device) {
+        pgraph_wgpu_finalize_display(pg);
+        /* surfaces first: their flush may still record + submit work, which
+         * needs the shader/pipeline/buffer state alive */
+        pgraph_wgpu_finalize_surfaces(pg);
+        pgraph_wgpu_finalize_reports(pg);
+        pgraph_wgpu_finalize_textures(pg);
+        pgraph_wgpu_finalize_pipelines(pg);
+        pgraph_wgpu_finalize_shaders(pg);
+        pgraph_wgpu_finalize_buffers(d);
+    }
     if (r->surface) {
         wgpuSurfaceRelease(r->surface);
     }
@@ -187,6 +282,23 @@ static void pgraph_wgpu_finalize(NV2AState *d)
     pg->wgpu_renderer_state = NULL;
 }
 
+static void pgraph_wgpu_flush(NV2AState *d)
+{
+    PGRAPHState *pg = &d->pgraph;
+
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_FLUSH);
+    pgraph_wgpu_surface_flush(d);
+    pgraph_wgpu_mark_textures_possibly_dirty(d, 0, memory_region_size(d->vram));
+    pgraph_wgpu_update_vertex_ram_buffer(pg, 0, d->vram_ptr,
+                                         memory_region_size(d->vram));
+    for (int i = 0; i < 4; i++) {
+        pg->texture_dirty[i] = true;
+    }
+
+    qatomic_set(&d->pgraph.flush_pending, false);
+    qemu_event_set(&d->pgraph.flush_complete);
+}
+
 static void pgraph_wgpu_sync(NV2AState *d)
 {
     pgraph_wgpu_render_display(d);
@@ -194,18 +306,22 @@ static void pgraph_wgpu_sync(NV2AState *d)
     qemu_event_set(&d->pgraph.sync_complete);
 }
 
-static void pgraph_wgpu_flush(NV2AState *d)
-{
-    qatomic_set(&d->pgraph.flush_pending, false);
-    qemu_event_set(&d->pgraph.flush_complete);
-}
-
 static void pgraph_wgpu_process_pending(NV2AState *d)
 {
-    if (qatomic_read(&d->pgraph.sync_pending) ||
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+
+    if (qatomic_read(&r->surf.downloads_pending) ||
+        qatomic_read(&r->surf.download_dirty_surfaces_pending) ||
+        qatomic_read(&d->pgraph.sync_pending) ||
         qatomic_read(&d->pgraph.flush_pending)) {
         qemu_mutex_unlock(&d->pfifo.lock);
         qemu_mutex_lock(&d->pgraph.lock);
+        if (qatomic_read(&r->surf.downloads_pending)) {
+            pgraph_wgpu_process_pending_downloads(d);
+        }
+        if (qatomic_read(&r->surf.download_dirty_surfaces_pending)) {
+            pgraph_wgpu_download_dirty_surfaces(d);
+        }
         if (qatomic_read(&d->pgraph.sync_pending)) {
             pgraph_wgpu_sync(d);
         }
@@ -217,22 +333,27 @@ static void pgraph_wgpu_process_pending(NV2AState *d)
     }
 }
 
-/* Not implemented yet: draw path (surfaces, pipelines, textures, reports). */
+static void pgraph_wgpu_flip_stall(NV2AState *d)
+{
+    extern volatile uint32_t xemu_wasm_flip_count;
+    xemu_wasm_flip_count++;
+    pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_FLIP_STALL);
+}
+
+static void pgraph_wgpu_pre_savevm_trigger(NV2AState *d)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+    qatomic_set(&r->surf.download_dirty_surfaces_pending, true);
+    qemu_event_reset(&r->surf.dirty_surfaces_download_complete);
+}
+
+static void pgraph_wgpu_pre_savevm_wait(NV2AState *d)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+    qemu_event_wait(&r->surf.dirty_surfaces_download_complete);
+}
+
 static void pgraph_wgpu_nop(NV2AState *d)
-{
-}
-
-static void pgraph_wgpu_clear_surface(NV2AState *d, uint32_t parameter)
-{
-}
-
-static void pgraph_wgpu_get_report(NV2AState *d, uint32_t parameter)
-{
-    pgraph_write_zpass_pixel_cnt_report(d, parameter, 0);
-}
-
-static void pgraph_wgpu_surface_update(NV2AState *d, bool upload,
-                                       bool color_write, bool zeta_write)
 {
 }
 
@@ -242,21 +363,23 @@ static PGRAPHRenderer pgraph_wgpu_renderer = {
     .ops = {
         .init = pgraph_wgpu_init,
         .finalize = pgraph_wgpu_finalize,
-        .clear_report_value = pgraph_wgpu_nop,
+        .clear_report_value = pgraph_wgpu_clear_report_value,
         .clear_surface = pgraph_wgpu_clear_surface,
-        .draw_begin = pgraph_wgpu_nop,
-        .draw_end = pgraph_wgpu_nop,
-        .flip_stall = pgraph_wgpu_nop,
-        .flush_draw = pgraph_wgpu_nop,
+        .draw_begin = pgraph_wgpu_draw_begin,
+        .draw_end = pgraph_wgpu_draw_end,
+        .flip_stall = pgraph_wgpu_flip_stall,
+        .flush_draw = pgraph_wgpu_flush_draw,
         .get_report = pgraph_wgpu_get_report,
-        .image_blit = pgraph_wgpu_nop,
-        .pre_savevm_trigger = pgraph_wgpu_nop,
-        .pre_savevm_wait = pgraph_wgpu_nop,
+        .image_blit = pgraph_wgpu_image_blit,
+        .pre_savevm_trigger = pgraph_wgpu_pre_savevm_trigger,
+        .pre_savevm_wait = pgraph_wgpu_pre_savevm_wait,
         .pre_shutdown_trigger = pgraph_wgpu_nop,
         .pre_shutdown_wait = pgraph_wgpu_nop,
         .process_pending = pgraph_wgpu_process_pending,
-        .process_pending_reports = pgraph_wgpu_nop,
+        .process_pending_reports = pgraph_wgpu_process_pending_reports,
         .surface_update = pgraph_wgpu_surface_update,
+        .set_surface_scale_factor = pgraph_wgpu_set_surface_scale_factor,
+        .get_surface_scale_factor = pgraph_wgpu_get_surface_scale_factor,
     }
 };
 

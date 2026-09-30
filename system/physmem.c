@@ -872,6 +872,15 @@ static void do_mem_access_callback_insert(CPUState *cpu, run_on_cpu_data data)
 {
     MemAccessCallback *cb = (MemAccessCallback *)data.host_ptr;
     QTAILQ_INSERT_TAIL(&cpu->mem_access_callbacks, cb, entry);
+#ifdef EMSCRIPTEN
+    {
+        static int n;
+        if (n++ < 3) {
+            fprintf(stderr, "[wasm] mem access callback inserted ram=%llx len=%llx\n",
+                    (unsigned long long)cb->addr, (unsigned long long)cb->len);
+        }
+    }
+#endif
 }
 
 MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
