@@ -306,6 +306,23 @@ void tcg_gen_mb(TCGBar mb_type)
      * queue entries being read incorrectly.
      */
     bool parallel = true;
+#ifdef EMSCRIPTEN
+    /*
+     * wasm32 JIT: each barrier is an atomic.fence, a full hardware barrier
+     * (DMB on ARM hosts) before every guest load/store. xemu's I/O threads
+     * (NV2A pfifo, APU, disk) consume guest RAM only after an MMIO handoff
+     * that takes a mutex, which already orders the vCPU's stores; so elide
+     * them (XEMU_WASM_FENCES=1 restores them).
+     */
+    {
+        static int fences = -1;
+        if (fences < 0) {
+            const char *e = getenv("XEMU_WASM_FENCES");
+            fences = e && *e == '1';
+        }
+        parallel = fences;
+    }
+#endif
 #endif
 
     if (parallel) {
