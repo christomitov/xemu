@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "monitor/monitor.h"
 #include "qemu/coroutine-tls.h"
 #include "qapi/error.h"
@@ -593,12 +594,20 @@ void bql_lock_impl(const char *file, int line)
      * spinner makes progress. */
     {
         static unsigned long bql_spin_count;
-        while (qemu_mutex_trylock(&bql) != 0) {
-            if (++bql_spin_count == 100000000UL) {
-                extern void xemu_wasm_dbg_ring_put(const char *, ...);
-                xemu_wasm_dbg_ring_put("[bql] spin 100M fails tid=%lu\n",
-                        (unsigned long)pthread_self());
-                bql_spin_count = 0;
+        if (qemu_mutex_trylock(&bql) != 0) {
+            bool vcpu = current_cpu != NULL;
+            XSTAT_T0();
+            while (qemu_mutex_trylock(&bql) != 0) {
+                if (++bql_spin_count == 100000000UL) {
+                    bql_spin_count = 0;
+                }
+            }
+            if (vcpu) {
+                XSTAT_INC(n_vcpu_bql_wait);
+                XSTAT_T1(ns_vcpu_bql_wait);
+            } else {
+                XSTAT_INC(n_main_bql_wait);
+                XSTAT_T1(ns_main_bql_wait);
             }
         }
         bql_spin_count = 0;

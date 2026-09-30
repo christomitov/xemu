@@ -19,6 +19,7 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qemu/xemu-wasm-stats.h"
 #include "apu_int.h"
 
 MCPXAPUState *g_state; // Used via debug handlers
@@ -224,6 +225,7 @@ static void throttle(MCPXAPUState *d)
 
 static void se_frame(MCPXAPUState *d)
 {
+    XSTAT_INC(n_apu_frame);
     mcpx_apu_update_dsp_preference(d);
     mcpx_debug_begin_frame();
     g_dbg.gp_realtime = d->gp.realtime;

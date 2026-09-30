@@ -8,6 +8,7 @@
  */
 
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 #include <emscripten.h>
 
 /* uv = xform.xy * screen_uv + xform.zw: selects the scanned-out region of a
@@ -359,6 +360,7 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
 
 void pgraph_wgpu_render_display(NV2AState *d)
 {
+    XSTAT_T0();
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
     PGRAPHWgpuDisplayState *disp = &r->display;
     WGPUBindGroup bg = NULL;
@@ -419,6 +421,8 @@ void pgraph_wgpu_render_display(NV2AState *d)
 
     extern volatile uint32_t xemu_wasm_present_count;
     xemu_wasm_present_count++;
+    XSTAT_INC(n_present);
+    XSTAT_T1(ns_present);
 
     static unsigned presented;
     if (++presented % 300 == 1) {

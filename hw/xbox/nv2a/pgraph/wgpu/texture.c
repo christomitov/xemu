@@ -52,6 +52,7 @@
 #include "qemu/fast-hash.h"
 #include "qemu/lru.h"
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 
 static void texture_cache_release_node_resources(TextureBinding *snode);
 
@@ -959,6 +960,8 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
                 .rowsPerImage = level->rows_per_image,
             };
             WGPUExtent3D size = { level->width, level->height, level->depth };
+            XSTAT_INC(n_tex_upload);
+            XSTAT_ADD(b_tex_upload, level->decoded_size);
             wgpuQueueWriteTexture(r->queue, &dst, level->decoded_data,
                                   level->decoded_size, &data_layout, &size);
         }

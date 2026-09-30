@@ -29,6 +29,7 @@
 #include "qemu/osdep.h"
 #include "qemu/fast-hash.h"
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 #include <math.h>
 
 /* ---- NV2A -> WebGPU state maps (cf. vk/constants.h) ---- */
@@ -631,6 +632,7 @@ static void create_clear_pipeline(PGRAPHState *pg)
         .fragment = r->color_binding ? &fragment : NULL,
     };
 
+    XSTAT_INC(n_pipeline_gen);
     snode->pipeline = wgpuDeviceCreateRenderPipeline(r->device, &desc);
     snode->draw_time = pg->draw_time;
     snode->cull_all = false;
@@ -1172,6 +1174,7 @@ void pgraph_wgpu_draw_begin(NV2AState *d)
 
 void pgraph_wgpu_draw_end(NV2AState *d)
 {
+    XSTAT_INC(n_draw);
     PGRAPHState *pg = &d->pgraph;
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
 
@@ -1317,6 +1320,7 @@ void pgraph_wgpu_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta)
 
 void pgraph_wgpu_clear_surface(NV2AState *d, uint32_t parameter)
 {
+    XSTAT_INC(n_clear);
     PGRAPHState *pg = &d->pgraph;
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     PGRAPHWgpuDrawState *ds = &r->draw;

@@ -16,6 +16,7 @@
  */
 
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 
 static const enum NV2A_PROF_COUNTERS_ENUM finish_reason_to_counter_enum[] = {
     [WGPU_FINISH_REASON_VERTEX_BUFFER_DIRTY] =
@@ -234,13 +235,18 @@ void pgraph_wgpu_finish(PGRAPHState *pg, FinishReason finish_reason)
         ds->in_command_buffer = false;
 
         nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT);
+        XSTAT_INC(n_submit);
         wgpuQueueSubmit(r->queue, 1, &cmd);
         wgpuCommandBufferRelease(cmd);
         ds->submit_count += 1;
         pgraph_wgpu_shaders_on_submit(pg);
 
         /* mirrors vkWaitForFences on the command buffer fence */
-        pgraph_wgpu_wait_queue_idle(r);
+        {
+            XSTAT_T0();
+            pgraph_wgpu_wait_queue_idle(r);
+            XSTAT_T1(ns_gpu_wait);
+        }
 
         /* everything recorded has executed: append-only buffers restart */
         ds->storage_buffers[WGPU_BUFFER_INDEX].buffer_offset = 0;

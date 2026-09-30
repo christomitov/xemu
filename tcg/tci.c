@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "tcg/tcg.h"
 #include "tcg/helper-info.h"
 #include "tcg/tcg-ldst.h"
@@ -795,11 +796,13 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         case INDEX_op_goto_tb:
             tci_args_l(insn, tb_ptr, &ptr);
             tb_ptr = *(void **)ptr;
+            XSTAT_INC(n_tb_exec); /* chained block */
             break;
 
         case INDEX_op_goto_ptr:
             tci_args_r(insn, &r0);
             ptr = (void *)regs[r0];
+            XSTAT_INC(n_tb_exec); /* lookup-and-goto block */
             if (!ptr) {
                 return 0;
             }
