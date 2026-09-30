@@ -142,6 +142,10 @@ static void tcg_out_set_borrow(TCGContext *s);
 static void tcg_out_op(TCGContext *s, TCGOpcode opc, TCGType type,
                        const TCGArg args[TCG_MAX_OP_ARGS],
                        const int const_args[TCG_MAX_OP_ARGS]);
+#ifdef CONFIG_TCG_WASM_JIT
+static void tcg_out_label_cb(TCGContext *s, TCGLabel *l);
+static int tcg_out_tb_end(TCGContext *s);
+#endif
 #if TCG_TARGET_MAYBE_vec
 static bool tcg_out_dup_vec(TCGContext *s, TCGType type, unsigned vece,
                             TCGReg dst, TCGReg src);
@@ -364,6 +368,9 @@ static void tcg_out_label(TCGContext *s, TCGLabel *l)
     tcg_debug_assert(!l->has_value);
     l->has_value = 1;
     l->u.value_ptr = tcg_splitwx_to_rx(s->code_ptr);
+#ifdef CONFIG_TCG_WASM_JIT
+    tcg_out_label_cb(s, l);
+#endif
 }
 
 TCGLabel *gen_new_label(void)
@@ -1513,7 +1520,12 @@ static unsigned tci_direct_sig(unsigned typemask, int nargs)
     int rk = kind[typemask & 7];
     unsigned sig;
 
-    if (TCG_TARGET_REG_BITS != 32 || sizeof(void *) != 4 || rk < 0) {
+    /*
+     * Arguments are in 8-byte stack slots, one per argument: with 32-bit
+     * registers via TCG_CALL_ARG_EVEN, with 64-bit registers (wasm32 JIT)
+     * via TCG_CALL_ARG_NORMAL.
+     */
+    if (sizeof(void *) != 4 || rk < 0) {
         return UINT_MAX;
     }
     sig = rk | (nargs << 2);
@@ -7210,6 +7222,14 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, uint64_t pc_start)
     flush_idcache_range((uintptr_t)tcg_splitwx_to_rx(s->code_buf),
                         (uintptr_t)s->code_buf,
                         tcg_ptr_byte_diff(s->code_ptr, s->code_buf));
+#endif
+
+#ifdef CONFIG_TCG_WASM_JIT
+    /* append the WebAssembly module of this TB */
+    i = tcg_out_tb_end(s);
+    if (i < 0) {
+        return i;
+    }
 #endif
 
     return tcg_current_code_size(s);
