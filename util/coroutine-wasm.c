@@ -141,11 +141,20 @@ CoroutineAction qemu_coroutine_switch(Coroutine *from_, Coroutine *to_,
     emscripten_fiber_swap(&from->fiber, &to->fiber);
 #ifdef EMSCRIPTEN
     xemu_wasm_lowmem_check("co switch post");
+    /*
+     * QEMU may legitimately resume a coroutine on another thread (e.g. a
+     * block request started on the main loop and completed while the vCPU
+     * thread, holding the BQL, polls the main AioContext). Emscripten fibers
+     * keep their stack and Asyncify data in shared memory, so migrating is
+     * fine; this used to abort as a debugging tripwire. Log once.
+     */
     if (to->last_tid != 0 && !pthread_equal(to->last_tid, pthread_self())) {
-        fprintf(stderr, "[co] THREAD MISMATCH co=%p switch-in tid=%lu owner=%lu entry=%p\n",
-                (void*)(uintptr_t)to_, (unsigned long)pthread_self(),
-                (unsigned long)to->last_tid, (void*)(uintptr_t)to->base.entry);
-        abort();
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            fprintf(stderr, "[co] coroutine migrated between threads "
+                    "(co=%p); continuing\n", (void *)(uintptr_t)to_);
+        }
     }
 #endif
     return from->action;
