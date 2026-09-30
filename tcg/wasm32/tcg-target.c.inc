@@ -353,11 +353,10 @@ static void wasm_ctx_store_i32_const(TCGContext *s, int off, int32_t v)
     wasm_mem(s, W_I32_STORE, off);
 }
 
-/* XSTAT: count a TB execution that never leaves generated code. */
-static void wasm_count_tb_exec(TCGContext *s)
+/* XSTAT: increment a 64-bit counter (plain load/add/store, one writer). */
+static void wasm_count(TCGContext *s, uint64_t *ctr)
 {
-#ifdef EMSCRIPTEN
-    uint32_t addr = (uint32_t)(uintptr_t)&xemu_wasm_stats.n_tb_exec;
+    uint32_t addr = (uint32_t)(uintptr_t)ctr;
 
     wasm_i32_const(s, addr);
     wasm_i32_const(s, addr);
@@ -365,6 +364,13 @@ static void wasm_count_tb_exec(TCGContext *s)
     wasm_i64_const(s, 1);
     wasm8(s, W_I64_ADD);
     wasm_mem(s, W_I64_STORE, 0);
+}
+
+/* a TB execution that never leaves generated code (self loop) */
+static void wasm_count_tb_exec(TCGContext *s)
+{
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_tb_exec);
 #endif
 }
 
@@ -898,6 +904,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         gen_func_type(info);
     }
 
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_helper);
+#endif
     wasm_new_resumable_block(s);
     wasm_set_tci_tb_ptr(s);
 
