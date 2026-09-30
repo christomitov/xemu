@@ -74,6 +74,7 @@ typedef struct PGRAPHWgpuDisplayState {
     size_t conv_size;
 
     WGPUBuffer xform; /* vec4 uv scale/offset for the displayed region */
+    bool need_yield; /* presented: yield to the browser once unlocked */
     /* bind group for the render surface presented last frame */
     WGPUBindGroup surface_bind_group;
     WGPUTextureView surface_bound_view;

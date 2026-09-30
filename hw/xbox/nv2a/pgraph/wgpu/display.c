@@ -645,9 +645,11 @@ void pgraph_wgpu_render_display(NV2AState *d)
     wgpuTextureViewRelease(target);
     wgpuTextureRelease(st.texture);
 
-    /* A worker's OffscreenCanvas only presents when its task ends: yield to
-     * the event loop (Asyncify unwinds the pfifo thread) so this frame shows. */
-    emscripten_sleep(0);
+    /* A worker's OffscreenCanvas only presents when its task ends: the pfifo
+     * thread must yield to the event loop for this frame to show. That yield
+     * (~ms) happens in process_pending AFTER pgraph.lock is released, so guest
+     * PGRAPH register accesses don't wait behind it. */
+    disp->need_yield = true;
 
     extern volatile uint32_t xemu_wasm_present_count;
     xemu_wasm_present_count++;
