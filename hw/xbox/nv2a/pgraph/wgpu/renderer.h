@@ -76,6 +76,15 @@ typedef struct PGRAPHWgpuDisplayState {
     WGPUBuffer xform; /* vec4 uv scale/offset for the displayed region */
     /* bind group for the render surface presented last frame */
     WGPUBindGroup surface_bind_group;
+    WGPUTextureView surface_bound_view;
+    float xform_values[4];
+
+    /* PVIDEO video overlay (YUY2 converted to RGBA on the CPU) */
+    WGPUTexture pvideo_texture;
+    WGPUTextureView pvideo_view;
+    int pvideo_width, pvideo_height;
+    uint8_t *pvideo_conv;
+    size_t pvideo_conv_size;
 } PGRAPHWgpuDisplayState;
 
 typedef struct PGRAPHWgpuState {

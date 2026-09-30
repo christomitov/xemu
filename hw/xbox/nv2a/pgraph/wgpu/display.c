@@ -9,14 +9,42 @@
 
 #include "renderer.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "hw/xbox/nv2a/pgraph/util.h"
 #include <emscripten.h>
+#include <math.h>
 
-/* uv = xform.xy * screen_uv + xform.zw: selects the scanned-out region of a
- * (possibly larger) render surface */
+/* Display uniforms, std140-compatible with DisplayU in display_wgsl. */
+typedef struct DisplayUniforms {
+    float xform[4];         /* uv scale (xy) / offset (zw) into the surface */
+    float display_size[2];
+    uint32_t pvideo_enable;
+    uint32_t pvideo_color_key_enable;
+    float pvideo_in_pos[2];
+    float pad_[2];
+    float pvideo_pos[4];    /* out x, y, w, h */
+    float pvideo_scale[4];  /* in/out x, y, 1/surface scale, - */
+    float pvideo_color_key[4];
+} DisplayUniforms;
+
+/* uv = xform.xy * screen_uv + xform.zw selects the scanned-out region of a
+ * (possibly larger) render surface; the PVIDEO video overlay is composited
+ * on top exactly like the Vulkan display shader (minus its GL y-flip) */
 static const char display_wgsl[] =
+    "struct DisplayU {\n"
+    "    xform: vec4f,\n"
+    "    display_size: vec2f,\n"
+    "    pvideo_enable: u32,\n"
+    "    pvideo_color_key_enable: u32,\n"
+    "    pvideo_in_pos: vec2f,\n"
+    "    pad_: vec2f,\n"
+    "    pvideo_pos: vec4f,\n"
+    "    pvideo_scale: vec4f,\n"
+    "    pvideo_color_key: vec4f,\n"
+    "};\n"
     "@group(0) @binding(0) var samp: sampler;\n"
     "@group(0) @binding(1) var tex: texture_2d<f32>;\n"
-    "@group(0) @binding(2) var<uniform> xform: vec4f;\n"
+    "@group(0) @binding(2) var<uniform> u: DisplayU;\n"
+    "@group(0) @binding(3) var pvideo_tex: texture_2d<f32>;\n"
     "struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };\n"
     "@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {\n"
     "    var p = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));\n"
@@ -26,8 +54,161 @@ static const char display_wgsl[] =
     "    return o;\n"
     "}\n"
     "@fragment fn fs(v: VOut) -> @location(0) vec4f {\n"
-    "    return vec4f(textureSample(tex, samp, v.uv * xform.xy + xform.zw).rgb, 1.0);\n"
+    "    var c = textureSample(tex, samp, v.uv * u.xform.xy + u.xform.zw);\n"
+    "    if (u.pvideo_enable != 0u) {\n"
+    "        let sc = v.pos.xy * u.pvideo_scale.z;\n"
+    "        let lo = u.pvideo_pos.xy;\n"
+    "        let hi = u.pvideo_pos.xy + u.pvideo_pos.zw;\n"
+    "        let inside = all(sc >= lo) && all(sc <= hi);\n"
+    "        let keyed = u.pvideo_color_key_enable == 0u ||\n"
+    "                    all(c.rgb == u.pvideo_color_key.rgb);\n"
+    "        if (inside && keyed) {\n"
+    "            let in_st = (u.pvideo_in_pos + (sc - lo) * u.pvideo_scale.xy)\n"
+    "                        / vec2f(textureDimensions(pvideo_tex, 0));\n"
+    "            c = textureSampleLevel(pvideo_tex, samp, in_st, 0.0);\n"
+    "        }\n"
+    "    }\n"
+    "    return vec4f(c.rgb, 1.0);\n"
     "}\n";
+
+static void ensure_pvideo_texture(PGRAPHWgpuState *r, int width, int height)
+{
+    PGRAPHWgpuDisplayState *disp = &r->display;
+
+    if (disp->pvideo_texture && disp->pvideo_width == width &&
+        disp->pvideo_height == height) {
+        return;
+    }
+    if (disp->pvideo_view) {
+        wgpuTextureViewRelease(disp->pvideo_view);
+    }
+    if (disp->pvideo_texture) {
+        wgpuTextureRelease(disp->pvideo_texture);
+    }
+    disp->pvideo_texture = wgpuDeviceCreateTexture(
+        r->device, &(WGPUTextureDescriptor){
+                       .label = { "pvideo", WGPU_STRLEN },
+                       .usage = WGPUTextureUsage_TextureBinding |
+                                WGPUTextureUsage_CopyDst,
+                       .dimension = WGPUTextureDimension_2D,
+                       .size = { width, height, 1 },
+                       .format = WGPUTextureFormat_RGBA8Unorm,
+                       .mipLevelCount = 1,
+                       .sampleCount = 1 });
+    disp->pvideo_view = wgpuTextureCreateView(disp->pvideo_texture, NULL);
+    disp->pvideo_width = width;
+    disp->pvideo_height = height;
+}
+
+static float pvideo_calculate_scale(unsigned int din_dout,
+                                    unsigned int output_size)
+{
+    float calculated_in = din_dout * (output_size - 1);
+    calculated_in = floorf(calculated_in / (1 << 20) + 0.5f);
+    return (calculated_in + 1.0f) / output_size;
+}
+
+/*
+ * PVIDEO overlay state, as in the Vulkan backend's get_pvideo_state(), but
+ * unsupported formats / out-of-range buffers disable the overlay instead of
+ * asserting. Fills the overlay part of *u and uploads the frame (YUY2 ->
+ * RGBA on the CPU) when enabled.
+ */
+static void update_pvideo(NV2AState *d, PGRAPHWgpuState *r, DisplayUniforms *u)
+{
+    PGRAPHWgpuDisplayState *disp = &r->display;
+    uint32_t *regs = d->pvideo.regs;
+
+    u->pvideo_enable = (regs[NV_PVIDEO_BUFFER] & NV_PVIDEO_BUFFER_0_USE) &&
+                       regs[NV_PVIDEO_SIZE_IN] != 0xFFFFFFFF;
+    if (!u->pvideo_enable) {
+        return;
+    }
+
+    hwaddr base = regs[NV_PVIDEO_BASE];
+    hwaddr limit = regs[NV_PVIDEO_LIMIT];
+    hwaddr offset = regs[NV_PVIDEO_OFFSET];
+    unsigned int pitch = GET_MASK(regs[NV_PVIDEO_FORMAT], NV_PVIDEO_FORMAT_PITCH);
+    unsigned int format =
+        GET_MASK(regs[NV_PVIDEO_FORMAT], NV_PVIDEO_FORMAT_COLOR);
+    unsigned int in_w = GET_MASK(regs[NV_PVIDEO_SIZE_IN], NV_PVIDEO_SIZE_IN_WIDTH);
+    unsigned int in_h = GET_MASK(regs[NV_PVIDEO_SIZE_IN], NV_PVIDEO_SIZE_IN_HEIGHT);
+    unsigned int out_w =
+        GET_MASK(regs[NV_PVIDEO_SIZE_OUT], NV_PVIDEO_SIZE_OUT_WIDTH);
+    unsigned int out_h =
+        GET_MASK(regs[NV_PVIDEO_SIZE_OUT], NV_PVIDEO_SIZE_OUT_HEIGHT);
+    uint32_t ds_dx = regs[NV_PVIDEO_DS_DX];
+    uint32_t dt_dy = regs[NV_PVIDEO_DT_DY];
+    float scale_x = ds_dx == NV_PVIDEO_DIN_DOUT_UNITY ?
+                        1.0f : pvideo_calculate_scale(ds_dx, out_w);
+    float scale_y = dt_dy == NV_PVIDEO_DIN_DOUT_UNITY ?
+                        1.0f : pvideo_calculate_scale(dt_dy, out_h);
+
+    /* HW caps SIZE_IN to SIZE_OUT without scaling (see vk display.c) */
+    if (in_w > out_w) {
+        in_w = floorf((float)out_w * scale_x + 0.5f);
+    }
+    if (in_h > out_h) {
+        in_h = floorf((float)out_h * scale_y + 0.5f);
+    }
+
+    if (format != NV_PVIDEO_FORMAT_COLOR_LE_CR8YB8CB8YA8 || !in_w || !in_h ||
+        !pitch || offset + (hwaddr)pitch * in_h > limit ||
+        base + offset + (hwaddr)pitch * in_h > memory_region_size(d->vram)) {
+        static bool logged;
+        if (!logged) {
+            fprintf(stderr, "[wgpu] pvideo overlay not shown: format=%u "
+                    "%ux%u pitch=%u\n", format, in_w, in_h, pitch);
+            logged = true;
+        }
+        u->pvideo_enable = 0;
+        return;
+    }
+
+    ensure_pvideo_texture(r, in_w, in_h);
+    size_t need = (size_t)in_w * in_h * 4;
+    if (disp->pvideo_conv_size < need) {
+        disp->pvideo_conv = g_realloc(disp->pvideo_conv, need);
+        disp->pvideo_conv_size = need;
+    }
+    const uint8_t *src = d->vram_ptr + base + offset;
+    uint8_t *out = disp->pvideo_conv;
+    for (unsigned int y = 0; y < in_h; y++) {
+        const uint8_t *line = src + (size_t)y * pitch;
+        uint8_t *px = out + (size_t)y * in_w * 4;
+        for (unsigned int x = 0; x < in_w; x++, px += 4) {
+            convert_yuy2_to_rgb(line, x, &px[0], &px[1], &px[2]);
+            px[3] = 255;
+        }
+    }
+    wgpuQueueWriteTexture(
+        r->queue, &(WGPUTexelCopyTextureInfo){ .texture = disp->pvideo_texture },
+        out, need,
+        &(WGPUTexelCopyBufferLayout){ .bytesPerRow = in_w * 4,
+                                      .rowsPerImage = in_h },
+        &(WGPUExtent3D){ in_w, in_h, 1 });
+
+    uint32_t key = regs[NV_PVIDEO_COLOR_KEY] & 0xFFFFFF; /* ignores alpha */
+    u->pvideo_color_key_enable =
+        GET_MASK(regs[NV_PVIDEO_FORMAT], NV_PVIDEO_FORMAT_DISPLAY);
+    u->pvideo_color_key[0] = GET_MASK(key, NV_PVIDEO_COLOR_KEY_RED) / 255.0f;
+    u->pvideo_color_key[1] = GET_MASK(key, NV_PVIDEO_COLOR_KEY_GREEN) / 255.0f;
+    u->pvideo_color_key[2] = GET_MASK(key, NV_PVIDEO_COLOR_KEY_BLUE) / 255.0f;
+    u->pvideo_in_pos[0] =
+        GET_MASK(regs[NV_PVIDEO_POINT_IN], NV_PVIDEO_POINT_IN_S) / 16.0f;
+    u->pvideo_in_pos[1] =
+        GET_MASK(regs[NV_PVIDEO_POINT_IN], NV_PVIDEO_POINT_IN_T) / 8.0f;
+    u->pvideo_pos[0] =
+        GET_MASK(regs[NV_PVIDEO_POINT_OUT], NV_PVIDEO_POINT_OUT_X);
+    u->pvideo_pos[1] =
+        GET_MASK(regs[NV_PVIDEO_POINT_OUT], NV_PVIDEO_POINT_OUT_Y);
+    u->pvideo_pos[2] = out_w;
+    u->pvideo_pos[3] = out_h;
+    u->pvideo_scale[0] = scale_x;
+    u->pvideo_scale[1] = scale_y;
+    u->pvideo_scale[2] = 1.0f / d->pgraph.surface_scale_factor;
+    u->pvideo_scale[3] = 1.0f;
+}
 
 void pgraph_wgpu_init_display(PGRAPHState *pg)
 {
@@ -37,7 +218,7 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
     WGPUShaderModule module =
         pgraph_wgpu_create_wgsl_module(r, "display", display_wgsl);
 
-    WGPUBindGroupLayoutEntry entries[3] = {
+    WGPUBindGroupLayoutEntry entries[4] = {
         { .binding = 0, .visibility = WGPUShaderStage_Fragment,
           .sampler = { .type = WGPUSamplerBindingType_Filtering } },
         { .binding = 1, .visibility = WGPUShaderStage_Fragment,
@@ -45,10 +226,13 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
                        .viewDimension = WGPUTextureViewDimension_2D } },
         { .binding = 2, .visibility = WGPUShaderStage_Fragment,
           .buffer = { .type = WGPUBufferBindingType_Uniform,
-                      .minBindingSize = 16 } },
+                      .minBindingSize = sizeof(DisplayUniforms) } },
+        { .binding = 3, .visibility = WGPUShaderStage_Fragment,
+          .texture = { .sampleType = WGPUTextureSampleType_Float,
+                       .viewDimension = WGPUTextureViewDimension_2D } },
     };
     disp->bind_group_layout = wgpuDeviceCreateBindGroupLayout(
-        r->device, &(WGPUBindGroupLayoutDescriptor){ .entryCount = 3,
+        r->device, &(WGPUBindGroupLayoutDescriptor){ .entryCount = 4,
                                                      .entries = entries });
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(
         r->device, &(WGPUPipelineLayoutDescriptor){
@@ -90,9 +274,12 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
 
     disp->xform = wgpuDeviceCreateBuffer(
         r->device, &(WGPUBufferDescriptor){
-                       .label = { "display xform", WGPU_STRLEN },
+                       .label = { "display uniforms", WGPU_STRLEN },
                        .usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst,
-                       .size = 16 });
+                       .size = sizeof(DisplayUniforms) });
+
+    /* 1x1 black stand-in until a video overlay is shown */
+    ensure_pvideo_texture(r, 1, 1);
 }
 
 static void release_source(PGRAPHWgpuDisplayState *disp)
@@ -126,6 +313,13 @@ void pgraph_wgpu_finalize_display(PGRAPHState *pg)
         wgpuBufferRelease(disp->xform);
     }
     g_free(disp->conv);
+    g_free(disp->pvideo_conv);
+    if (disp->pvideo_view) {
+        wgpuTextureViewRelease(disp->pvideo_view);
+    }
+    if (disp->pvideo_texture) {
+        wgpuTextureRelease(disp->pvideo_texture);
+    }
     if (disp->sampler) {
         wgpuSamplerRelease(disp->sampler);
     }
@@ -141,15 +335,16 @@ static WGPUBindGroup create_bind_group(PGRAPHWgpuState *r,
                                        WGPUTextureView view)
 {
     PGRAPHWgpuDisplayState *disp = &r->display;
-    WGPUBindGroupEntry entries[3] = {
+    WGPUBindGroupEntry entries[4] = {
         { .binding = 0, .sampler = disp->sampler },
         { .binding = 1, .textureView = view },
-        { .binding = 2, .buffer = disp->xform, .size = 16 },
+        { .binding = 2, .buffer = disp->xform, .size = sizeof(DisplayUniforms) },
+        { .binding = 3, .textureView = disp->pvideo_view },
     };
     return wgpuDeviceCreateBindGroup(
         r->device, &(WGPUBindGroupDescriptor){
                        .layout = disp->bind_group_layout,
-                       .entryCount = 3,
+                       .entryCount = 4,
                        .entries = entries });
 }
 
@@ -241,8 +436,10 @@ static bool upload_scanout(NV2AState *d, PGRAPHWgpuState *r)
 
     ensure_source(r, width, height);
     configure_canvas(r, width, height);
-    float xform[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
-    wgpuQueueWriteBuffer(r->queue, disp->xform, 0, xform, sizeof(xform));
+    disp->xform_values[0] = 1.0f;
+    disp->xform_values[1] = 1.0f;
+    disp->xform_values[2] = 0.0f;
+    disp->xform_values[3] = 0.0f;
 
     const void *data = src;
     uint32_t row_bytes = pitch;
@@ -331,19 +528,17 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
     if (line_ratio <= 0) {
         line_ratio = 1;
     }
-    float xform[4] = {
-        1.0f,
-        (float)dh / (float)sh / (float)line_ratio,
-        0.0f,
-        0.0f,
-    };
-    wgpuQueueWriteBuffer(r->queue, disp->xform, 0, xform, sizeof(xform));
+    disp->xform_values[0] = 1.0f;
+    disp->xform_values[1] = (float)dh / (float)sh / (float)line_ratio;
+    disp->xform_values[2] = 0.0f;
+    disp->xform_values[3] = 0.0f;
 
     /* fresh bind group per frame: surfaces (and their views) come and go */
     if (disp->surface_bind_group) {
         wgpuBindGroupRelease(disp->surface_bind_group);
     }
     disp->surface_bind_group = create_bind_group(r, surface->view);
+    disp->surface_bound_view = surface->view;
     surface->frame_time = pg->frame_time;
     *bg = disp->surface_bind_group;
     {
@@ -381,6 +576,27 @@ void pgraph_wgpu_render_display(NV2AState *d)
             return;
         }
         bg = disp->bind_group;
+    }
+
+    DisplayUniforms u = { 0 };
+    memcpy(u.xform, disp->xform_values, sizeof(u.xform));
+    u.display_size[0] = r->surface_width;
+    u.display_size[1] = r->surface_height;
+    WGPUTextureView pv_before = disp->pvideo_view;
+    update_pvideo(d, r, &u);
+    wgpuQueueWriteBuffer(r->queue, disp->xform, 0, &u, sizeof(u));
+    if (disp->pvideo_view != pv_before) {
+        /* overlay texture was resized: rebuild the bind group we use */
+        if (bg == disp->bind_group) {
+            wgpuBindGroupRelease(disp->bind_group);
+            disp->bind_group = create_bind_group(r, disp->view);
+            bg = disp->bind_group;
+        } else {
+            wgpuBindGroupRelease(disp->surface_bind_group);
+            disp->surface_bind_group =
+                create_bind_group(r, disp->surface_bound_view);
+            bg = disp->surface_bind_group;
+        }
     }
 
     WGPUSurfaceTexture st;
