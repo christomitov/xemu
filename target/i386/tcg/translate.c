@@ -3043,9 +3043,29 @@ static void gen_sty_env_A0(DisasContext *s, int offset, bool align)
 
 #include "emit.c.inc"
 
+#ifdef EMSCRIPTEN
+/*
+ * Track the last x87 instruction/operand pointers (FPU CS:IP, DS:DP), only
+ * visible through FSTENV/FSAVE/FXSAVE (debuggers, FP exception handlers).
+ * It costs four env stores and two loads per x87 instruction, a large part
+ * of x87-heavy game code, so it is off unless XEMU_WASM_FIP=1.
+ */
+static bool x87_track_fip(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("XEMU_WASM_FIP");
+        on = e && *e == '1';
+    }
+    return on;
+}
+#else
+#define x87_track_fip() true
+#endif
+
 static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
 {
-    bool update_fip = true;
+    bool update_fip = x87_track_fip();
     int b = decode->b;
     int modrm = s->modrm;
     int mod, rm, op;
@@ -3064,7 +3084,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
         /* memory op */
         TCGv ea = gen_lea_modrm_1(s, decode->mem, false);
         TCGv last_addr = tcg_temp_new();
-        bool update_fdp = true;
+        bool update_fdp = x87_track_fip();
 
         tcg_gen_mov_tl(last_addr, ea);
         gen_lea_v_seg(s, ea, decode->mem.def_seg, s->override);
