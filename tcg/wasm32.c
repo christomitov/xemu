@@ -158,35 +158,35 @@ static int get_instance(WasmTBHeader *h)
     return e->func_idx;
 }
 
-/* Drop the older half of the instances. */
+/*
+ * Drop the older half of the instances. They count as gone right away: their
+ * table slots are freed now, and V8 reclaims the modules whenever it GCs.
+ * (Waiting for the FinalizationRegistry instead kept the vCPU interpreting
+ * everything new for minutes: finalizers only run when this worker returns
+ * to its event loop.)
+ */
 static void remove_instances(void)
 {
     int num;
 
-    if (instances_pending_gc > 0) {
-        return;
-    }
     num = instances_count() / 2;
+    XSTAT_ADD(n_jit_evict, num);
     for (int i = 0; i < num; i++) {
         WasmInstance *e = &instances[instances_begin];
         wasm32_remove_function(e->func_idx);
         e->tb = NULL;
         instances_begin = (instances_begin + 1) % INSTANCES_BUF_MAX;
     }
-    instances_pending_gc += num;
+    instances_alive -= num;
 }
 
 static void check_instances_collected(void)
 {
-    int n = qatomic_xchg(&instances_collected, 0);
-
-    if (n > 0) {
-        instances_alive -= n;
-        instances_pending_gc -= n;
-        if (instances_pending_gc < 0) {
-            instances_pending_gc = 0;
-        }
-    }
+    /* GC progress: informational only (see remove_instances) */
+    qatomic_xchg(&instances_collected, 0);
+#ifdef EMSCRIPTEN
+    xemu_wasm_stats.n_jit_instances = instances_alive;
+#endif
 }
 
 static bool can_add_instance(void)

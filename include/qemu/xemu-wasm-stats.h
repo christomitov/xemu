@@ -26,6 +26,8 @@
     X(n_jit_compile)     /* TBs compiled to wasm modules */                  \
     X(ns_jit_compile)                                                        \
     X(n_jit_threshold)   /* current adaptive JIT threshold (gauge) */        \
+    X(n_jit_instances)   /* live wasm modules (gauge) */                     \
+    X(n_jit_evict)       /* modules dropped at the instance cap */           \
     X(n_mmio_read)       /* guest loads from device registers */             \
     X(n_mmio_write)                                                          \
     X(ns_mmio)           /* time in device read/write handlers */            \
