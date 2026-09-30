@@ -114,6 +114,31 @@ void user_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
     unsigned int channel_id = addr >> 16;
     assert(channel_id < NV2A_NUM_CHANNELS);
 
+#ifdef EMSCRIPTEN
+    /*
+     * Doorbell without pfifo.lock: the pfifo thread holds that lock while it
+     * parses the push buffer, so the guest's DMA_PUT writes used to block
+     * (futex wait) for most of a method batch. Store the register, raise
+     * fifo_kick, and take the lock only to wake a sleeping pfifo thread
+     * (see the fifo_idle handshake in pfifo_thread()).
+     */
+    if ((addr & 0xFFFF) == NV_USER_DMA_PUT &&
+        (qatomic_read(&d->pfifo.regs[NV_PFIFO_MODE]) & (1 << channel_id)) &&
+        channel_id == GET_MASK(qatomic_read(
+                                   &d->pfifo.regs[NV_PFIFO_CACHE1_PUSH1]),
+                               NV_PFIFO_CACHE1_PUSH1_CHID)) {
+        qatomic_set(&d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT], val);
+        qatomic_set(&d->pfifo.fifo_kick, true);
+        smp_mb();
+        if (qatomic_read(&d->pfifo.fifo_idle)) {
+            qemu_mutex_lock(&d->pfifo.lock);
+            qemu_cond_broadcast(&d->pfifo.fifo_cond);
+            qemu_mutex_unlock(&d->pfifo.lock);
+        }
+        return;
+    }
+#endif
+
     qemu_mutex_lock(&d->pfifo.lock);
 
     uint32_t channel_modes = d->pfifo.regs[NV_PFIFO_MODE];
