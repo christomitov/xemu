@@ -14,6 +14,7 @@
  */
 
 #include "renderer.h"
+#include <emscripten.h>
 #include "qemu/xemu-wasm-stats.h"
 #include "qapi/error.h"
 
@@ -329,6 +330,11 @@ static void pgraph_wgpu_process_pending(NV2AState *d)
             pgraph_wgpu_flush(d);
         }
         qemu_mutex_unlock(&d->pgraph.lock);
+        if (r->display.need_yield) {
+            /* present the frame: yield with no locks held (see display.c) */
+            r->display.need_yield = false;
+            emscripten_sleep(0);
+        }
         qemu_mutex_lock(&d->pfifo.lock);
     }
 }
