@@ -107,38 +107,40 @@ EM_JS(void, wasm32_js_init, (int *collected), {
 EM_JS_DEPS(wasm32_jit, "$addFunction,$removeFunction,$wasmTable");
 
 /*
- * Max number of instances alive at the same time.
+ * Max number of instances alive at the same time. Games' hot code needs more
+ * than 15000 TBs (Splinter Cell evicted 7500 modules/s at that cap).
  */
-#define MAX_INSTANCES 15000
-#define INSTANCES_BUF_MAX (MAX_INSTANCES + 1)
+#define MAX_INSTANCES_BUF 65536
+static int max_instances = 40000;   /* XEMU_WASM_JIT_MAX */
+#define MAX_INSTANCES max_instances
 
 typedef struct WasmInstance {
     void *tb;       /* the TB header this instance belongs to, or NULL */
     int func_idx;   /* table index of its start function */
+    int used;       /* entered since the last eviction sweep */
 } WasmInstance;
 
-static WasmInstance instances[INSTANCES_BUF_MAX];
-static int instances_begin, instances_end;
-static int instances_alive;     /* created and not yet collected */
-static int instances_pending_gc;
+static WasmInstance instances[MAX_INSTANCES_BUF];
+static int free_slots[MAX_INSTANCES_BUF], n_free = -1;
+static int clock_hand;
+static int instances_alive;     /* slots in use */
 static int instances_collected; /* written by the JS FinalizationRegistry */
-
-static int instances_count(void)
-{
-    if (instances_begin <= instances_end) {
-        return instances_end - instances_begin;
-    }
-    return instances_end + INSTANCES_BUF_MAX - instances_begin;
-}
 
 static void add_instance(WasmTBHeader *h, int func_idx)
 {
-    WasmInstance *e = &instances[instances_end];
+    WasmInstance *e;
 
+    if (n_free < 0) {
+        for (int i = 0; i < MAX_INSTANCES; i++) {
+            free_slots[i] = MAX_INSTANCES - 1 - i;
+        }
+        n_free = MAX_INSTANCES;
+    }
+    e = &instances[free_slots[--n_free]];
     e->tb = h;
     e->func_idx = func_idx;
+    e->used = 1;
     h->instance = e;
-    instances_end = (instances_end + 1) % INSTANCES_BUF_MAX;
     instances_alive++;
 }
 
@@ -155,29 +157,40 @@ static int get_instance(WasmTBHeader *h)
         h->counter = INT32_MAX / 2;
         return 0;
     }
+    e->used = 1;
     return e->func_idx;
 }
 
 /*
- * Drop the older half of the instances. They count as gone right away: their
- * table slots are freed now, and V8 reclaims the modules whenever it GCs.
- * (Waiting for the FinalizationRegistry instead kept the vCPU interpreting
- * everything new for minutes: finalizers only run when this worker returns
- * to its event loop.)
+ * Free a quarter of the slots, second-chance (clock) order: modules entered
+ * since the last sweep are kept, cold ones dropped. Dropped modules count as
+ * gone right away: their table slots are freed now and V8 reclaims them
+ * whenever it GCs (waiting for the FinalizationRegistry kept the vCPU
+ * interpreting everything new for minutes: finalizers only run when this
+ * worker returns to its event loop).
  */
 static void remove_instances(void)
 {
-    int num;
+    int target = MAX_INSTANCES / 4, removed = 0;
 
-    num = instances_count() / 2;
-    XSTAT_ADD(n_jit_evict, num);
-    for (int i = 0; i < num; i++) {
-        WasmInstance *e = &instances[instances_begin];
+    for (int scanned = 0; removed < target && scanned < 2 * MAX_INSTANCES;
+         scanned++) {
+        WasmInstance *e = &instances[clock_hand];
+        clock_hand = (clock_hand + 1) % MAX_INSTANCES;
+        if (!e->tb) {
+            continue;
+        }
+        if (e->used && scanned < MAX_INSTANCES) {
+            e->used = 0;
+            continue;
+        }
         wasm32_remove_function(e->func_idx);
         e->tb = NULL;
-        instances_begin = (instances_begin + 1) % INSTANCES_BUF_MAX;
+        free_slots[n_free++] = e - instances;
+        removed++;
     }
-    instances_alive -= num;
+    instances_alive -= removed;
+    XSTAT_ADD(n_jit_evict, removed);
 }
 
 static void check_instances_collected(void)
@@ -233,6 +246,10 @@ static void wasm32_init(void)
     if (env) {
         jit_threshold_high = atoi(env);
     }
+    env = getenv("XEMU_WASM_JIT_MAX");
+    if (env) {
+        max_instances = MAX(64, MIN(atoi(env), MAX_INSTANCES_BUF));
+    }
     env = getenv("XEMU_WASM_JIT_BUDGET");   /* percent */
     if (env) {
         jit_budget = atoi(env) / 100.0;
@@ -287,26 +304,28 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         fidx = get_instance(h);
         if (fidx > 0) {
             wasm_ctx.do_init = 1;
+            XPHASE_SET(XPHASE_VCPU, NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
+            XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else if (h->counter < wasm32_jit_threshold) {
             h->counter++;
             XPHASE_SET(XPHASE_VCPU, "tci");
             res = tci_exec_tb(env, h->tci_ptr);
-            XPHASE_SET(XPHASE_VCPU, NULL);
+            XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else if (!can_add_instance()) {
             XPHASE_SET(XPHASE_VCPU, "jit_evict");
             remove_instances();
             check_instances_collected();
             XPHASE_SET(XPHASE_VCPU, "tci");
             res = tci_exec_tb(env, h->tci_ptr);
-            XPHASE_SET(XPHASE_VCPU, NULL);
+            XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else {
             XPHASE_SET(XPHASE_VCPU, "jit_compile");
             double t0 = emscripten_get_now();
             fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
                                       h->import_ptr, h->import_size / 4);
             double t1 = emscripten_get_now();
-            XPHASE_SET(XPHASE_VCPU, NULL);
+            XPHASE_SET(XPHASE_VCPU, "dispatch");
             jit_debt_ms += t1 - t0;
             jit_budget_update(t1);
             XSTAT_INC(n_jit_compile);
@@ -318,7 +337,9 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                         "fidx=%d\n", h, h->wasm_size, h->import_size / 4, fidx);
             }
             wasm_ctx.do_init = 1;
+            XPHASE_SET(XPHASE_VCPU, NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
+            XPHASE_SET(XPHASE_VCPU, "dispatch");
             if (unlikely(wasm32_jit_debug > 0)) {
                 fprintf(stderr, "[jit]  -> res=%lx next=%p\n",
                         (unsigned long)res, wasm_ctx.tb_ptr);

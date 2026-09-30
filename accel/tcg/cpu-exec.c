@@ -1001,7 +1001,7 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                 mmap_lock();
                 XPHASE_SET(XPHASE_VCPU, "tb_gen");
                 tb = tb_gen_code(cpu, s);
-                XPHASE_SET(XPHASE_VCPU, NULL);
+                XPHASE_SET(XPHASE_VCPU, "dispatch");
                 mmap_unlock();
 
                 /*
@@ -1056,7 +1056,7 @@ static int cpu_exec_setjmp(CPUState *cpu, SyncClocks *sc)
     /* Prepare setjmp context for exception handling. */
     if (unlikely(sigsetjmp(cpu->jmp_env, 0) != 0)) {
         XSTAT_INC(n_cpu_exit);
-        XPHASE_SET(XPHASE_VCPU, NULL);
+        XPHASE_SET(XPHASE_VCPU, "dispatch");
         cpu_exec_longjmp_cleanup(cpu);
     }
 
