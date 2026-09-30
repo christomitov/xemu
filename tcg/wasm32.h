@@ -48,6 +48,21 @@ typedef struct WasmTBHeader {
 
 QEMU_BUILD_BUG_ON(sizeof(WasmTBHeader) % 8 != 0);
 
+/* shared with generated code that chains TBs (tcg-target.c.inc) */
+typedef struct WasmInstance {
+    void *tb;       /* the TB header this instance belongs to, or NULL */
+    int func_idx;   /* table index of its start function */
+    int used;       /* entered since the last eviction sweep */
+} WasmInstance;
+
+#define WASM_TB_INSTANCE_OFF    24
+#define WASM_INSTANCE_TB_OFF    0
+#define WASM_INSTANCE_FIDX_OFF  4
+#define WASM_INSTANCE_USED_OFF  8
+QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, instance) != WASM_TB_INSTANCE_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmInstance, func_idx) != WASM_INSTANCE_FIDX_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
+
 /* Blocks run by the interpreter this many times get compiled to wasm. */
 extern int wasm32_jit_threshold;
 

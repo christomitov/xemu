@@ -223,6 +223,9 @@ void breakpoint_handler(CPUState *cs)
                  */
                 raise_exception(env, EXCP01_DB);
             } else {
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("noexc:bpt"); }
+#endif
                 cpu_loop_exit_noexc(cs);
             }
         }

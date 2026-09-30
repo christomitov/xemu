@@ -131,6 +131,9 @@ void cpu_check_watchpoint(CPUState *cpu, vaddr addr, vaddr len,
                 cpu_loop_exit(cpu);
             } else {
                 /* Force execution of one insn next time.  */
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("noexc:watchpoint"); }
+#endif
                 cpu->cflags_next_tb = 1 | CF_NOIRQ | curr_cflags(cpu);
                 cpu_loop_exit_noexc(cpu);
             }
