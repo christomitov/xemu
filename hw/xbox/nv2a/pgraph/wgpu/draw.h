@@ -134,6 +134,11 @@ typedef struct PGRAPHWgpuDrawState {
     uint32_t scratch_zeta_w, scratch_zeta_h;
     uint32_t pass_width, pass_height; /* attachment size */
     WgpuPipelineBinding *pass_pipeline; /* bound in current pass */
+    /* dynamic state already set in the current pass (skip re-sending) */
+    uint32_t pass_vp[2], pass_sc[4];
+    uint32_t pass_bg_gen;   /* 0 = none bound (generations start at 1) */
+    uint32_t pass_bg_off[2];
+    bool pass_index_bound;  /* whole index buffer bound in this pass */
 
     /* pipelines (draw.c) */
     Lru pipeline_cache;

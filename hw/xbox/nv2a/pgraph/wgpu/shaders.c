@@ -394,12 +394,14 @@ static ShaderLayout *get_layout(PGRAPHWgpuState *r, const ShaderLayoutKey *key)
     entries[n++] = (WGPUBindGroupLayoutEntry){
         .binding = WGPU_SHADER_VSH_UBO_BINDING,
         .visibility = WGPUShaderStage_Vertex,
-        .buffer = { .type = WGPUBufferBindingType_Uniform },
+        .buffer = { .type = WGPUBufferBindingType_Uniform,
+                    .hasDynamicOffset = true },
     };
     entries[n++] = (WGPUBindGroupLayoutEntry){
         .binding = WGPU_SHADER_PSH_UBO_BINDING,
         .visibility = WGPUShaderStage_Fragment,
-        .buffer = { .type = WGPUBufferBindingType_Uniform },
+        .buffer = { .type = WGPUBufferBindingType_Uniform,
+                    .hasDynamicOffset = true },
     };
     for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
         if (key->tex_dim[i] == WGPUTextureViewDimension_Undefined) {
@@ -666,10 +668,14 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
         }
     }
 
+    /*
+     * The uniform blocks are bound with dynamic offsets (passed to
+     * SetBindGroup per draw, see pgraph_wgpu_uniform_offsets), so changing
+     * uniforms no longer needs a new bind group: previously matrices
+     * changing per draw meant CreateBindGroup + Release on every draw.
+     */
     if (s->bind_group && s->bind_group_layout == l &&
         s->bind_group_buffer == s->uniform_buffer &&
-        !memcmp(s->bind_group_offsets, s->uniform_block_offsets,
-                sizeof(s->bind_group_offsets)) &&
         !memcmp(s->bind_group_sizes, sizes, sizeof(sizes)) &&
         !memcmp(s->bind_group_views, views, sizeof(views)) &&
         !memcmp(s->bind_group_samplers, samplers, sizeof(samplers))) {
@@ -684,7 +690,7 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
             .binding = i == 0 ? WGPU_SHADER_VSH_UBO_BINDING :
                                 WGPU_SHADER_PSH_UBO_BINDING,
             .buffer = s->uniform_buffer,
-            .offset = s->uniform_block_offsets[i],
+            .offset = 0,
             .size = sizes[i],
         };
     }
@@ -707,6 +713,7 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
         /* command encoders keep a reference while it is in use */
         wgpuBindGroupRelease(s->bind_group);
     }
+    s->bind_group_gen++;
     s->bind_group = wgpuDeviceCreateBindGroup(
         r->device, &(WGPUBindGroupDescriptor){
                        .layout = l->bind_group_layout,
@@ -721,6 +728,17 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
     memcpy(s->bind_group_samplers, samplers, sizeof(samplers));
 
     return s->bind_group;
+}
+
+/* Dynamic offsets for bind group 0, in binding order (VSH UBO, PSH UBO). */
+void pgraph_wgpu_uniform_offsets(PGRAPHState *pg, uint32_t out[2])
+{
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    QEMU_BUILD_BUG_ON(WGPU_SHADER_VSH_UBO_BINDING != 0 ||
+                      WGPU_SHADER_PSH_UBO_BINDING != 1);
+    out[0] = r->shaders.uniform_block_offsets[0];
+    out[1] = r->shaders.uniform_block_offsets[1];
 }
 
 /* ---- binding ---- */
