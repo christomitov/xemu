@@ -67,7 +67,6 @@ void xemu_wasm_cpu_dump(void)
     if (cpu) {
         cpu_dump_state(cpu, stderr, 0x30000);
     }
-    xemu_wasm_dump_ramblocks();
 }
 
 uintptr_t xemu_wasm_stack_size(void)
@@ -81,9 +80,6 @@ void xemu_wasm_assert_stack(size_t min_bytes, const char *where)
     size_t sz = xemu_wasm_stack_size();
     void *self = pthread_self();
 
-    fprintf(stderr, "[stack] ok %s: stack=%lu tid=%lu tls=%p pself=%p\n",
-            where, (unsigned long)sz, (unsigned long)(uintptr_t)self,
-            (void *)0, self);
     if (sz < min_bytes) {
         fprintf(stderr, "[stack] FAIL %s: stack=%lu < required=%lu tid=%lu\n",
                 where, (unsigned long)sz, (unsigned long)min_bytes,
@@ -541,12 +537,6 @@ static void xemu_wasm_gui_tick(void *opaque)
     xemu_wasm_lowmem_check("gui tick pre-lookup");
     {
         QemuConsole *con = qemu_console_lookup_by_index(0);
-        static int warned;
-        if (con && !warned) {
-            warned = 1;
-            fprintf(stderr, "[wasm-gui] tick: con=%p graphic=%d\n",
-                    con, qemu_console_is_graphic(con));
-        }
         /* No display listener exists under -display none, so nothing else
          * refreshes the console: drive nv2a's gfx_update (which raises the
          * guest VBLANK interrupt and exports the frame to the page) here,
@@ -576,8 +566,6 @@ int main(int argc, char **argv)
     fprintf(stderr, "xemu_version: %s\n", xemu_version);
     fprintf(stderr, "xemu_commit: %s\n", xemu_commit);
     fprintf(stderr, "xemu_date: %s\n", xemu_date);
-    fwrite("xemu_wasm: booting headless (null renderer)\n", 44, 1, stderr);
-    fwrite("[MAIN] entered main()\n", 22, 1, stderr);
 
     xemu_wasm_assert_stack(0xF00000, "main");
     lowmem_fill_pattern();
@@ -605,18 +593,13 @@ int main(int argc, char **argv)
         if (rend && strcmp(rend, "webgpu") == 0) {
             g_config.display.renderer = CONFIG_DISPLAY_RENDERER_WEBGPU;
         }
-        fprintf(stderr, "[MAIN] renderer=%s\n", rend ? rend : "null");
     }
 
     fwrite("[MAIN] calling qemu_init\n", 25, 1, stderr);
     sk = getenv("XEMU_WASM_SKIP");
-    fprintf(stderr, "[MAIN] XEMU_WASM_SKIP=%s\n", sk ? sk : "(unset)");
     qemu_init(argc, argv);
     fwrite("[MAIN] qemu_init returned\n", 26, 1, stderr);
 
-    fprintf(stderr, "[layout] stack %p-%p data_end %p heap_base %p global_base %p\n",
-            (void *)emscripten_stack_get_end(), (void *)emscripten_stack_get_base(),
-            (void *)&__data_end, (void *)&__heap_base, (void *)&__global_base);
 
     xemu_wasm_dump_ramblocks();
 
@@ -628,7 +611,6 @@ int main(int argc, char **argv)
     s_gui_timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_MS,
                             xemu_wasm_gui_tick, NULL);
     timer_mod(s_gui_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
-    fwrite("[wasm-gui] timer armed\n", 23, 1, stderr);
 
     bql_unlock();
     replay_mutex_unlock();
@@ -636,7 +618,6 @@ int main(int argc, char **argv)
     bql_lock();
     fwrite("[MAIN] entering qemu_main_loop\n", 31, 1, stderr);
     status = qemu_main_loop();
-    fprintf(stderr, "[MAIN] qemu_main_loop returned status=%d\n", status);
     qemu_cleanup(status);
     fwrite("[MAIN] qemu_cleanup done\n", 25, 1, stderr);
     bql_unlock();

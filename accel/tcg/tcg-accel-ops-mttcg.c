@@ -69,8 +69,6 @@ static void *mttcg_cpu_thread_fn(void *arg)
 #endif
 #ifdef EMSCRIPTEN
     extern unsigned long xemu_wasm_stack_size(void);
-    fprintf(stderr, "[stack] vcpu thread stack=%lu tid=%lu\n",
-            xemu_wasm_stack_size(), (unsigned long)pthread_self());
 #endif
     MttcgForceRcuNotifier force_rcu;
     CPUState *cpu = arg;

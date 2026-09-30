@@ -541,15 +541,6 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
     disp->surface_bound_view = surface->view;
     surface->frame_time = pg->frame_time;
     *bg = disp->surface_bind_group;
-    {
-        static int n;
-        if (n++ % 300 == 0) {
-            fprintf(stderr, "[wgpu] display surface %" HWADDR_PRIx " %ux%u "
-                    "fmt=%d draw_dirty=%d\n", surface->vram_addr,
-                    surface->width, surface->height, surface->host_fmt.format,
-                    surface->draw_dirty);
-        }
-    }
     return true;
 }
 
@@ -641,7 +632,7 @@ void pgraph_wgpu_render_display(NV2AState *d)
     XSTAT_T1(ns_present);
 
     static unsigned presented;
-    if (++presented % 300 == 1) {
+    if (++presented == 1) {
         fprintf(stderr, "[wgpu] presented %u frames (%dx%d)\n", presented,
                 disp->width, disp->height);
     }

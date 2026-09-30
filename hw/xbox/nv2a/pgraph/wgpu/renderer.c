@@ -86,9 +86,7 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
         .requiredFeatureCount = 1,
         .requiredFeatures = feats,
     };
-    fprintf(stderr, "[wgpu] init: creating instance\n");
     r->instance = wgpuCreateInstance(&idesc);
-    fprintf(stderr, "[wgpu] init: instance=%p, requesting adapter\n", (void *)r->instance);
     if (!r->instance) {
         error_setg(errp, "WebGPU: wgpuCreateInstance failed");
         return;
@@ -102,7 +100,6 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
         (WGPURequestAdapterCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
                                           .callback = on_adapter,
                                           .userdata1 = r }));
-    fprintf(stderr, "[wgpu] init: adapter=%p\n", (void *)r->adapter);
     if (!r->adapter) {
         error_setg(errp, "WebGPU: no adapter (is WebGPU enabled?)");
         return;
@@ -156,7 +153,6 @@ static void init_device(PGRAPHWgpuState *r, Error **errp)
     r->queue = wgpuDeviceGetQueue(r->device);
     r->limits = (WGPULimits)WGPU_LIMITS_INIT;
     wgpuDeviceGetLimits(r->device, &r->limits);
-    fprintf(stderr, "[wgpu] init: device=%p, creating surface\n", (void *)r->device);
 
     WGPUEmscriptenSurfaceSourceCanvasHTMLSelector sel = {
         .chain = { .sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector },

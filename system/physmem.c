@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "exec/page-vary.h"
 #include "hw/core/cpu.h"
 #include "qapi/error.h"
@@ -872,15 +873,6 @@ static void do_mem_access_callback_insert(CPUState *cpu, run_on_cpu_data data)
 {
     MemAccessCallback *cb = (MemAccessCallback *)data.host_ptr;
     QTAILQ_INSERT_TAIL(&cpu->mem_access_callbacks, cb, entry);
-#ifdef EMSCRIPTEN
-    {
-        static int n;
-        if (n++ < 3) {
-            fprintf(stderr, "[wasm] mem access callback inserted ram=%llx len=%llx\n",
-                    (unsigned long long)cb->addr, (unsigned long long)cb->len);
-        }
-    }
-#endif
 }
 
 MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
@@ -939,6 +931,7 @@ void mem_check_access_callback_vaddr(CPUState *cpu,
 void mem_check_access_callback_ramaddr(CPUState *cpu,
                                        hwaddr ram_addr, vaddr len, int flags)
 {
+    XSTAT_INC(n_watch_access); /* CPU access to a GPU-surface page */
     MemAccessCallback *cb;
     QTAILQ_FOREACH(cb, &cpu->mem_access_callbacks, entry) {
         if (access_callback_address_matches(cb, ram_addr, len)) {
