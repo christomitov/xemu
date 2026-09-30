@@ -18,6 +18,36 @@
 #include "qemu/xemu-wasm-stats.h"
 #include "qapi/error.h"
 
+/*
+ * Return to the worker's event loop so the browser presents the frame.
+ * emscripten_sleep(0) goes through setTimeout, which browsers clamp to
+ * ~4 ms: with the guest waiting on the GPU that was ~14% of the GPU
+ * thread and ~4 ms of every frame. A MessageChannel message comes back on
+ * the next task without the clamp. XEMU_WASM_FASTYIELD=0 restores sleep(0).
+ */
+EM_ASYNC_JS(void, xemu_wasm_yield_task, (void), {
+    await new Promise((resolve) => {
+        const ch = new MessageChannel();
+        ch.port1.onmessage = () => { ch.port1.close(); resolve(); };
+        ch.port2.postMessage(0);
+    });
+});
+
+static void xemu_wasm_present_yield(void)
+{
+    static int fast = -1;
+
+    if (fast < 0) {
+        const char *e = getenv("XEMU_WASM_FASTYIELD");
+        fast = !(e && *e == '0');
+    }
+    if (fast) {
+        xemu_wasm_yield_task();
+    } else {
+        emscripten_sleep(0);
+    }
+}
+
 static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
                        WGPUStringView msg, void *u1, void *u2)
 {
@@ -336,7 +366,7 @@ static void pgraph_wgpu_process_pending(NV2AState *d)
             /* present the frame: yield with no locks held (see display.c) */
             r->display.need_yield = false;
             XPHASE_SET(XPHASE_GPU, "yield");
-            emscripten_sleep(0);
+            xemu_wasm_present_yield();
             XPHASE_SET(XPHASE_GPU, NULL);
         }
         qemu_mutex_lock(&d->pfifo.lock);

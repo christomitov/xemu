@@ -420,7 +420,7 @@ static int compile_tb(WasmTBHeader *h, int depth)
  * successors fall through to the normal exit. tb_flush cannot happen while
  * a region runs or is Asyncify-suspended (single vCPU thread).
  */
-#define REGION_MAX          8
+#define REGION_MAX          16
 #define REGION_MAX_BYTES    (64 * 1024) /* member bodies, total */
 #define REGION_NUM_GLOBALS  17      /* TCG regs + BLOCK_PTR (backend) */
 #define REGION_HELPER_START 4       /* HELPER_IDX_START (backend) */
