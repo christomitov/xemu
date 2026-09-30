@@ -266,6 +266,34 @@ floatx80 int32_to_floatx80__hard(int32_t a, float_status *status)
 
 #endif /* defined(XBOX) && defined(__x86_64__) */
 
+/*
+ * Exact host-FP fast paths (see fast_fp.h).  The x86-64 "hard FPU" variant
+ * of this file keeps its own long-double implementation untouched.
+ */
+#ifdef USE_HARD_FPU
+#define FFP_DISABLE 1
+#endif
+#include "fast_fp.h"
+
+#ifndef USE_HARD_FPU
+int xemu_fast_fp_state = -1;
+
+int xemu_fast_fp_init(void)
+{
+    const char *e = getenv("XEMU_FAST_FP");
+    int on;
+
+#ifdef __EMSCRIPTEN__
+    on = !(e && e[0] == '0');
+#else
+    on = e && e[0] == '1';
+#endif
+    on = on && FFP_SUPPORTED;
+    xemu_fast_fp_state = on;
+    return on;
+}
+#endif
+
 static inline void fpush(CPUX86State *env)
 {
     env->fpstt = (env->fpstt - 1) & 7;
@@ -418,7 +446,7 @@ static void merge_exception_flags(CPUX86State *env, int old_flags)
 static inline floatx80 helper_fdiv(CPUX86State *env, floatx80 a, floatx80 b)
 {
     int old_flags = save_exception_flags(env);
-    floatx80 ret = floatx80_div(a, b, &env->fp_status);
+    floatx80 ret = ffp_floatx80_div(a, b, &env->fp_status);
     merge_exception_flags(env, old_flags);
     return ret;
 }
@@ -444,7 +472,7 @@ void helper_flds_FT0(CPUX86State *env, uint32_t val)
     } u;
 
     u.i = val;
-    FT0 = float32_to_floatx80(u.f, &env->fp_status);
+    FT0 = ffp_float32_to_floatx80(u.f, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
@@ -457,13 +485,13 @@ void helper_fldl_FT0(CPUX86State *env, uint64_t val)
     } u;
 
     u.i = val;
-    FT0 = float64_to_floatx80(u.f, &env->fp_status);
+    FT0 = ffp_float64_to_floatx80(u.f, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fildl_FT0(CPUX86State *env, int32_t val)
 {
-    FT0 = int32_to_floatx80(val, &env->fp_status);
+    FT0 = ffp_int32_to_floatx80(val, &env->fp_status);
 }
 
 void helper_flds_ST0(CPUX86State *env, uint32_t val)
@@ -477,7 +505,7 @@ void helper_flds_ST0(CPUX86State *env, uint32_t val)
 
     new_fpstt = (env->fpstt - 1) & 7;
     u.i = val;
-    env->fpregs[new_fpstt].d = float32_to_floatx80(u.f, &env->fp_status);
+    env->fpregs[new_fpstt].d = ffp_float32_to_floatx80(u.f, &env->fp_status);
     env->fpstt = new_fpstt;
     env->fptags[new_fpstt] = 0; /* validate stack entry */
     merge_exception_flags(env, old_flags);
@@ -494,7 +522,7 @@ void helper_fldl_ST0(CPUX86State *env, uint64_t val)
 
     new_fpstt = (env->fpstt - 1) & 7;
     u.i = val;
-    env->fpregs[new_fpstt].d = float64_to_floatx80(u.f, &env->fp_status);
+    env->fpregs[new_fpstt].d = ffp_float64_to_floatx80(u.f, &env->fp_status);
     env->fpstt = new_fpstt;
     env->fptags[new_fpstt] = 0; /* validate stack entry */
     merge_exception_flags(env, old_flags);
@@ -510,7 +538,15 @@ static FloatX80RoundPrec tmp_maximise_precision(float_status *st)
 void helper_fildl_ST0(CPUX86State *env, int32_t val)
 {
     int new_fpstt;
-    FloatX80RoundPrec old = tmp_maximise_precision(&env->fp_status);
+    FloatX80RoundPrec old;
+
+    if (ffp_enabled()) {
+        /* exact with a 64-bit significand; no flags */
+        fpush(env);
+        ST0 = ffp_int64_to_x80(val);
+        return;
+    }
+    old = tmp_maximise_precision(&env->fp_status);
 
     new_fpstt = (env->fpstt - 1) & 7;
     env->fpregs[new_fpstt].d = int32_to_floatx80(val, &env->fp_status);
@@ -523,7 +559,15 @@ void helper_fildl_ST0(CPUX86State *env, int32_t val)
 void helper_fildll_ST0(CPUX86State *env, int64_t val)
 {
     int new_fpstt;
-    FloatX80RoundPrec old = tmp_maximise_precision(&env->fp_status);
+    FloatX80RoundPrec old;
+
+    if (ffp_enabled()) {
+        /* exact with a 64-bit significand; no flags */
+        fpush(env);
+        ST0 = ffp_int64_to_x80(val);
+        return;
+    }
+    old = tmp_maximise_precision(&env->fp_status);
 
     new_fpstt = (env->fpstt - 1) & 7;
     env->fpregs[new_fpstt].d = int64_to_floatx80(val, &env->fp_status);
@@ -541,7 +585,7 @@ uint32_t helper_fsts_ST0(CPUX86State *env)
         uint32_t i;
     } u;
 
-    u.f = floatx80_to_float32(ST0, &env->fp_status);
+    u.f = ffp_floatx80_to_float32(ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
     return u.i;
 }
@@ -554,7 +598,7 @@ uint64_t helper_fstl_ST0(CPUX86State *env)
         uint64_t i;
     } u;
 
-    u.f = floatx80_to_float64(ST0, &env->fp_status);
+    u.f = ffp_floatx80_to_float64(ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
     return u.i;
 }
@@ -564,7 +608,7 @@ int32_t helper_fist_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int32_t val;
 
-    val = floatx80_to_int32(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int32(ST0, &env->fp_status);
     if (val != (int16_t)val) {
         set_float_exception_flags(float_flag_invalid, &env->fp_status);
         val = -32768;
@@ -578,7 +622,7 @@ int32_t helper_fistl_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int32_t val;
 
-    val = floatx80_to_int32(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int32(ST0, &env->fp_status);
     if (get_float_exception_flags(&env->fp_status) & float_flag_invalid) {
         val = 0x80000000;
     }
@@ -591,7 +635,7 @@ int64_t helper_fistll_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int64_t val;
 
-    val = floatx80_to_int64(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int64(ST0, &env->fp_status);
     if (get_float_exception_flags(&env->fp_status) & float_flag_invalid) {
         val = 0x8000000000000000ULL;
     }
@@ -604,7 +648,7 @@ int32_t helper_fistt_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int32_t val;
 
-    val = floatx80_to_int32_round_to_zero(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int32_round_to_zero(ST0, &env->fp_status);
     if (val != (int16_t)val) {
         set_float_exception_flags(float_flag_invalid, &env->fp_status);
         val = -32768;
@@ -618,7 +662,7 @@ int32_t helper_fisttl_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int32_t val;
 
-    val = floatx80_to_int32_round_to_zero(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int32_round_to_zero(ST0, &env->fp_status);
     if (get_float_exception_flags(&env->fp_status) & float_flag_invalid) {
         val = 0x80000000;
     }
@@ -631,7 +675,7 @@ int64_t helper_fisttll_ST0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     int64_t val;
 
-    val = floatx80_to_int64_round_to_zero(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int64_round_to_zero(ST0, &env->fp_status);
     if (get_float_exception_flags(&env->fp_status) & float_flag_invalid) {
         val = 0x8000000000000000ULL;
     }
@@ -727,7 +771,7 @@ void helper_fcom_ST0_FT0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     FloatRelation ret;
 
-    ret = floatx80_compare(ST0, FT0, &env->fp_status);
+    ret = ffp_floatx80_compare(ST0, FT0, &env->fp_status);
     env->fpus = (env->fpus & ~0x4500) | fcom_ccval[ret + 1];
     merge_exception_flags(env, old_flags);
 }
@@ -737,7 +781,7 @@ void helper_fucom_ST0_FT0(CPUX86State *env)
     int old_flags = save_exception_flags(env);
     FloatRelation ret;
 
-    ret = floatx80_compare_quiet(ST0, FT0, &env->fp_status);
+    ret = ffp_floatx80_compare_quiet(ST0, FT0, &env->fp_status);
     env->fpus = (env->fpus & ~0x4500) | fcom_ccval[ret + 1];
     merge_exception_flags(env, old_flags);
 }
@@ -750,7 +794,7 @@ void helper_fcomi_ST0_FT0(CPUX86State *env)
     int eflags;
     FloatRelation ret;
 
-    ret = floatx80_compare(ST0, FT0, &env->fp_status);
+    ret = ffp_floatx80_compare(ST0, FT0, &env->fp_status);
     eflags = cpu_cc_compute_all(env) & ~(CC_Z | CC_P | CC_C);
     CC_SRC = eflags | fcomi_ccval[ret + 1];
     CC_OP = CC_OP_EFLAGS;
@@ -763,7 +807,7 @@ void helper_fucomi_ST0_FT0(CPUX86State *env)
     int eflags;
     FloatRelation ret;
 
-    ret = floatx80_compare_quiet(ST0, FT0, &env->fp_status);
+    ret = ffp_floatx80_compare_quiet(ST0, FT0, &env->fp_status);
     eflags = cpu_cc_compute_all(env) & ~(CC_Z | CC_P | CC_C);
     CC_SRC = eflags | fcomi_ccval[ret + 1];
     CC_OP = CC_OP_EFLAGS;
@@ -773,28 +817,28 @@ void helper_fucomi_ST0_FT0(CPUX86State *env)
 void helper_fadd_ST0_FT0(CPUX86State *env)
 {
     int old_flags = save_exception_flags(env);
-    ST0 = floatx80_add(ST0, FT0, &env->fp_status);
+    ST0 = ffp_floatx80_add(ST0, FT0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fmul_ST0_FT0(CPUX86State *env)
 {
     int old_flags = save_exception_flags(env);
-    ST0 = floatx80_mul(ST0, FT0, &env->fp_status);
+    ST0 = ffp_floatx80_mul(ST0, FT0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fsub_ST0_FT0(CPUX86State *env)
 {
     int old_flags = save_exception_flags(env);
-    ST0 = floatx80_sub(ST0, FT0, &env->fp_status);
+    ST0 = ffp_floatx80_sub(ST0, FT0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fsubr_ST0_FT0(CPUX86State *env)
 {
     int old_flags = save_exception_flags(env);
-    ST0 = floatx80_sub(FT0, ST0, &env->fp_status);
+    ST0 = ffp_floatx80_sub(FT0, ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
@@ -813,28 +857,28 @@ void helper_fdivr_ST0_FT0(CPUX86State *env)
 void helper_fadd_STN_ST0(CPUX86State *env, int st_index)
 {
     int old_flags = save_exception_flags(env);
-    ST(st_index) = floatx80_add(ST(st_index), ST0, &env->fp_status);
+    ST(st_index) = ffp_floatx80_add(ST(st_index), ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fmul_STN_ST0(CPUX86State *env, int st_index)
 {
     int old_flags = save_exception_flags(env);
-    ST(st_index) = floatx80_mul(ST(st_index), ST0, &env->fp_status);
+    ST(st_index) = ffp_floatx80_mul(ST(st_index), ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fsub_STN_ST0(CPUX86State *env, int st_index)
 {
     int old_flags = save_exception_flags(env);
-    ST(st_index) = floatx80_sub(ST(st_index), ST0, &env->fp_status);
+    ST(st_index) = ffp_floatx80_sub(ST(st_index), ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
 void helper_fsubr_STN_ST0(CPUX86State *env, int st_index)
 {
     int old_flags = save_exception_flags(env);
-    ST(st_index) = floatx80_sub(ST0, ST(st_index), &env->fp_status);
+    ST(st_index) = ffp_floatx80_sub(ST0, ST(st_index), &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
@@ -1070,7 +1114,7 @@ void helper_fbst_ST0(CPUX86State *env, target_ulong ptr)
     access_prepare(&ac, env, ptr, 10, MMU_DATA_STORE, GETPC());
     temp.d = ST0;
 
-    val = floatx80_to_int64(ST0, &env->fp_status);
+    val = ffp_floatx80_to_int64(ST0, &env->fp_status);
     mem_ref = ptr;
     if (val >= 1000000000000000000LL || val <= -1000000000000000000LL) {
         set_float_exception_flags(float_flag_invalid, &env->fp_status);
@@ -2502,7 +2546,7 @@ void helper_fsqrt(CPUX86State *env)
         env->fpus &= ~0x4700;  /* (C3,C2,C1,C0) <-- 0000 */
         env->fpus |= 0x400;
     }
-    ST0 = floatx80_sqrt(ST0, &env->fp_status);
+    ST0 = ffp_floatx80_sqrt(ST0, &env->fp_status);
     merge_exception_flags(env, old_flags);
 }
 
