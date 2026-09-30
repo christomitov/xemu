@@ -11,6 +11,10 @@
  *
  */
 #include "qemu/osdep.h"
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#include <emscripten/threading.h>
+#endif
 #include "qemu/thread.h"
 #include "qemu/atomic.h"
 #include "qemu/notify.h"
@@ -425,6 +429,12 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     err = pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
     if (err) {
         error_exit(err, __func__);
+    }
+    /* The WebGPU renderer runs on the NV2A pfifo thread: hand it the page's
+     * <canvas id="canvas"> as an OffscreenCanvas. */
+    if (strcmp(name, "nv2a.pfifo_thread") == 0 && getenv("XEMU_RENDERER") &&
+        strcmp(getenv("XEMU_RENDERER"), "webgpu") == 0) {
+        emscripten_pthread_attr_settransferredcanvases(&attr, "#canvas");
     }
 #endif
 

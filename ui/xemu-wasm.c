@@ -16,6 +16,7 @@
 #include "qapi/error.h"
 #include "qapi/qapi-commands-block.h"
 #include "hw/xbox/smbus.h"
+#include "ui/xemu-settings.h"
 #include <emscripten.h>
 #include <emscripten/threading.h>
 #include <emscripten/stack.h>
@@ -31,6 +32,7 @@ typedef struct QemuConsole QemuConsole;
 QemuConsole *qemu_console_lookup_by_index(unsigned int index);
 int qemu_console_is_graphic(QemuConsole *con);
 void graphic_hw_update(QemuConsole *con);
+void nv2a_wasm_request_present(void);
 extern char __data_end[];
 extern char __heap_base[];
 extern char __global_base[];
@@ -345,13 +347,44 @@ const char *xemu_settings_get_default_eeprom_path(void)
     return "/xemu/eeprom.bin";
 }
 
-void xemu_input_update_controller(void *state) { (void)state; }
-void xemu_input_update_rumble(void *state) { (void)state; }
+/*
+ * Player 1 controller fed from the page (Gamepad API / keyboard+mouse).
+ * The browser thread writes pad_in via xemu_wasm_set_pad(); the XID device
+ * copies it into the bound ControllerState when the guest polls.
+ */
+#include "ui/xemu-input.h"
+static ControllerState wasm_pad = { .name = "Browser", .bound = 0 };
+static volatile uint32_t pad_buttons;
+static volatile int16_t pad_axis[CONTROLLER_AXIS__COUNT];
 
-int xemu_input_get_bound(int index)
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_pad(int buttons, int lt, int rt,
+                                            int lx, int ly, int rx, int ry)
 {
-    (void)index;
-    return 0;
+    pad_axis[CONTROLLER_AXIS_LTRIG] = lt;
+    pad_axis[CONTROLLER_AXIS_RTRIG] = rt;
+    pad_axis[CONTROLLER_AXIS_LSTICK_X] = lx;
+    pad_axis[CONTROLLER_AXIS_LSTICK_Y] = ly;
+    pad_axis[CONTROLLER_AXIS_RSTICK_X] = rx;
+    pad_axis[CONTROLLER_AXIS_RSTICK_Y] = ry;
+    __atomic_store_n(&pad_buttons, (uint32_t)buttons, __ATOMIC_RELEASE);
+}
+
+void xemu_input_update_controller(ControllerState *state)
+{
+    state->buttons = __atomic_load_n(&pad_buttons, __ATOMIC_ACQUIRE);
+    for (int i = 0; i < CONTROLLER_AXIS__COUNT; i++) {
+        state->axis[i] = pad_axis[i];
+    }
+}
+
+void xemu_input_update_rumble(ControllerState *state)
+{
+    (void)state; /* TODO: forward to Gamepad.vibrationActuator */
+}
+
+ControllerState *xemu_input_get_bound(int index)
+{
+    return index == 0 ? &wasm_pad : NULL;
 }
 
 int xemu_input_get_test_mode(void)
@@ -459,6 +492,7 @@ static void xemu_wasm_gui_tick(void *opaque)
         if (con) {
             graphic_hw_update(con);
         }
+        nv2a_wasm_request_present();
     }
     xemu_wasm_lowmem_check("gui tick post-lookup");
     xemu_wasm_lowmem_check("gui tick pre-getms");
@@ -499,6 +533,17 @@ int main(int argc, char **argv)
             argv[i + 1] = NULL;
             break;
         }
+    }
+
+    /* The page sets XEMU_RENDERER=webgpu when navigator.gpu exists; the
+     * settings constructor ran before the page could set ENV, so apply the
+     * renderer choice here, before qemu_init creates the NV2A. */
+    {
+        const char *rend = getenv("XEMU_RENDERER");
+        if (rend && strcmp(rend, "webgpu") == 0) {
+            g_config.display.renderer = CONFIG_DISPLAY_RENDERER_WEBGPU;
+        }
+        fprintf(stderr, "[MAIN] renderer=%s\n", rend ? rend : "null");
     }
 
     fwrite("[MAIN] calling qemu_init\n", 25, 1, stderr);

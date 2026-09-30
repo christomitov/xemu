@@ -11,12 +11,19 @@
 #include "qemu/osdep.h"
 #include "qemu/iov.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
+#include "ui/xemu-settings.h"
 
 void xemu_wasm_fb_update(NV2AState *d)
 {
     static bool dir_ready;
     static char last_params[128];
     static bool wrote_once;
+
+    /* WebGPU presents straight to the canvas; MEMFS export is the
+     * no-WebGPU fallback only. */
+    if (g_config.display.renderer == CONFIG_DISPLAY_RENDERER_WEBGPU) {
+        return;
+    }
 
     if (!dir_ready) {
         qemu_mkdir("/xemu/fb");
