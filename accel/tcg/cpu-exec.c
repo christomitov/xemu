@@ -258,6 +258,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
 
     hash = tb_jmp_cache_hash_func(s.pc);
     jc = cpu->tb_jmp_cache;
+    XSTAT_INC(n_jc_lookup);
 
     tb = qatomic_read(&jc->array[hash].tb);
     if (likely(tb &&
@@ -268,6 +269,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
         goto hit;
     }
 
+    XSTAT_INC(n_jc_miss);
     tb = tb_htable_lookup(cpu, s);
     if (tb == NULL) {
         return NULL;
