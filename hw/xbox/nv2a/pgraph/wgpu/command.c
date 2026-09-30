@@ -241,14 +241,15 @@ void pgraph_wgpu_finish(PGRAPHState *pg, FinishReason finish_reason)
         ds->submit_count += 1;
         pgraph_wgpu_shaders_on_submit(pg);
 
-        /* mirrors vkWaitForFences on the command buffer fence */
-        {
-            XSTAT_T0();
-            pgraph_wgpu_wait_queue_idle(r);
-            XSTAT_T1(ns_gpu_wait);
-        }
+        /*
+         * No wait-for-idle here (the Vulkan backend waits on a fence):
+         * WebGPU queue operations are ordered, so later writeBuffer/
+         * writeTexture calls land after this submission's commands have
+         * consumed the old contents, and readbacks (mapAsync) wait for the
+         * work they depend on. Waiting here stalled every submit.
+         */
 
-        /* everything recorded has executed: append-only buffers restart */
+        /* append-only buffers restart (safe: see above) */
         ds->storage_buffers[WGPU_BUFFER_INDEX].buffer_offset = 0;
         ds->storage_buffers[WGPU_BUFFER_VERTEX_INLINE].buffer_offset = 0;
         if (ds->uploaded_bitmap) {
