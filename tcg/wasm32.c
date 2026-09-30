@@ -393,6 +393,10 @@ static int compile_tb(WasmTBHeader *h, int depth)
     jit_budget_update(t1);
     XSTAT_INC(n_jit_compile);
     XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
+    if (!h->icount) {
+        TranslationBlock *tb = tcg_tb_lookup((uintptr_t)h);
+        h->icount = tb ? tb->icount : 0;
+    }
     add_instance(h, fidx);
     return fidx;
 }
@@ -448,6 +452,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         wasm32_cur_tb = h;
         fidx = get_instance(h);
         if (fidx > 0) {
+            XSTAT_ADD(n_guest_insn, h->icount);
             wasm_ctx.do_init = 1;
             XPHASE_SET(XPHASE_VCPU, NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);

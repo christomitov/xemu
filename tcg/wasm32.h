@@ -54,6 +54,8 @@ typedef struct WasmTBHeader {
      */
     void *link_hdr[2];
     uint32_t link_fidx[2];
+    uint32_t icount;            /* guest insns (stats), set when compiled */
+    uint32_t pad2;
 } WasmTBHeader;
 
 #define WASM_TB_LINK_HDR_OFF    32

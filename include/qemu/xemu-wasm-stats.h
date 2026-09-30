@@ -33,6 +33,9 @@
     X(n_tb_selfloop)     /* goto_tb to the same TB (wasm loop) */            \
     X(n_tb_gotoptr)      /* indirect: goto_ptr after lookup_tb_ptr */        \
     X(n_tb_linkmiss)     /* chained goto_tb whose link was missing/stale */  \
+    X(n_guest_insn)      /* guest insns in dispatched JIT TBs (not loops) */  \
+    X(n_jc_lookup)       /* tb_lookup calls (jump cache probes) */           \
+    X(n_jc_miss)         /* ... that missed and went to the QHT */          \
     X(n_mmio_read)       /* guest loads from device registers */             \
     X(n_mmio_write)                                                          \
     X(ns_mmio)           /* time in device read/write handlers */            \
