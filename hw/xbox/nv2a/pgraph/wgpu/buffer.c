@@ -36,6 +36,8 @@ static void create_buffer(PGRAPHWgpuState *r, WgpuStorageBuffer *b)
 
 static void destroy_buffer(WgpuStorageBuffer *b)
 {
+    g_free(b->staging);
+    b->staging = NULL;
     if (b->buffer) {
         wgpuBufferDestroy(b->buffer);
         wgpuBufferRelease(b->buffer);
@@ -156,14 +158,50 @@ size_t pgraph_wgpu_append_to_buffer(PGRAPHState *pg, int index, void **data,
 
     size_t starting_offset = ROUND_UP(b->buffer_offset, alignment);
 
+    bool staged = index == WGPU_BUFFER_INDEX ||
+                  index == WGPU_BUFFER_VERTEX_INLINE;
+    if (staged && !b->staging) {
+        b->staging = g_malloc(b->buffer_size);
+        b->staged_lo = b->staged_hi = 0;
+    }
+
     for (size_t i = 0; i < count; i++) {
         b->buffer_offset = ROUND_UP(b->buffer_offset, alignment);
         if (sizes[i]) {
-            write_buffer_padded(r, b->buffer, b->buffer_offset, data[i],
-                                sizes[i]);
+            if (staged) {
+                size_t len = ROUND_UP(sizes[i], 4);
+                memcpy(b->staging + b->buffer_offset, data[i], sizes[i]);
+                memset(b->staging + b->buffer_offset + sizes[i], 0,
+                       len - sizes[i]);
+                if (b->staged_hi == b->staged_lo) {
+                    b->staged_lo = b->buffer_offset;
+                }
+                b->staged_lo = MIN(b->staged_lo, b->buffer_offset);
+                b->staged_hi = MAX(b->staged_hi, b->buffer_offset + len);
+            } else {
+                write_buffer_padded(r, b->buffer, b->buffer_offset, data[i],
+                                    sizes[i]);
+            }
         }
         b->buffer_offset += ROUND_UP(sizes[i], 4);
     }
 
     return starting_offset;
+}
+
+/* Upload staged appends (see WgpuStorageBuffer.staging); before a submit. */
+void pgraph_wgpu_flush_staged(PGRAPHState *pg)
+{
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    static const int idx[] = { WGPU_BUFFER_INDEX, WGPU_BUFFER_VERTEX_INLINE };
+
+    for (int i = 0; i < ARRAY_SIZE(idx); i++) {
+        WgpuStorageBuffer *b = &r->draw.storage_buffers[idx[i]];
+        if (b->staging && b->staged_hi > b->staged_lo) {
+            wgpuQueueWriteBuffer(r->queue, b->buffer, b->staged_lo,
+                                 b->staging + b->staged_lo,
+                                 b->staged_hi - b->staged_lo);
+        }
+        b->staged_lo = b->staged_hi = 0;
+    }
 }
