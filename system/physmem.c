@@ -868,11 +868,24 @@ int mem_access_callback_address_matches(CPUState *cpu, hwaddr addr, hwaddr len)
     return ret;
 }
 
+#ifdef EMSCRIPTEN
+void tlb_flush_host_range(CPUState *cpu, uintptr_t start, uintptr_t length);
+/* only the TLB entries mapping this callback's RAM (see cputlb.c) */
+static void mem_access_callback_flush(CPUState *cpu, MemAccessCallback *cb)
+{
+    uintptr_t host = (uintptr_t)qemu_map_ram_ptr(NULL, cb->addr);
+    tlb_flush_host_range(cpu, host, cb->len);
+}
+#endif
+
 static void do_mem_access_callback_insert(CPUState *cpu, run_on_cpu_data data)
 
 {
     MemAccessCallback *cb = (MemAccessCallback *)data.host_ptr;
     QTAILQ_INSERT_TAIL(&cpu->mem_access_callbacks, cb, entry);
+#ifdef EMSCRIPTEN
+    mem_access_callback_flush(cpu, cb);
+#endif
 }
 
 MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
@@ -889,11 +902,17 @@ MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
     cb->func = func;
     cb->opaque = opaque;
 
+#ifdef EMSCRIPTEN
+    /* single vCPU: plain queued work on it, flushing only these pages */
+    async_run_on_cpu(cpu, do_mem_access_callback_insert,
+                     RUN_ON_CPU_HOST_PTR(cb));
+#else
     async_safe_run_on_cpu(cpu, do_mem_access_callback_insert,
                           RUN_ON_CPU_HOST_PTR(cb));
 
     // FIXME: flush only applicable pages
     tlb_flush_all_cpus_synced(cpu);
+#endif
 
     return cb;
 }
@@ -903,6 +922,9 @@ static void do_mem_access_callback_remove_by_ref(CPUState *cpu,
 {
     MemAccessCallback *cb = (MemAccessCallback *)data.host_ptr;
     QTAILQ_REMOVE(&cpu->mem_access_callbacks, cb, entry);
+#ifdef EMSCRIPTEN
+    mem_access_callback_flush(cpu, cb);
+#endif
     g_free(cb);
 }
 
@@ -912,11 +934,16 @@ void mem_access_callback_remove_by_ref(CPUState *cpu, MemAccessCallback *cb)
         return;
     }
 
+#ifdef EMSCRIPTEN
+    async_run_on_cpu(cpu, do_mem_access_callback_remove_by_ref,
+                     RUN_ON_CPU_HOST_PTR(cb));
+#else
     async_safe_run_on_cpu(cpu, do_mem_access_callback_remove_by_ref,
                           RUN_ON_CPU_HOST_PTR(cb));
 
     // FIXME: flush only applicable pages
     tlb_flush_all_cpus_synced(cpu);
+#endif
 }
 
 void mem_check_access_callback_vaddr(CPUState *cpu,
