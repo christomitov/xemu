@@ -1993,11 +1993,14 @@ static uint64_t int_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
         XSTAT_INC(n_mmio_read);
 #ifdef EMSCRIPTEN
         {
-            int64_t t0_ = xemu_wasm_stats_now_ns();
+            /* time 1 access in 16 (clock reads are JS calls), scaled */
+            static unsigned mmio_read_n;
+            bool timed_ = (++mmio_read_n & 15) == 0;
+            int64_t t0_ = timed_ ? xemu_wasm_stats_now_ns() : 0;
             XPHASE_SET(XPHASE_VCPU, memory_region_name(mr));
             r = memory_region_dispatch_read(mr, mr_offset, &val,
                                             this_mop, full->attrs);
-            int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
+            int64_t dt_ = timed_ ? (xemu_wasm_stats_now_ns() - t0_) * 16 : 0;
             XSTAT_ADD(ns_mmio, dt_);
             XPHASE_SET(XPHASE_VCPU, NULL);
             xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
@@ -2585,11 +2588,14 @@ static uint64_t int_st_mmio_leN(CPUState *cpu, CPUTLBEntryFull *full,
         XSTAT_INC(n_mmio_write);
 #ifdef EMSCRIPTEN
         {
-            int64_t t0_ = xemu_wasm_stats_now_ns();
+            /* time 1 access in 16 (clock reads are JS calls), scaled */
+            static unsigned mmio_write_n;
+            bool timed_ = (++mmio_write_n & 15) == 0;
+            int64_t t0_ = timed_ ? xemu_wasm_stats_now_ns() : 0;
             XPHASE_SET(XPHASE_VCPU, memory_region_name(mr));
             r = memory_region_dispatch_write(mr, mr_offset, val_le,
                                              this_mop, full->attrs);
-            int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
+            int64_t dt_ = timed_ ? (xemu_wasm_stats_now_ns() - t0_) * 16 : 0;
             XSTAT_ADD(ns_mmio, dt_);
             XPHASE_SET(XPHASE_VCPU, NULL);
             xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
