@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "exec/icount.h"
 #include "qemu/main-loop.h"
 #include "qemu/target-info.h"
 #include "accel/tcg/cpu-ops.h"
@@ -1350,12 +1351,27 @@ io_prepare(hwaddr *out_offset, CPUState *cpu, hwaddr xlat,
     section = iotlb_to_section(cpu, xlat, attrs);
     mr_offset = (xlat & TARGET_PAGE_MASK) + addr;
     cpu->mem_io_pc = retaddr;
-    if (!cpu->neg.can_do_io) {
 #ifdef EMSCRIPTEN
+    /*
+     * Without icount, re-executing the I/O insn as the last insn of a new
+     * TB only buys exact instruction counting; every such exit costs a
+     * JS-exception longjmp here (thousands/s in games).  Do the access in
+     * place, as QEMU did before 8.2.  XEMU_WASM_IO_RECOMPILE=1 restores it.
+     */
+    static int io_recompile = -1;
+    if (io_recompile < 0) {
+        const char *e = getenv("XEMU_WASM_IO_RECOMPILE");
+        io_recompile = e && *e == '1';
+    }
+    if (!cpu->neg.can_do_io && (io_recompile || icount_enabled())) {
         { extern void xemu_wasm_count(const char *); xemu_wasm_count("noexc:io_recompile"); }
-#endif
         cpu_io_recompile(cpu, retaddr);
     }
+#else
+    if (!cpu->neg.can_do_io) {
+        cpu_io_recompile(cpu, retaddr);
+    }
+#endif
 
     *out_offset = mr_offset;
     return section;
