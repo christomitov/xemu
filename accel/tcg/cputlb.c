@@ -1991,12 +1991,19 @@ static uint64_t int_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
         this_mop |= MO_BE;
 
         XSTAT_INC(n_mmio_read);
+#ifdef EMSCRIPTEN
         {
-            XSTAT_T0();
+            int64_t t0_ = xemu_wasm_stats_now_ns();
             r = memory_region_dispatch_read(mr, mr_offset, &val,
                                             this_mop, full->attrs);
-            XSTAT_T1(ns_mmio);
+            int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
+            XSTAT_ADD(ns_mmio, dt_);
+            xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
         }
+#else
+        r = memory_region_dispatch_read(mr, mr_offset, &val,
+                                        this_mop, full->attrs);
+#endif
         if (unlikely(r != MEMTX_OK)) {
             io_failed(cpu, full, addr, this_size, type, mmu_idx, r, ra);
         }
@@ -2574,12 +2581,19 @@ static uint64_t int_st_mmio_leN(CPUState *cpu, CPUTLBEntryFull *full,
         this_mop |= MO_LE;
 
         XSTAT_INC(n_mmio_write);
+#ifdef EMSCRIPTEN
         {
-            XSTAT_T0();
+            int64_t t0_ = xemu_wasm_stats_now_ns();
             r = memory_region_dispatch_write(mr, mr_offset, val_le,
                                              this_mop, full->attrs);
-            XSTAT_T1(ns_mmio);
+            int64_t dt_ = xemu_wasm_stats_now_ns() - t0_;
+            XSTAT_ADD(ns_mmio, dt_);
+            xemu_wasm_mmio_prof(memory_region_name(mr), dt_);
         }
+#else
+        r = memory_region_dispatch_write(mr, mr_offset, val_le,
+                                         this_mop, full->attrs);
+#endif
         if (unlikely(r != MEMTX_OK)) {
             io_failed(cpu, full, addr, this_size, MMU_DATA_STORE,
                       mmu_idx, r, ra);

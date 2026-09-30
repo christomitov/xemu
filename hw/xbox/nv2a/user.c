@@ -29,6 +29,41 @@ uint64_t user_read(void *opaque, hwaddr addr, unsigned int size)
     unsigned int channel_id = addr >> 16;
     assert(channel_id < NV2A_NUM_CHANNELS);
 
+#ifdef EMSCRIPTEN
+    /*
+     * Guests poll DMA_GET/PUT/REF to track GPU progress. These are single
+     * aligned 32-bit registers, so read them without pfifo.lock: the pfifo
+     * thread re-takes that lock for every method, and emscripten's unfair
+     * futex mutex made each poll wait ~100 us behind it (30%+ of the vCPU
+     * in-game). Same values the locked path returns, minus the handover.
+     */
+    {
+        uint32_t modes = qatomic_read(&d->pfifo.regs[NV_PFIFO_MODE]);
+        unsigned int cur =
+            GET_MASK(qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_PUSH1]),
+                     NV_PFIFO_CACHE1_PUSH1_CHID);
+        if ((modes & (1 << channel_id)) && channel_id == cur) {
+            uint64_t v = 0;
+            switch (addr & 0xFFFF) {
+            case NV_USER_DMA_PUT:
+                v = qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT]);
+                break;
+            case NV_USER_DMA_GET:
+                v = qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET]);
+                break;
+            case NV_USER_REF:
+                v = qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_REF]);
+                break;
+            default:
+                break;
+            }
+            nv2a_reg_log_read(NV_USER, addr, size, v);
+            return v;
+        }
+        /* anything unusual: fall through to the locked path + asserts */
+    }
+#endif
+
     qemu_mutex_lock(&d->pfifo.lock);
 
     uint32_t channel_modes = d->pfifo.regs[NV_PFIFO_MODE];

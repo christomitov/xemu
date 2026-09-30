@@ -492,6 +492,58 @@ int64_t xemu_wasm_stats_now_ns(void)
     return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
+/*
+ * MMIO profile per MemoryRegion (keyed by name pointer; written on the vCPU
+ * thread only). Reported by the page as mmio_top: calls and time per device.
+ */
+#define MMIO_PROF_SLOTS 128
+static struct {
+    const char *name;
+    uint64_t calls, ns;
+} mmio_prof[MMIO_PROF_SLOTS];
+
+void xemu_wasm_mmio_prof(const char *region, int64_t ns)
+{
+    uintptr_t h = ((uintptr_t)region >> 3) * 2654435761u;
+    for (unsigned i = 0; i < MMIO_PROF_SLOTS; i++) {
+        unsigned slot = (h + i) & (MMIO_PROF_SLOTS - 1);
+        if (mmio_prof[slot].name == region || !mmio_prof[slot].name) {
+            mmio_prof[slot].name = region;
+            mmio_prof[slot].calls++;
+            mmio_prof[slot].ns += ns;
+            return;
+        }
+    }
+}
+
+/* "name=calls/ms;..." for the 12 regions with the most time */
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
+{
+    static char buf[1024];
+    bool used[MMIO_PROF_SLOTS] = { false };
+    int len = 0;
+
+    buf[0] = 0;
+    for (int k = 0; k < 12; k++) {
+        int best = -1;
+        for (int i = 0; i < MMIO_PROF_SLOTS; i++) {
+            if (!used[i] && mmio_prof[i].name &&
+                (best < 0 || mmio_prof[i].ns > mmio_prof[best].ns)) {
+                best = i;
+            }
+        }
+        if (best < 0 || len > (int)sizeof(buf) - 80) {
+            break;
+        }
+        used[best] = true;
+        len += snprintf(buf + len, sizeof(buf) - len, "%s=%llu/%llu;",
+                        mmio_prof[best].name ? mmio_prof[best].name : "?",
+                        (unsigned long long)mmio_prof[best].calls,
+                        (unsigned long long)(mmio_prof[best].ns / 1000000));
+    }
+    return buf;
+}
+
 /* page reads the struct directly from the wasm heap */
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
 {
