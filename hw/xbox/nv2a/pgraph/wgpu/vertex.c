@@ -633,22 +633,24 @@ bool pgraph_wgpu_set_vertex_buffers(PGRAPHState *pg)
         WgpuVertexBufferBinding *b = &ds->vertex_buffers[slot];
         WgpuStorageBuffer *sb;
         uint64_t offset;
+        int bi;
 
         switch (b->source) {
         case WGPU_VSRC_VRAM:
-            sb = &ds->storage_buffers[WGPU_BUFFER_VERTEX_RAM];
+            bi = WGPU_BUFFER_VERTEX_RAM;
             offset = b->base;
             break;
         case WGPU_VSRC_INLINE_ARRAY:
-            sb = &ds->storage_buffers[WGPU_BUFFER_VERTEX_INLINE];
+            bi = WGPU_BUFFER_VERTEX_INLINE;
             offset = ds->inline_array_offset + b->base;
             break;
         case WGPU_VSRC_REPACK:
         default:
-            sb = &ds->storage_buffers[WGPU_BUFFER_VERTEX_INLINE];
+            bi = WGPU_BUFFER_VERTEX_INLINE;
             offset = ds->repack_offset;
             break;
         }
+        sb = &ds->storage_buffers[bi];
 
         assert(offset % 4 == 0);
         if (offset >= sb->buffer_size) {
@@ -660,8 +662,17 @@ bool pgraph_wgpu_set_vertex_buffers(PGRAPHState *pg)
             }
             return false;
         }
+        /* storage buffers do not change within a pass: skip rebinding */
+        if (slot < ARRAY_SIZE(ds->pass_vb_buf) &&
+            ds->pass_vb_buf[slot] == bi + 1 && ds->pass_vb_off[slot] == offset) {
+            continue;
+        }
         wgpuRenderPassEncoderSetVertexBuffer(ds->pass, slot, sb->buffer, offset,
                                              WGPU_WHOLE_SIZE);
+        if (slot < ARRAY_SIZE(ds->pass_vb_buf)) {
+            ds->pass_vb_buf[slot] = bi + 1;
+            ds->pass_vb_off[slot] = offset;
+        }
     }
     return true;
 }
