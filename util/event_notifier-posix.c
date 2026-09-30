@@ -116,6 +116,14 @@ int event_notifier_set(EventNotifier *e)
     do {
         ret = write(e->wfd, &value, sizeof(value));
     } while (ret < 0 && errno == EINTR);
+#ifdef EMSCRIPTEN
+    /* emscripten's poll() never sleeps; qemu_poll_ns waits on a futex that
+     * this wakes (see util/qemu-timer.c) */
+    {
+        extern void qemu_poll_kick(void);
+        qemu_poll_kick();
+    }
+#endif
 
     /* EAGAIN is fine, a read must be pending.  */
     if (ret < 0 && errno != EAGAIN) {
