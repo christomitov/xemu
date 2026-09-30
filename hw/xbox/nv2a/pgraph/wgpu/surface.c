@@ -423,7 +423,12 @@ void pgraph_wgpu_wait_for_surface_download(SurfaceBinding *surface)
         qatomic_set(&r->surf.downloads_pending, true);
         pfifo_kick(d);
         qemu_mutex_unlock(&d->pfifo.lock);
-        qemu_event_wait(&r->surf.downloads_complete);
+        {
+            /* guest CPU blocked until the GPU thread reads the surface back */
+            XSTAT_T0();
+            qemu_event_wait(&r->surf.downloads_complete);
+            XSTAT_T1(ns_vcpu_surface_wait);
+        }
     }
 }
 
@@ -501,7 +506,12 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
         qatomic_set(&r->surf.downloads_pending, true);
         pfifo_kick(d);
         qemu_mutex_unlock(&d->pfifo.lock);
-        qemu_event_wait(&r->surf.downloads_complete);
+        {
+            /* guest CPU blocked until the GPU thread reads the surface back */
+            XSTAT_T0();
+            qemu_event_wait(&r->surf.downloads_complete);
+            XSTAT_T1(ns_vcpu_surface_wait);
+        }
     }
 }
 
