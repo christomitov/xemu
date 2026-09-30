@@ -97,6 +97,8 @@ option('debug_remap', type: 'boolean', value: false,
        description: 'syscall buffer debugging support')
 option('tcg_interpreter', type: 'boolean', value: false,
        description: 'TCG with bytecode interpreter (slow)')
+option('tcg_wasm_jit', type: 'boolean', value: false,
+       description: 'TCG WebAssembly JIT backend for wasm32 hosts (implies tcg_interpreter)')
 option('safe_stack', type: 'boolean', value: false,
        description: 'SafeStack Stack Smash Protection (requires clang/llvm and coroutine backend ucontext)')
 option('asan', type: 'boolean', value: false,

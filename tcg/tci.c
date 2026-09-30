@@ -90,6 +90,9 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_helper_top(void)
 #else
 #define HELPER_PROF_HIT(name) do { } while (0)
 #endif
+#ifdef CONFIG_TCG_WASM_JIT
+#include "wasm32.h"
+#endif
 
 
 #define ctpop_tr    glue(ctpop, TCG_TARGET_REG_BITS)
@@ -397,8 +400,19 @@ static void tci_qemu_st(CPUArchState *env, uint64_t taddr, uint64_t val,
  * One possible operation in the pseudo code is a call to binary code.
  * Therefore, disable CFI checks in the interpreter function
  */
+#ifdef CONFIG_TCG_WASM_JIT
+/*
+ * With the wasm32 JIT, tcg_qemu_tb_exec() in wasm32.c dispatches between
+ * this interpreter and compiled blocks; v_tb_ptr is the bytecode of a TB
+ * (WasmTBHeader.tci_ptr), and chaining hands over to the dispatcher when
+ * the next block has a wasm module.
+ */
+uintptr_t QEMU_DISABLE_CFI tci_exec_tb(CPUArchState *env,
+                                       const void *v_tb_ptr)
+#else
 uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                                             const void *v_tb_ptr)
+#endif
 {
     const uint32_t *tb_ptr = v_tb_ptr;
     tcg_target_ulong regs[TCG_TARGET_NB_REGS];
@@ -435,8 +449,9 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 unsigned i, s, n;
 
                 tci_args_nl(insn, tb_ptr, &len, &ptr);
-                func = ((void **)ptr)[0];
-                cif = ((void **)ptr)[1];
+                /* pool entries are tcg_target_ulong, maybe wider than ptrs */
+                func = (void *)(uintptr_t)((tcg_target_ulong *)ptr)[0];
+                cif = (void *)(uintptr_t)((tcg_target_ulong *)ptr)[1];
 
                 n = cif->nargs;
                 for (i = s = 0; i < n; ++i) {
@@ -856,6 +871,39 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
 
             /* QEMU specific operations. */
 
+#ifdef CONFIG_TCG_WASM_JIT
+        case INDEX_op_exit_tb:
+            tci_args_l(insn, tb_ptr, &ptr);
+            wasm_ctx.tb_ptr = NULL;
+            return (uintptr_t)ptr;
+
+        case INDEX_op_goto_tb:
+            tci_args_l(insn, tb_ptr, &ptr);
+            ptr = *(void **)ptr;
+            if (ptr != tb_ptr) {
+                /* chained: ptr is the next TB's header */
+                tb_ptr = wasm32_tci_chain(ptr);
+                if (!tb_ptr) {
+                    return 0;
+                }
+                XSTAT_INC(n_tb_exec); /* chained block */
+            }
+            break;
+
+        case INDEX_op_goto_ptr:
+            tci_args_r(insn, &r0);
+            ptr = (void *)(uintptr_t)regs[r0];
+            if (!ptr) {
+                wasm_ctx.tb_ptr = NULL;
+                return 0;
+            }
+            tb_ptr = wasm32_tci_chain(ptr);
+            if (!tb_ptr) {
+                return 0;
+            }
+            XSTAT_INC(n_tb_exec); /* lookup-and-goto block */
+            break;
+#else
         case INDEX_op_exit_tb:
             tci_args_l(insn, tb_ptr, &ptr);
             return (uintptr_t)ptr;
@@ -875,6 +923,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             }
             tb_ptr = ptr;
             break;
+#endif
 
         case INDEX_op_qemu_ld:
             tci_args_rrm(insn, &r0, &r1, &oi);
