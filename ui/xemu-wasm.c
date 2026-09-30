@@ -143,6 +143,11 @@ static void clobber_dump(int first)
 
 static void ring_vput(const char *fmt, va_list ap)
 {
+#ifndef XEMU_WASM_TRIPWIRE
+    /* debug event ring: off by default, it sits on hot paths (main loop
+     * poll, pfifo/apu loops, timers) and costs two printfs + a memmove */
+    return;
+#endif
     char tmp[256];
     int n, n2, n3;
     uint32_t len;
@@ -232,7 +237,10 @@ void xemu_wasm_milestone(const char *name)
             break;
         }
     }
-    if (!seen && milestone_nseen < MILESTONE_MAX) {
+    if (seen) {
+        return; /* log each milestone once */
+    }
+    if (milestone_nseen < MILESTONE_MAX) {
         milestone_seen[milestone_nseen++] = name;
     }
     if (milestone_t0 == 0) {
@@ -253,6 +261,11 @@ void xemu_wasm_lowmem_check(const char *where)
     int corrupt = 0;
     uint32_t i;
 
+#ifndef XEMU_WASM_TRIPWIRE
+    /* heap-0 clobber tripwire: off by default (the DSP DMA bug it hunted
+     * is fixed); build with -DXEMU_WASM_TRIPWIRE to re-arm */
+    return;
+#endif
     if (!lowmem_init) {
         return;
     }
@@ -447,6 +460,27 @@ static void xemu_wasm_service_disc(void)
     }
 }
 
+/* Performance counters for the page's FPS overlay (read from the browser
+ * thread; plain aligned 32-bit words, torn reads don't matter here). */
+volatile uint32_t xemu_wasm_present_count; /* frames shown on the canvas */
+volatile uint32_t xemu_wasm_flip_count;    /* guest buffer flips */
+static volatile uint32_t virt_ms_now;      /* emulated clock, ms */
+
+EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_present_count(void)
+{
+    return xemu_wasm_present_count;
+}
+
+EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_flip_count(void)
+{
+    return xemu_wasm_flip_count;
+}
+
+EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_virt_ms(void)
+{
+    return virt_ms_now;
+}
+
 /* gui timer */
 static QEMUTimer *s_gui_timer;
 
@@ -498,7 +532,7 @@ static void xemu_wasm_gui_tick(void *opaque)
     xemu_wasm_lowmem_check("gui tick pre-getms");
     {
         int64_t gui_ms = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
-        (void)gui_ms;
+        virt_ms_now = (uint32_t)gui_ms;
     }
     xemu_wasm_lowmem_check("gui tick post-getms");
     xemu_wasm_service_disc();

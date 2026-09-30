@@ -590,13 +590,6 @@ static const char* disasm_get_instruction_text(dsp_core_t* dsp)
 
 void dsp56k_execute_instruction(dsp_core_t* dsp)
 {
-#ifdef EMSCRIPTEN
-    if (*(volatile uint32_t *)0 != 0x63736d65) {
-        fprintf(stderr, "[dsp-guard] clobber seen before DSP inst at pc=0x%06x (space write last ok)\n",
-                (unsigned)dsp->pc);
-        abort();
-    }
-#endif
     trace_dsp56k_execute_instruction(dsp->is_gp, dsp->pc);
 
     uint32_t disasm_return = 0;
@@ -942,15 +935,6 @@ void dsp56k_write_memory(dsp_core_t* dsp, int space, uint32_t address, uint32_t 
 
 static void write_memory_raw(dsp_core_t* dsp, int space, uint32_t address, uint32_t value)
 {
-#ifdef EMSCRIPTEN
-    /* guard-zone check on every DSP memory write: if the writer is
-     * inside the interpreter, the first dirty write names the op */
-    if (*(volatile uint32_t *)0 != 0x63736d65) {
-        fprintf(stderr, "[dsp-guard] clobber seen at DSP write: space=%d addr=0x%x val=0x%x pc=0x%06x inst=0x%06x\n",
-                space, address, value, (unsigned)dsp->pc, (unsigned)dsp->cur_inst);
-        abort();
-    }
-#endif
     assert((value & 0xFF000000) == 0);
     assert((address & 0xFF000000) == 0);
 

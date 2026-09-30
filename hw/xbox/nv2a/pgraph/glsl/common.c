@@ -28,6 +28,14 @@ const char *uniform_element_type_to_str[] = {
 MString *pgraph_glsl_get_vtx_header(MString *out, bool location, bool smooth,
                                     bool in, bool prefix, bool array)
 {
+    return pgraph_glsl_get_vtx_header_ex(out, location, smooth, in, prefix,
+                                         array, false);
+}
+
+MString *pgraph_glsl_get_vtx_header_ex(MString *out, bool location,
+                                       bool smooth, bool in, bool prefix,
+                                       bool array, bool no_geom)
+{
     const char *smooth_s = "";
     const char *flat_s = "flat ";
     const char *qualifier_s = smooth ? smooth_s : flat_s;
@@ -53,8 +61,9 @@ MString *pgraph_glsl_get_vtx_header(MString *out, bool location, bool smooth,
         { flat_s,      vec4_s,  "vtxPos2" },
         { flat_s,      float_s, "triMZ"  },
     };
+    const int num_attrs = no_geom ? 9 : ARRAY_SIZE(attr);
 
-    for (int i = 0; i < ARRAY_SIZE(attr); i++) {
+    for (int i = 0; i < num_attrs; i++) {
         if (location) {
             mstring_append_fmt(out, "layout(location = %d) ", i);
         }
@@ -63,7 +72,43 @@ MString *pgraph_glsl_get_vtx_header(MString *out, bool location, bool smooth,
                            suffix_s);
     }
 
+    if (no_geom) {
+        if (location) {
+            mstring_append_fmt(out, "layout(location = %d) ", num_attrs);
+        }
+        mstring_append_fmt(out, "noperspective %s vec2 %svtxZ%s;\n", in_out_s,
+                           prefix_s, suffix_s);
+    }
+
     return out;
+}
+
+void pgraph_glsl_append_wgsl_compat(MString *out)
+{
+    static const char *const types[][2] = {
+        { "float", "bool" },  { "vec2", "bvec2" },
+        { "vec3", "bvec3" },  { "vec4", "bvec4" },
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(types); i++) {
+        const char *ft = types[i][0], *bt = types[i][1];
+        const char *ut = i ? (i == 1 ? "uvec2" : i == 2 ? "uvec3" : "uvec4")
+                           : "uint";
+        const char *gt = i ? "greaterThan" : "";
+        const char *eq = i ? "equal" : "";
+        mstring_append_fmt(
+            out,
+            "%s wgsl_isnan(%s x) {\n"
+            "  return %s((floatBitsToUint(x) & %s(0x7FFFFFFFu))%s%s(0x7F800000u));\n"
+            "}\n"
+            "%s wgsl_isinf(%s x) {\n"
+            "  return %s((floatBitsToUint(x) & %s(0x7FFFFFFFu))%s%s(0x7F800000u));\n"
+            "}\n",
+            bt, ft, gt, ut, i ? ", " : " > ", ut,
+            bt, ft, eq, ut, i ? ", " : " == ", ut);
+    }
+    mstring_append(out, "#define isnan wgsl_isnan\n"
+                        "#define isinf wgsl_isinf\n\n");
 }
 
 void pgraph_glsl_set_clip_range_uniform_value(PGRAPHState *pg, float clipRange[4])

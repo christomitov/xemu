@@ -98,6 +98,12 @@ typedef struct GenPshGlslOptions {
     bool vulkan;
     int ubo_binding;
     int tex_binding;
+    /* WebGPU (WGSL via SPIR-V) target, requires vulkan. Consumes the
+     * noperspective vtxZ varying of a GenVshGlslOptions.wgsl vertex shader
+     * instead of geometry shader outputs: depth is taken from the hardware
+     * interpolated vtxZ and the polygon offset slope (triMZ) is estimated
+     * from screen-space derivatives. gl_PointCoord is not available. */
+    bool wgsl;
 } GenPshGlslOptions;
 
 MString *pgraph_glsl_gen_psh(const PshState *state, GenPshGlslOptions opts);

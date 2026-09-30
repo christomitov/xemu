@@ -232,8 +232,9 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
         "  return trunc(pos * 16.0f) / 16.0f;\n"
         "}\n");
 
-    pgraph_glsl_get_vtx_header(header, opts.vulkan, state->smooth_shading,
-                               false, opts.prefix_outputs, false);
+    pgraph_glsl_get_vtx_header_ex(header, opts.vulkan, state->smooth_shading,
+                                  false, opts.prefix_outputs, false,
+                                  opts.wgsl);
 
     if (opts.prefix_outputs) {
         mstring_append(header,
@@ -405,10 +406,18 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
                    "  vtxT1 = oT1;\n"
                    "  vtxT2 = oT2;\n"
                    "  vtxT3 = oT3;\n"
+    );
+    if (opts.wgsl) {
+        mstring_append(body, "  vtxZ = vec2(vtxPos.z, 1.0 / vtxPos.w);\n");
+    } else {
+        mstring_append(body,
                    "  vtxPos0 = vtxPos;\n"
                    "  vtxPos1 = vtxPos;\n"
                    "  vtxPos2 = vtxPos;\n"
                    "  triMZ = 0.0;\n"
+        );
+    }
+    mstring_append(body,
                    "  gl_PointSize = oPts.x;\n"
     );
 
@@ -431,7 +440,13 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
         );
     }
 
-    if (opts.vulkan) {
+    if (opts.wgsl) {
+        /* WebGPU clip space is y-up; the vulkan-flavoured math is y-down.
+         * Flip so framebuffer contents (and winding) match Vulkan. */
+        mstring_append(body,
+                   "  gl_Position = vec4(oPos.x, -oPos.y, oPos.z, oPos.w);\n"
+        );
+    } else if (opts.vulkan) {
         mstring_append(body,
                    "  gl_Position = oPos;\n"
         );
@@ -446,6 +461,9 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
     /* Return combined header + source */
     MString *output =
         mstring_from_fmt("#version %d\n\n", opts.vulkan ? 450 : 400);
+    if (opts.wgsl) {
+        pgraph_glsl_append_wgsl_compat(output);
+    }
 
     if (opts.vulkan) {
         // FIXME: Optimize uniforms

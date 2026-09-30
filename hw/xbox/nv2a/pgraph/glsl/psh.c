@@ -722,10 +722,23 @@ static void psh_append_shadowmap(const struct PixelShader *ps, int i, bool compa
 
     bool extract_msb_24b = ps->state->tex_x8y24[i] && ps->opts.vulkan;
 
-    mstring_append_fmt(
-        vars, "%svec4 t%d_depth%s = textureProj(texSamp%d, %s(pT%d.xyw));\n",
-        extract_msb_24b ? "u" : "", i, extract_msb_24b ? "_raw" : "", i,
-        tex_remap, i);
+    if (extract_msb_24b && ps->opts.wgsl) {
+        /* WGSL cannot sample integer textures with a sampler: fetch the
+         * nearest texel (clamp to edge) instead. */
+        mstring_append_fmt(
+            vars,
+            "vec3 t%d_pc = %s(pT%d.xyw);\n"
+            "ivec2 t%d_size = textureSize(texSamp%d, 0);\n"
+            "ivec2 t%d_texel = clamp(ivec2(floor(t%d_pc.xy / t%d_pc.z * "
+            "vec2(t%d_size))), ivec2(0), t%d_size - 1);\n"
+            "uvec4 t%d_depth_raw = texelFetch(texSamp%d, t%d_texel, 0);\n",
+            i, tex_remap, i, i, i, i, i, i, i, i, i, i, i);
+    } else {
+        mstring_append_fmt(
+            vars, "%svec4 t%d_depth%s = textureProj(texSamp%d, %s(pT%d.xyw));\n",
+            extract_msb_24b ? "u" : "", i, extract_msb_24b ? "_raw" : "", i,
+            tex_remap, i);
+    }
 
     if (extract_msb_24b) {
         mstring_append_fmt(vars,
@@ -811,8 +824,9 @@ static void define_colorkey_comparator(MString *preflight)
 static MString* psh_convert(struct PixelShader *ps)
 {
     MString *preflight = mstring_new();
-    pgraph_glsl_get_vtx_header(preflight, ps->opts.vulkan,
-                             ps->state->smooth_shading, true, false, false);
+    pgraph_glsl_get_vtx_header_ex(preflight, ps->opts.vulkan,
+                                  ps->state->smooth_shading, true, false,
+                                  false, ps->opts.wgsl);
 
     if (ps->opts.vulkan) {
         mstring_append_fmt(
@@ -976,6 +990,21 @@ static MString* psh_convert(struct PixelShader *ps)
         );
 
     MString *clip = mstring_new();
+    if (ps->opts.wgsl) {
+        /* No geometry shader: estimate the per-primitive maximum depth slope
+         * (the geometry shader's calc_triz) from screen-space derivatives of
+         * the interpolated depth, in unscaled surface pixels. Computed first,
+         * before any non-uniform control flow. */
+        mstring_append_fmt(
+            clip,
+            "vec2 zslope = vec2(surfaceScale) * vec2(dFdx(vtxZ.%c), dFdy(vtxZ.%c));\n"
+            "float triMZ = max(abs(zslope.x), abs(zslope.y));\n"
+            "if (isnan(triMZ) || isinf(triMZ)) {\n"
+            "  triMZ = 0.0;\n"
+            "}\n",
+            ps->state->z_perspective ? 'y' : 'x',
+            ps->state->z_perspective ? 'y' : 'x');
+    }
     mstring_append_fmt(clip, "/*  Window-clip (%slusive) */\n",
                        ps->state->window_clip_exclusive ? "Exc" : "Inc");
     if (!ps->state->window_clip_exclusive) {
@@ -1001,7 +1030,29 @@ static MString* psh_convert(struct PixelShader *ps)
                              "}\n");
     }
 
-    if (ps->state->z_perspective) {
+    if (ps->opts.wgsl && ps->state->z_perspective) {
+        /* Perspective-correct interpolation of w == 1 / (screen-space linear
+         * interpolation of 1/w), same as the barycentric version below. */
+        mstring_append(
+            clip,
+            "precise float zvalue = 1.0 / vtxZ.y;\n"
+            "if (zvalue > 0.0) {\n"
+            "  float zslopeofs = depthFactor*triMZ*zvalue*zvalue;\n"
+            "  zvalue += depthOffset;\n"
+            "  zvalue += zslopeofs;\n"
+            "} else {\n"
+            "  zvalue = uintBitsToFloat(0x7F7FFFFFu);\n"
+            "}\n"
+            "if (isnan(zvalue)) {\n"
+            "  zvalue = uintBitsToFloat(0x7F7FFFFFu);\n"
+            "}\n");
+    } else if (ps->opts.wgsl) {
+        mstring_append(
+            clip,
+            "precise float zvalue = vtxZ.x;\n"
+            "zvalue += depthOffset;\n"
+            "zvalue += depthFactor*triMZ;\n");
+    } else if (ps->state->z_perspective) {
         mstring_append(
             clip,
             "vec2 unscaled_xy = gl_FragCoord.xy / surfaceScale;\n"
@@ -1077,7 +1128,13 @@ static MString* psh_convert(struct PixelShader *ps)
     mstring_append(vars, "vec4 pT2 = vtxT2;\n");
     if (ps->state->point_sprite) {
         assert(!ps->state->rect_tex[3]);
-        mstring_append(vars, "vec4 pT3 = vec4(gl_PointCoord, 1.0, 1.0);\n");
+        if (ps->opts.wgsl) {
+            /* WebGPU has no gl_PointCoord and only rasterizes 1 pixel points,
+             * whose center is at point coordinate (0.5, 0.5). */
+            mstring_append(vars, "vec4 pT3 = vec4(0.5, 0.5, 1.0, 1.0);\n");
+        } else {
+            mstring_append(vars, "vec4 pT3 = vec4(gl_PointCoord, 1.0, 1.0);\n");
+        }
     } else {
         mstring_append(vars, "vec4 pT3 = vtxT3;\n");
     }
@@ -1519,6 +1576,9 @@ static MString* psh_convert(struct PixelShader *ps)
 
     MString *final = mstring_new();
     mstring_append_fmt(final, "#version %d\n\n", ps->opts.vulkan ? 450 : 400);
+    if (ps->opts.wgsl) {
+        pgraph_glsl_append_wgsl_compat(final);
+    }
     mstring_append(final, mstring_get_str(preflight));
     mstring_append(final, "void main() {\n");
     mstring_append(final, mstring_get_str(clip));

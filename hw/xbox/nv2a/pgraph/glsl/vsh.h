@@ -101,6 +101,11 @@ typedef struct GenVshGlslOptions {
     bool prefix_outputs;
     bool use_push_constants_for_uniform_attrs;
     int ubo_binding;
+    /* WebGPU (WGSL via SPIR-V) target, requires vulkan. No geometry shader
+     * is used: instead of the flat per-primitive vtxPos0..2/triMZ outputs a
+     * noperspective vtxZ = (z, 1/w) output is written (prefix_outputs must
+     * be false). */
+    bool wgsl;
 } GenVshGlslOptions;
 
 MString *pgraph_glsl_gen_vsh(const VshState *state,
