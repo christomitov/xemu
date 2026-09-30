@@ -178,6 +178,7 @@ typedef struct DisasContext {
 
     target_ulong pc;       /* pc = eip + cs_base */
     target_ulong cs_base;  /* base of CS segment */
+    bool cpu_has_bps;      /* debugger breakpoints exist (wasm inline lookup) */
     target_ulong pc_save;
 
     MemOp aflag;
@@ -2870,6 +2871,89 @@ static void gen_bnd_jmp(DisasContext *s)
     }
 }
 
+#ifdef EMSCRIPTEN
+#include "accel/tcg/tb-jmp-cache.h"
+#include "accel/tcg/tb-hash.h"
+/*
+ * Indirect jump (ret, jmp/call through a register or memory): probe the
+ * CPU's TB jump cache inline, as helper_lookup_tb_ptr's fast path does,
+ * and only call the helper on a miss. On wasm the helper round trip was
+ * ~10% of vCPU time. Flags and CS base are read at run time; the target
+ * TB must match pc, cs_base, flags and this TB's cflags exactly (an
+ * invalidated TB has CF_INVALID set, so it never matches).
+ */
+static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
+{
+    uint32_t cflags = tb_cflags(s->base.tb);
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_INLINE_LOOKUP");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled ||
+        s->cpu_has_bps || (cflags & (CF_NO_GOTO_PTR | CF_COUNT_MASK |
+                                     CF_NOIRQ | CF_MEMI_ONLY |
+                                     CF_SINGLE_STEP | CF_BP_PAGE))) {
+        tcg_gen_lookup_and_goto_ptr();
+        return;
+    }
+    QEMU_BUILD_BUG_ON(offsetof(X86CPU, parent_obj) != 0);
+
+    TCGLabel *miss = gen_new_label();
+    TCGv_i32 pc = tcg_temp_new_i32();
+    TCGv_i32 t = tcg_temp_new_i32();
+    TCGv_i32 h = tcg_temp_new_i32();
+    TCGv_ptr jc = tcg_temp_new_ptr();
+    TCGv_ptr tb = tcg_temp_new_ptr();
+    TCGv_ptr p = tcg_temp_new_ptr();
+    const intptr_t elem = sizeof(((CPUJumpCache *)0)->array[0]);
+
+    /* pc = cs_base + eip */
+    tcg_gen_ld_i32(pc, tcg_env, offsetof(CPUX86State, segs[R_CS].base));
+    tcg_gen_add_i32(pc, pc, cpu_eip);
+
+    /* tb_jmp_cache_hash_func(pc) */
+    tcg_gen_shri_i32(t, pc, TARGET_PAGE_BITS - TB_JMP_PAGE_BITS);
+    tcg_gen_xor_i32(t, t, pc);
+    tcg_gen_shri_i32(h, t, TARGET_PAGE_BITS - TB_JMP_PAGE_BITS);
+    tcg_gen_andi_i32(h, h, TB_JMP_PAGE_MASK);
+    tcg_gen_andi_i32(t, t, TB_JMP_ADDR_MASK);
+    tcg_gen_or_i32(h, h, t);
+
+    /* entry = &cpu->tb_jmp_cache->array[h] */
+    tcg_gen_ld_ptr(jc, tcg_env, (intptr_t)offsetof(CPUState, tb_jmp_cache) -
+                                (intptr_t)offsetof(X86CPU, env));
+    tcg_gen_muli_i32(h, h, elem);
+    tcg_gen_ext_i32_ptr(p, h);
+    tcg_gen_add_ptr(jc, jc, p);
+
+    tcg_gen_ld_ptr(tb, jc, offsetof(CPUJumpCache, array[0].tb));
+    tcg_gen_brcondi_ptr(TCG_COND_EQ, tb, 0, miss);
+    tcg_gen_ld_i32(t, jc, offsetof(CPUJumpCache, array[0].pc));
+    tcg_gen_brcond_i32(TCG_COND_NE, t, pc, miss);
+
+    /* cs_base, flags (as x86_get_tb_cpu_state), cflags */
+    tcg_gen_ld_i32(t, tb, offsetof(TranslationBlock, cs_base));
+    tcg_gen_ld_i32(h, tcg_env, offsetof(CPUX86State, segs[R_CS].base));
+    tcg_gen_brcond_i32(TCG_COND_NE, t, h, miss);
+    tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, eflags));
+    tcg_gen_andi_i32(t, t, IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK);
+    tcg_gen_ld_i32(h, tcg_env, offsetof(CPUX86State, hflags));
+    tcg_gen_or_i32(t, t, h);
+    tcg_gen_ld_i32(h, tb, offsetof(TranslationBlock, flags));
+    tcg_gen_brcond_i32(TCG_COND_NE, t, h, miss);
+    tcg_gen_ld_i32(t, tb, offsetof(TranslationBlock, cflags));
+    tcg_gen_brcondi_i32(TCG_COND_NE, t, cflags, miss);
+
+    tcg_gen_ld_ptr(p, tb, offsetof(TranslationBlock, tc.ptr));
+    tcg_gen_goto_ptr(p);
+
+    gen_set_label(miss);
+    tcg_gen_lookup_and_goto_ptr();
+}
+#endif
+
 /*
  * Generate an end of block, including common tasks such as generating
  * single step traps, resetting the RF flag, and handling the interrupt
@@ -2902,7 +2986,11 @@ gen_eob(DisasContext *s, int mode)
     } else if (mode == DISAS_JUMP &&
                /* give irqs a chance to happen */
                !inhibit_reset) {
+#ifdef EMSCRIPTEN
+        gen_lookup_and_goto_ptr_inline(s);
+#else
         tcg_gen_lookup_and_goto_ptr();
+#endif
     } else {
         tcg_gen_exit_tb(NULL, 0);
     }
@@ -4384,6 +4472,8 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     uint32_t flags = dc->base.tb->flags;
     uint32_t cflags = tb_cflags(dc->base.tb);
     int cpl = (flags >> HF_CPL_SHIFT) & 3;
+
+    dc->cpu_has_bps = !QTAILQ_EMPTY(&cpu->breakpoints);
     int iopl = (flags >> IOPL_SHIFT) & 3;
 
     dc->cs_base = dc->base.tb->cs_base;
