@@ -125,6 +125,16 @@ static void glue(gen_fcom, PREC_SUFFIX)(DisasContext *s, PREC_TYPE arg1,
     /* FIXME: Exceptions */
 }
 
+/* fcomi/fucomi: ZF,PF,CF (0x45) of comparing ST0 with FT0 */
+static TCGv_i64 glue(gen_fcomi_flags, PREC_SUFFIX)(DisasContext *s)
+{
+    TCGv_i64 res = tcg_temp_new_i64();
+
+    glue(tcg_gen_com, PREC_SUFFIX)(res, get_st0(s), get_ft0(s));
+    tcg_gen_andi_i64(res, res, 0x45);
+    return res;
+}
+
 /* FIXME: This decode logic should be shared with helper variant */
 
 static void glue(gen_helper_fp_arith_ST0_FT0, PREC_SUFFIX)(DisasContext *s,
