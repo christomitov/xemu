@@ -24,6 +24,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "qemu/lockable.h"
 #include "system/tcg.h"
 #include "system/replay.h"
@@ -116,7 +117,9 @@ static void rr_wait_io_event(void)
         extern void xemu_wasm_dbg_ring_put(const char *, ...);
         xemu_wasm_dbg_ring_put("[vcpu] rr idle -> cond_wait\n");
         xemu_wasm_lowmem_check("rr pre cond_wait");
+        XPHASE_SET(XPHASE_VCPU, "halted");
         qemu_cond_wait_bql(first_cpu->halt_cond);
+        XPHASE_SET(XPHASE_VCPU, NULL);
         xemu_wasm_lowmem_check("rr post cond_wait");
         xemu_wasm_dbg_ring_put("[vcpu] rr woke\n");
 #else

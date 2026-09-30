@@ -544,6 +544,74 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
     return buf;
 }
 
+/*
+ * Sampling profile (see xemu-wasm-stats.h): the main loop calls
+ * xemu_wasm_phase_sample() every iteration; xemu_wasm_phase_top() returns
+ * and resets the counts since its last call.
+ */
+const char *volatile xemu_wasm_phase[2];
+
+#define PHASE_SLOTS 128
+static struct {
+    const char *name;
+    uint32_t n;
+} phase_prof[2][PHASE_SLOTS];
+
+static void phase_bump(int t, const char *name)
+{
+    uintptr_t h = ((uintptr_t)name >> 2) * 2654435761u;
+    for (unsigned i = 0; i < PHASE_SLOTS; i++) {
+        unsigned slot = (h + i) & (PHASE_SLOTS - 1);
+        if (phase_prof[t][slot].name == name || !phase_prof[t][slot].name) {
+            phase_prof[t][slot].name = name;
+            phase_prof[t][slot].n++;
+            return;
+        }
+    }
+}
+
+void xemu_wasm_phase_sample(void)
+{
+    static const char *const dflt[2] = { "jit", "pfifo" };
+    for (int t = 0; t < 2; t++) {
+        const char *p = xemu_wasm_phase[t];
+        phase_bump(t, p ? p : dflt[t]);
+    }
+}
+
+/* "vcpu|name=n;name=n;...\ngpu|..." busiest first, counts since last call */
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_phase_top(void)
+{
+    static char buf[2048];
+    static const char *const label[2] = { "vcpu", "gpu" };
+    int len = 0;
+
+    for (int t = 0; t < 2; t++) {
+        bool used[PHASE_SLOTS] = { false };
+        len += snprintf(buf + len, sizeof(buf) - len, "%s|", label[t]);
+        for (int k = 0; k < 24; k++) {
+            int best = -1;
+            for (int i = 0; i < PHASE_SLOTS; i++) {
+                if (!used[i] && phase_prof[t][i].n &&
+                    (best < 0 || phase_prof[t][i].n > phase_prof[t][best].n)) {
+                    best = i;
+                }
+            }
+            if (best < 0 || len > (int)sizeof(buf) - 100) {
+                break;
+            }
+            used[best] = true;
+            len += snprintf(buf + len, sizeof(buf) - len, "%s=%u;",
+                            phase_prof[t][best].name, phase_prof[t][best].n);
+        }
+        len += snprintf(buf + len, sizeof(buf) - len, "\n");
+        for (int i = 0; i < PHASE_SLOTS; i++) {
+            phase_prof[t][i].n = 0;
+        }
+    }
+    return buf;
+}
+
 /* page reads the struct directly from the wasm heap */
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
 {

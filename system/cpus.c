@@ -596,6 +596,10 @@ void bql_lock_impl(const char *file, int line)
         static unsigned long bql_spin_count;
         if (qemu_mutex_trylock(&bql) != 0) {
             bool vcpu = current_cpu != NULL;
+            const char *xphase_old_ = xemu_wasm_phase[XPHASE_VCPU];
+            if (vcpu) {
+                XPHASE_SET(XPHASE_VCPU, "bql_wait");
+            }
             XSTAT_T0();
             while (qemu_mutex_trylock(&bql) != 0) {
                 if (++bql_spin_count == 100000000UL) {
@@ -603,6 +607,7 @@ void bql_lock_impl(const char *file, int line)
                 }
             }
             if (vcpu) {
+                XPHASE_SET(XPHASE_VCPU, xphase_old_);
                 XSTAT_INC(n_vcpu_bql_wait);
                 XSTAT_T1(ns_vcpu_bql_wait);
             } else {

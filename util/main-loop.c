@@ -687,6 +687,9 @@ void main_loop_poll_remove_notifier(Notifier *notify)
 void main_loop_wait(int nonblocking)
 {
     XSTAT_INC(n_main_iter);
+#ifdef EMSCRIPTEN
+    xemu_wasm_phase_sample();
+#endif
     { static int wasm_n; wasm_n++; if ((wasm_n % 10) == 0) xemu_wasm_dbg_ring_put("[loop] iter %d\n", wasm_n); }
     MainLoopPoll mlpoll = {
         .state = MAIN_LOOP_POLL_FILL,

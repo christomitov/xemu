@@ -62,7 +62,9 @@ static void on_device_lost(const WGPUDevice *device, WGPUDeviceLostReason reason
 void pgraph_wgpu_wait(PGRAPHWgpuState *r, WGPUFuture future)
 {
     WGPUFutureWaitInfo info = { .future = future };
+    XPHASE_PUSH(XPHASE_GPU, "gpu_wait");
     wgpuInstanceWaitAny(r->instance, 1, &info, UINT64_MAX);
+    XPHASE_POP(XPHASE_GPU);
 }
 
 WGPUShaderModule pgraph_wgpu_create_wgsl_module(PGRAPHWgpuState *r,
@@ -333,7 +335,9 @@ static void pgraph_wgpu_process_pending(NV2AState *d)
         if (r->display.need_yield) {
             /* present the frame: yield with no locks held (see display.c) */
             r->display.need_yield = false;
+            XPHASE_SET(XPHASE_GPU, "yield");
             emscripten_sleep(0);
+            XPHASE_SET(XPHASE_GPU, NULL);
         }
         qemu_mutex_lock(&d->pfifo.lock);
     }

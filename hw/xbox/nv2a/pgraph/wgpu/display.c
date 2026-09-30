@@ -29,47 +29,80 @@ typedef struct DisplayUniforms {
 /* uv = xform.xy * screen_uv + xform.zw selects the scanned-out region of a
  * (possibly larger) render surface; the PVIDEO video overlay is composited
  * on top exactly like the Vulkan display shader (minus its GL y-flip) */
-static const char display_wgsl[] =
-    "struct DisplayU {\n"
-    "    xform: vec4f,\n"
-    "    display_size: vec2f,\n"
-    "    pvideo_enable: u32,\n"
-    "    pvideo_color_key_enable: u32,\n"
-    "    pvideo_in_pos: vec2f,\n"
-    "    pad_: vec2f,\n"
-    "    pvideo_pos: vec4f,\n"
-    "    pvideo_scale: vec4f,\n"
-    "    pvideo_color_key: vec4f,\n"
-    "};\n"
-    "@group(0) @binding(0) var samp: sampler;\n"
-    "@group(0) @binding(1) var tex: texture_2d<f32>;\n"
-    "@group(0) @binding(2) var<uniform> u: DisplayU;\n"
-    "@group(0) @binding(3) var pvideo_tex: texture_2d<f32>;\n"
-    "struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };\n"
-    "@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {\n"
-    "    var p = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));\n"
-    "    var o: VOut;\n"
-    "    o.pos = vec4f(p[i], 0.0, 1.0);\n"
-    "    o.uv = vec2f((p[i].x + 1.0) * 0.5, (1.0 - p[i].y) * 0.5);\n"
-    "    return o;\n"
+#define DISPLAY_WGSL(DISPLAY_AA_BODY) \
+    "struct DisplayU {\n" \
+    "    xform: vec4f,\n" \
+    "    display_size: vec2f,\n" \
+    "    pvideo_enable: u32,\n" \
+    "    pvideo_color_key_enable: u32,\n" \
+    "    pvideo_in_pos: vec2f,\n" \
+    "    pad_: vec2f,\n" \
+    "    pvideo_pos: vec4f,\n" \
+    "    pvideo_scale: vec4f,\n" \
+    "    pvideo_color_key: vec4f,\n" \
+    "};\n" \
+    "@group(0) @binding(0) var samp: sampler;\n" \
+    "@group(0) @binding(1) var tex: texture_2d<f32>;\n" \
+    "@group(0) @binding(2) var<uniform> u: DisplayU;\n" \
+    "@group(0) @binding(3) var pvideo_tex: texture_2d<f32>;\n" \
+    "struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };\n" \
+    "@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {\n" \
+    "    var p = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));\n" \
+    "    var o: VOut;\n" \
+    "    o.pos = vec4f(p[i], 0.0, 1.0);\n" \
+    "    o.uv = vec2f((p[i].x + 1.0) * 0.5, (1.0 - p[i].y) * 0.5);\n" \
+    "    return o;\n" \
+    "}\n" \
+    "fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }\n" \
+    "fn sample_base(uv: vec2f, raw: vec4f) -> vec4f {\n" \
+    DISPLAY_AA_BODY \
+    "}\n" \
+    "@fragment fn fs(v: VOut) -> @location(0) vec4f {\n" \
+    "    let uv = v.uv * u.xform.xy + u.xform.zw;\n" \
+    "    let raw = textureSampleLevel(tex, samp, uv, 0.0);\n" \
+    "    var c = sample_base(uv, raw);\n" \
+    "    if (u.pvideo_enable != 0u) {\n" \
+    "        let sc = v.pos.xy * u.pvideo_scale.z;\n" \
+    "        let lo = u.pvideo_pos.xy;\n" \
+    "        let hi = u.pvideo_pos.xy + u.pvideo_pos.zw;\n" \
+    "        let inside = all(sc >= lo) && all(sc <= hi);\n" \
+    "        let keyed = u.pvideo_color_key_enable == 0u ||\n" \
+    "                    all(raw.rgb == u.pvideo_color_key.rgb);\n" \
+    "        if (inside && keyed) {\n" \
+    "            let in_st = (u.pvideo_in_pos + (sc - lo) * u.pvideo_scale.xy)\n" \
+    "                        / vec2f(textureDimensions(pvideo_tex, 0));\n" \
+    "            c = textureSampleLevel(pvideo_tex, samp, in_st, 0.0);\n" \
+    "        }\n" \
+    "    }\n" \
+    "    return vec4f(c.rgb, 1.0);\n" \
     "}\n"
-    "@fragment fn fs(v: VOut) -> @location(0) vec4f {\n"
-    "    var c = textureSample(tex, samp, v.uv * u.xform.xy + u.xform.zw);\n"
-    "    if (u.pvideo_enable != 0u) {\n"
-    "        let sc = v.pos.xy * u.pvideo_scale.z;\n"
-    "        let lo = u.pvideo_pos.xy;\n"
-    "        let hi = u.pvideo_pos.xy + u.pvideo_pos.zw;\n"
-    "        let inside = all(sc >= lo) && all(sc <= hi);\n"
-    "        let keyed = u.pvideo_color_key_enable == 0u ||\n"
-    "                    all(c.rgb == u.pvideo_color_key.rgb);\n"
-    "        if (inside && keyed) {\n"
-    "            let in_st = (u.pvideo_in_pos + (sc - lo) * u.pvideo_scale.xy)\n"
-    "                        / vec2f(textureDimensions(pvideo_tex, 0));\n"
-    "            c = textureSampleLevel(pvideo_tex, samp, in_st, 0.0);\n"
-    "        }\n"
-    "    }\n"
-    "    return vec4f(c.rgb, 1.0);\n"
-    "}\n";
+
+/* FXAA 3.11 "console" style edge blend, in texture space */
+#define DISPLAY_AA_FXAA \
+    "    let rcp = 1.0 / vec2f(textureDimensions(tex, 0));\n" \
+    "    let nw = luma(textureSampleLevel(tex, samp, uv + vec2f(-1.0, -1.0) * rcp, 0.0).rgb);\n" \
+    "    let ne = luma(textureSampleLevel(tex, samp, uv + vec2f(1.0, -1.0) * rcp, 0.0).rgb);\n" \
+    "    let sw = luma(textureSampleLevel(tex, samp, uv + vec2f(-1.0, 1.0) * rcp, 0.0).rgb);\n" \
+    "    let se = luma(textureSampleLevel(tex, samp, uv + vec2f(1.0, 1.0) * rcp, 0.0).rgb);\n" \
+    "    let m = luma(raw.rgb);\n" \
+    "    let lmin = min(m, min(min(nw, ne), min(sw, se)));\n" \
+    "    let lmax = max(m, max(max(nw, ne), max(sw, se)));\n" \
+    "    if (lmax - lmin < max(0.0312, lmax * 0.125)) { return raw; }\n" \
+    "    var dir = vec2f(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));\n" \
+    "    let reduce = max((nw + ne + sw + se) * (0.25 / 8.0), 1.0 / 128.0);\n" \
+    "    let rmin = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);\n" \
+    "    dir = clamp(dir * rmin, vec2f(-8.0), vec2f(8.0)) * rcp;\n" \
+    "    let a = 0.5 * (textureSampleLevel(tex, samp, uv + dir * (1.0 / 3.0 - 0.5), 0.0).rgb +\n" \
+    "                   textureSampleLevel(tex, samp, uv + dir * (2.0 / 3.0 - 0.5), 0.0).rgb);\n" \
+    "    let b = a * 0.5 + 0.25 * (textureSampleLevel(tex, samp, uv - dir * 0.5, 0.0).rgb +\n" \
+    "                              textureSampleLevel(tex, samp, uv + dir * 0.5, 0.0).rgb);\n" \
+    "    let lb = luma(b);\n" \
+    "    if (lb < lmin || lb > lmax) { return vec4f(a, raw.a); }\n" \
+    "    return vec4f(b, raw.a);\n"
+#define DISPLAY_AA_NONE "    return raw;\n"
+
+static const char display_wgsl_fxaa[] = DISPLAY_WGSL(DISPLAY_AA_FXAA);
+static const char display_wgsl[] = DISPLAY_WGSL(DISPLAY_AA_NONE);
 
 static void ensure_pvideo_texture(PGRAPHWgpuState *r, int width, int height)
 {
@@ -210,13 +243,73 @@ static void update_pvideo(NV2AState *d, PGRAPHWgpuState *r, DisplayUniforms *u)
     u->pvideo_scale[3] = 1.0f;
 }
 
+static void on_display_scope(WGPUPopErrorScopeStatus status,
+                             WGPUErrorType type, WGPUStringView msg,
+                             void *ud1, void *ud2)
+{
+    (void)status;
+    (void)ud2;
+    if (type != WGPUErrorType_NoError) {
+        *(bool *)ud1 = true;
+        fprintf(stderr, "[wgpu] display FXAA shader rejected: %.*s\n",
+                (int)(msg.length == WGPU_STRLEN ? strlen(msg.data) : msg.length),
+                msg.data ? msg.data : "");
+    }
+}
+
+static WGPURenderPipeline create_display_pipeline(PGRAPHWgpuState *r,
+                                                  WGPUPipelineLayout layout,
+                                                  const char *wgsl,
+                                                  bool checked)
+{
+    bool failed = false;
+
+    if (checked) {
+        wgpuDevicePushErrorScope(r->device, WGPUErrorFilter_Validation);
+    }
+    WGPUShaderModule module =
+        pgraph_wgpu_create_wgsl_module(r, "display", wgsl);
+    WGPUColorTargetState target = {
+        .format = r->surface_format,
+        .writeMask = WGPUColorWriteMask_All,
+    };
+    WGPUFragmentState frag = {
+        .module = module,
+        .entryPoint = { "fs", WGPU_STRLEN },
+        .targetCount = 1,
+        .targets = &target,
+    };
+    WGPURenderPipelineDescriptor pdesc = {
+        .label = { "display", WGPU_STRLEN },
+        .layout = layout,
+        .vertex = { .module = module, .entryPoint = { "vs", WGPU_STRLEN } },
+        .primitive = { .topology = WGPUPrimitiveTopology_TriangleList },
+        .multisample = { .count = 1, .mask = ~0u },
+        .fragment = &frag,
+    };
+    WGPURenderPipeline pipeline =
+        wgpuDeviceCreateRenderPipeline(r->device, &pdesc);
+    wgpuShaderModuleRelease(module);
+
+    if (checked) {
+        pgraph_wgpu_wait(r, wgpuDevicePopErrorScope(
+            r->device,
+            (WGPUPopErrorScopeCallbackInfo){
+                .mode = WGPUCallbackMode_WaitAnyOnly,
+                .callback = on_display_scope,
+                .userdata1 = &failed }));
+        if (failed) {
+            wgpuRenderPipelineRelease(pipeline);
+            return NULL;
+        }
+    }
+    return pipeline;
+}
+
 void pgraph_wgpu_init_display(PGRAPHState *pg)
 {
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     PGRAPHWgpuDisplayState *disp = &r->display;
-
-    WGPUShaderModule module =
-        pgraph_wgpu_create_wgsl_module(r, "display", display_wgsl);
 
     WGPUBindGroupLayoutEntry entries[4] = {
         { .binding = 0, .visibility = WGPUShaderStage_Fragment,
@@ -239,27 +332,18 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
                        .bindGroupLayoutCount = 1,
                        .bindGroupLayouts = &disp->bind_group_layout });
 
-    WGPUColorTargetState target = {
-        .format = r->surface_format,
-        .writeMask = WGPUColorWriteMask_All,
-    };
-    WGPUFragmentState frag = {
-        .module = module,
-        .entryPoint = { "fs", WGPU_STRLEN },
-        .targetCount = 1,
-        .targets = &target,
-    };
-    WGPURenderPipelineDescriptor pdesc = {
-        .label = { "display", WGPU_STRLEN },
-        .layout = layout,
-        .vertex = { .module = module, .entryPoint = { "vs", WGPU_STRLEN } },
-        .primitive = { .topology = WGPUPrimitiveTopology_TriangleList },
-        .multisample = { .count = 1, .mask = ~0u },
-        .fragment = &frag,
-    };
-    disp->pipeline = wgpuDeviceCreateRenderPipeline(r->device, &pdesc);
+    /* FXAA on by default (XEMU_AA=0 disables); plain shader if it fails */
+    const char *aa = getenv("XEMU_AA");
+    disp->pipeline = NULL;
+    if (!aa || strcmp(aa, "0")) {
+        disp->pipeline = create_display_pipeline(r, layout, display_wgsl_fxaa,
+                                                 true);
+    }
+    if (!disp->pipeline) {
+        disp->pipeline = create_display_pipeline(r, layout, display_wgsl,
+                                                 false);
+    }
     wgpuPipelineLayoutRelease(layout);
-    wgpuShaderModuleRelease(module);
 
     disp->sampler = wgpuDeviceCreateSampler(
         r->device, &(WGPUSamplerDescriptor){

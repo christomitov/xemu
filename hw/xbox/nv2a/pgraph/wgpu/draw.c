@@ -1628,6 +1628,8 @@ static void flush_draw_impl(NV2AState *d)
 void pgraph_wgpu_flush_draw(NV2AState *d)
 {
     XSTAT_T0();
+    XPHASE_SET(XPHASE_GPU, "draw");
     flush_draw_impl(d);
+    XPHASE_SET(XPHASE_GPU, NULL);
     XSTAT_T1(ns_draw);
 }
