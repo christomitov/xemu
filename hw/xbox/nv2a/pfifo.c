@@ -92,7 +92,7 @@ void pfifo_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
 
 void pfifo_kick(NV2AState *d)
 {
-    d->pfifo.fifo_kick = true;
+    qatomic_set(&d->pfifo.fifo_kick, true);
     qemu_cond_broadcast(&d->pfifo.fifo_cond);
 }
 
@@ -472,7 +472,7 @@ void *pfifo_thread(void *arg)
 
     qemu_mutex_lock(&d->pfifo.lock);
     while (true) {
-        d->pfifo.fifo_kick = false;
+        qatomic_set(&d->pfifo.fifo_kick, false);
 #ifdef EMSCRIPTEN
         xemu_wasm_dbg_ring_put("[pfifo] iter");
         xemu_wasm_lowmem_check("pfifo iter");
@@ -489,12 +489,22 @@ void *pfifo_thread(void *arg)
         xemu_wasm_lowmem_check("pfifo post-pusher");
 #endif
 
-        if (!d->pfifo.fifo_kick) {
+        if (!qatomic_read(&d->pfifo.fifo_kick)) {
             qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
 
             // Both the pusher and puller are waiting for some action
             XPHASE_SET(XPHASE_GPU, "idle");
-            qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
+            /*
+             * fifo_idle/fifo_kick handshake with the lock-free doorbell in
+             * user_write(): either it sees fifo_idle and signals under the
+             * lock, or we see its fifo_kick here and don't wait.
+             */
+            qatomic_set(&d->pfifo.fifo_idle, true);
+            smp_mb();
+            if (!qatomic_read(&d->pfifo.fifo_kick)) {
+                qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
+            }
+            qatomic_set(&d->pfifo.fifo_idle, false);
             XPHASE_SET(XPHASE_GPU, NULL);
         }
 #ifdef EMSCRIPTEN
