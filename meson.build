@@ -980,7 +980,14 @@ if have_tcg
     warning('configuration option on this architecture to use the native')
     warning('backend.')
   endif
-  if get_option('tcg_interpreter')
+  if get_option('tcg_wasm_jit')
+    # The wasm JIT is a TCI variant: TBs carry TCI bytecode (run by tci.c
+    # for cold blocks) plus a WebAssembly module compiled once a block is hot.
+    if host_arch != 'wasm32' or not get_option('tcg_interpreter')
+      error('--enable-tcg-wasm-jit requires a wasm32 host and --enable-tcg-interpreter')
+    endif
+    tcg_arch = 'wasm32'
+  elif get_option('tcg_interpreter')
     tcg_arch = 'tci'
   elif host_arch == 'x86_64'
     tcg_arch = 'i386'
@@ -2754,7 +2761,8 @@ config_host_data.set('CONFIG_SNAPPY', snappy.found())
 config_host_data.set('CONFIG_SOLARIS', host_os == 'sunos')
 if have_tcg
   config_host_data.set('CONFIG_TCG', 1)
-  config_host_data.set('CONFIG_TCG_INTERPRETER', tcg_arch == 'tci')
+  config_host_data.set('CONFIG_TCG_INTERPRETER', tcg_arch == 'tci' or tcg_arch == 'wasm32')
+  config_host_data.set('CONFIG_TCG_WASM_JIT', tcg_arch == 'wasm32')
 endif
 config_host_data.set('CONFIG_TPM', have_tpm)
 config_host_data.set('CONFIG_TSAN', get_option('tsan'))
@@ -5064,7 +5072,9 @@ if have_system
 endif
 summary_info += {'TCG support':       config_all_accel.has_key('CONFIG_TCG')}
 if config_all_accel.has_key('CONFIG_TCG')
-  if get_option('tcg_interpreter')
+  if get_option('tcg_wasm_jit')
+    summary_info += {'TCG backend':   'wasm32 JIT (TCI bytecode + WebAssembly modules)'}
+  elif get_option('tcg_interpreter')
     summary_info += {'TCG backend':   'TCI (TCG with bytecode interpreter, slow)'}
   else
     summary_info += {'TCG backend':   'native (@0@)'.format(cpu)}
