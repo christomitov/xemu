@@ -2034,6 +2034,54 @@ static void gen_fcom_ST0_FT0(DisasContext *s)
     gen_helper_fp_arith_ST0_FT0(s, 2);
 }
 
+/* fucom: as fcom, apart from exceptions (not modelled by the hard FPU) */
+static void gen_fucom_ST0_FT0(DisasContext *s)
+{
+    if (!g_use_hard_fpu) {
+        gen_helper_fucom_ST0_FT0(tcg_env);
+        return;
+    }
+    gen_fcom_ST0_FT0(s);
+}
+
+/* fcomi/fucomi: EFLAGS.ZF/PF/CF from comparing ST0 with FT0 */
+static void gen_fcomi_ST0_FT0(DisasContext *s, bool quiet)
+{
+    if (!g_use_hard_fpu) {
+        if (quiet) {
+            gen_helper_fucomi_ST0_FT0(tcg_env);
+        } else {
+            gen_helper_fcomi_ST0_FT0(tcg_env);
+        }
+        return;
+    }
+
+    TCGv_i64 flags = fp_pc_wrapper(gen_fcomi_flags)(s);
+    TCGv t = tcg_temp_new();
+
+    gen_compute_eflags(s);
+    tcg_gen_trunc_i64_tl(t, flags);
+    tcg_gen_andi_tl(cpu_cc_src, cpu_cc_src, ~(CC_Z | CC_P | CC_C));
+    tcg_gen_or_tl(cpu_cc_src, cpu_cc_src, t);
+}
+
+/* fnstsw: (fpus & ~0x3800) | (fpstt & 7) << 11, without a helper call */
+static void gen_fnstsw(DisasContext *s, TCGv_i32 ret)
+{
+    TCGv_i32 t = tcg_temp_new_i32();
+
+    if (g_use_hard_fpu) {
+        tcg_gen_mov_i32(t, fpstt);
+    } else {
+        tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, fpstt));
+    }
+    tcg_gen_andi_i32(t, t, 7);
+    tcg_gen_shli_i32(t, t, 11);
+    tcg_gen_ld16u_i32(ret, tcg_env, offsetof(CPUX86State, fpus));
+    tcg_gen_andi_i32(ret, ret, ~0x3800);
+    tcg_gen_or_i32(ret, ret, t);
+}
+
 /* NOTE the exception in "r" op ordering */
 static void gen_helper_fp_arith_STN_ST0(DisasContext *s, int op, int opreg)
 {
@@ -3180,7 +3228,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             update_fip = update_fdp = false;
             break;
         case 0x2f: /* fnstsw mem */
-            gen_helper_fnstsw(s->tmp2_i32, tcg_env);
+            gen_fnstsw(s, s->tmp2_i32);
             tcg_gen_qemu_st_i32(s->tmp2_i32, s->A0,
                                 s->mem_index, MO_LEUW);
             update_fip = update_fdp = false;
@@ -3394,7 +3442,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             switch (rm) {
             case 1: /* fucompp */
                 gen_fmov_FT0_STN(s, 1);
-                gen_helper_fucom_ST0_FT0(tcg_env);
+                gen_fucom_ST0_FT0(s);
                 gen_fpop(s);
                 gen_fpop(s);
                 break;
@@ -3430,7 +3478,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             }
             gen_update_cc_op(s);
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fucomi_ST0_FT0(tcg_env);
+            gen_fcomi_ST0_FT0(s, true);
             assume_cc_op(s, CC_OP_EFLAGS);
             break;
         case 0x1e: /* fcomi */
@@ -3439,7 +3487,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             }
             gen_update_cc_op(s);
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fcomi_ST0_FT0(tcg_env);
+            gen_fcomi_ST0_FT0(s, false);
             assume_cc_op(s, CC_OP_EFLAGS);
             break;
         case 0x28: /* ffree sti */
@@ -3457,11 +3505,11 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             break;
         case 0x2c: /* fucom st(i) */
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fucom_ST0_FT0(tcg_env);
+            gen_fucom_ST0_FT0(s);
             break;
         case 0x2d: /* fucomp st(i) */
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fucom_ST0_FT0(tcg_env);
+            gen_fucom_ST0_FT0(s);
             gen_fpop(s);
             break;
         case 0x33: /* de/3 */
@@ -3483,7 +3531,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
         case 0x3c: /* df/4 */
             switch (rm) {
             case 0:
-                gen_helper_fnstsw(s->tmp2_i32, tcg_env);
+                gen_fnstsw(s, s->tmp2_i32);
                 tcg_gen_extu_i32_tl(s->T0, s->tmp2_i32);
                 gen_op_mov_reg_v(s, MO_16, R_EAX, s->T0);
                 break;
@@ -3497,7 +3545,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             }
             gen_update_cc_op(s);
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fucomi_ST0_FT0(tcg_env);
+            gen_fcomi_ST0_FT0(s, true);
             gen_fpop(s);
             assume_cc_op(s, CC_OP_EFLAGS);
             break;
@@ -3507,7 +3555,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
             }
             gen_update_cc_op(s);
             gen_fmov_FT0_STN(s, opreg);
-            gen_helper_fcomi_ST0_FT0(tcg_env);
+            gen_fcomi_ST0_FT0(s, false);
             gen_fpop(s);
             assume_cc_op(s, CC_OP_EFLAGS);
             break;
@@ -4286,6 +4334,17 @@ void tcg_x86_init(void)
 
 #if defined(XBOX) && defined(__x86_64__)
     g_use_hard_fpu = g_config.perf.hard_fpu;
+#elif defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+    /*
+     * The wasm32 JIT implements the host FP ops natively (wasm f32/f64), so
+     * x87 runs as in xemu's x86-64 "hard FPU" mode: registers cached as
+     * doubles (or floats under PC=single) within a TB. XEMU_HARD_FPU=0
+     * selects the exact soft-float helpers.
+     */
+    {
+        const char *e = getenv("XEMU_HARD_FPU");
+        g_use_hard_fpu = !(e && e[0] == '0');
+    }
 #endif
 }
 
@@ -4432,6 +4491,11 @@ static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
 
+    /*
+     * FT0 is scratch within one x87 instruction (always written before it
+     * is read), so it need not be written back at the end of the block.
+     */
+    dc->ft0 = NULL;
     gen_flush_fp(dc);
 
     switch (dc->base.is_jmp) {
