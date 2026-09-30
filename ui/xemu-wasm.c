@@ -570,6 +570,19 @@ static void phase_bump(int t, const char *name)
     }
 }
 
+/*
+ * Sampled from its own thread at ~1 kHz: sampling from the main loop would
+ * only ever look while main holds the BQL (and over-count "bql_wait").
+ */
+static void *phase_sampler_thread(void *opaque)
+{
+    for (;;) {
+        usleep(1000);
+        xemu_wasm_phase_sample();
+    }
+    return NULL;
+}
+
 void xemu_wasm_phase_sample(void)
 {
     static const char *const dflt[2] = { "jit", "pfifo" };
@@ -732,6 +745,11 @@ int main(int argc, char **argv)
     lowmem_snapshot();
     lowmem_init = 1;
 
+    {
+        static QemuThread sampler;
+        qemu_thread_create(&sampler, "phase-sampler", phase_sampler_thread,
+                           NULL, QEMU_THREAD_DETACHED);
+    }
     s_gui_timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_MS,
                             xemu_wasm_gui_tick, NULL);
     timer_mod(s_gui_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
