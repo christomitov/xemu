@@ -452,6 +452,10 @@ static void pfifo_run_pusher(NV2AState *d)
 void *pfifo_thread(void *arg)
 {
     NV2AState *d = (NV2AState *)arg;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+#endif
 
     pgraph_init_thread(d);
 
@@ -460,6 +464,10 @@ void *pfifo_thread(void *arg)
     qemu_mutex_lock(&d->pfifo.lock);
     while (true) {
         d->pfifo.fifo_kick = false;
+#ifdef EMSCRIPTEN
+        xemu_wasm_dbg_ring_put("[pfifo] iter");
+        xemu_wasm_lowmem_check("pfifo iter");
+#endif
 
         pgraph_process_pending(d);
 
@@ -468,6 +476,9 @@ void *pfifo_thread(void *arg)
         }
 
         pgraph_process_pending_reports(d);
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("pfifo post-pusher");
+#endif
 
         if (!d->pfifo.fifo_kick) {
             qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
@@ -475,6 +486,9 @@ void *pfifo_thread(void *arg)
             // Both the pusher and puller are waiting for some action
             qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
         }
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("pfifo post-wait");
+#endif
 
         if (d->exiting) {
             break;

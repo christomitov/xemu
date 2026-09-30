@@ -119,11 +119,15 @@ DSPState *dsp_init(void *rw_opaque, dsp_scratch_rw_func scratch_rw,
     dsp->dma.scratch_rw = scratch_rw;
     dsp->dma.fifo_rw = fifo_rw;
 
+#ifdef CONFIG_XEMU_WASM
+    dsp_c_init(dsp);  /* dsp56300 JIT unavailable in wasm builds */
+#else
     if (g_config.audio.use_dsp_jit) {
         dsp_jit_init(dsp);
     } else {
         dsp_c_init(dsp);
     }
+#endif
 
     dsp_reset(dsp);
 
@@ -212,6 +216,14 @@ void dsp_sync_from_vm(DSPState *dsp)
 
 void dsp_set_engine(DSPState *dsp, bool use_jit)
 {
+#ifdef CONFIG_XEMU_WASM
+    /* dsp56300 JIT backend unavailable in wasm builds; always C engine */
+    if (!use_jit) {
+        return;
+    }
+    use_jit = false;
+    dsp_c_init(dsp);
+#else
     bool currently_jit = (dsp->ops == &jit_dsp_ops);
     if (use_jit == currently_jit) {
         return;
@@ -227,4 +239,5 @@ void dsp_set_engine(DSPState *dsp, bool use_jit)
     }
 
     dsp_sync_from_vm(dsp);
+#endif
 }

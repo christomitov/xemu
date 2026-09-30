@@ -72,7 +72,14 @@
 #include "system/qtest.h"
 #include "options.h"
 
+#ifndef XEMU_WASM_NO_SDL
 #include "ui/xemu-snapshots.h"
+#else
+/* wasm: snapshot extra-data hooks still need their prototypes */
+void xemu_snapshots_save_extra_data(void *f);
+bool xemu_snapshots_offset_extra_data(void *f);
+void xemu_snapshots_mark_dirty(void);
+#endif
 
 const unsigned int postcopy_ram_discard_version;
 

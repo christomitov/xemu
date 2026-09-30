@@ -23,6 +23,10 @@
  */
 
 #include "qemu/osdep.h"
+#include <unistd.h>
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#endif
 #include "qemu/help-texts.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
@@ -2865,6 +2869,7 @@ void qmp_x_exit_preconfig(Error **errp)
     }
 
     qemu_init_board();
+    fflush(stdout); printf("[init] board done\n");
     qemu_create_cli_devices();
 
 #ifdef XBOX
@@ -2875,6 +2880,7 @@ void qmp_x_exit_preconfig(Error **errp)
     }
 #endif
 
+    fflush(stdout); printf("[init] creating done...\n");
     if (!qemu_machine_creation_done(errp)) {
         return;
     }
@@ -2950,6 +2956,7 @@ static const char *get_eeprom_path(void)
 
 void qemu_init(int argc, char **argv)
 {
+    fprintf(stderr, "[init] qemu_init enter\n");
     QemuOpts *opts;
     QemuOpts *icount_opts = NULL, *accel_opts = NULL;
     QemuOptsList *olist;
@@ -2962,7 +2969,9 @@ void qemu_init(int argc, char **argv)
 /*****************************************************************************/
 
     // init earlier because it's needed for eeprom generation
+    fprintf(stderr, "[init] calling qcrypto_init\n");
     qcrypto_init(&error_fatal);
+    fprintf(stderr, "[init] qcrypto_init done\n");
 
     //
     // FIXME: This is a hack to get QEMU to load correct machine and properties
@@ -2971,6 +2980,7 @@ void qemu_init(int argc, char **argv)
     // now.
     //
 
+    fprintf(stderr, "[init] building argv\n");
     int fake_argc = 32 + argc;
     char **fake_argv = malloc(sizeof(char*)*fake_argc);
     memset(fake_argv, 0, sizeof(char*)*fake_argc);
@@ -3087,6 +3097,15 @@ void qemu_init(int argc, char **argv)
     }
 
     // Always populate DVD drive. If disc path is the empty string, drive is
+    // connected but no media present. Under wasm the settings always point at
+    // /xemu/iso.iso; if the page never wrote it, fall back to no media instead
+    // of failing the DVD open.
+    if (dvd_path[0] && access(dvd_path, R_OK) != 0) {
+        fprintf(stderr, "[wasm] no DVD image at %s, booting without media\n", dvd_path);
+        dvd_path = "";
+    }
+
+    // Always populate DVD drive. If disc path is the empty string, drive is
     // connected but no media present.
     fake_argv[fake_argc++] = strdup("-drive");
     char *escaped_dvd_path = strdup_double_commas(dvd_path);
@@ -3095,18 +3114,40 @@ void qemu_init(int argc, char **argv)
     free(escaped_dvd_path);
 
     fake_argv[fake_argc++] = strdup("-display");
+#ifdef XEMU_WASM_NO_SDL
+    /* The xemu SDL display backend does not exist in the wasm build; headless. */
+    fake_argv[fake_argc++] = strdup("none");
+#else
     fake_argv[fake_argc++] = strdup("xemu");
+#endif
 
     // Create USB Daughterboard for 1.0 Xbox. This is connected to Port 1 of the Root hub.
+#ifdef EMSCRIPTEN
+    /* Single-threaded TCG: cross-worker BQL/atomics have shown heap
+     * corruption under emscripten; keep vCPU on the main worker. */
+    fake_argv[fake_argc++] = strdup("-accel");
+    fake_argv[fake_argc++] = strdup("tcg,thread=single");
+#endif
+    fprintf(stderr, "[init] argv: pre-usb\n");
     fake_argv[fake_argc++] = strdup("-device");
     fake_argv[fake_argc++] = strdup("usb-hub,port=1,ports=4");
+#ifndef EMSCRIPTEN
+    /* Interrupt/trace logging floods the browser boot log and throttles the
+     * vCPU; keep it native-only for debugging. */
+    fake_argv[fake_argc++] = strdup("-d");
+    fake_argv[fake_argc++] = strdup("int");
+    fake_argv[fake_argc++] = strdup("-trace");
+    fake_argv[fake_argc++] = strdup("enable=smbus*");
+#endif
 
+    fprintf(stderr, "[init] argv: passthrough\n");
     for (int i = 1; i < argc; i++) {
         if (argv[i] != NULL) {
             fake_argv[fake_argc++] = argv[i];
         }
     }
 
+    fflush(stdout); printf("[init] before print loop\n");
     printf("Created QEMU launch parameters: ");
     for (int i = 0; i < fake_argc; i++) {
         printf("%s ", fake_argv[i]);
@@ -3115,6 +3156,12 @@ void qemu_init(int argc, char **argv)
 
     argc = fake_argc;
     argv = fake_argv;
+#ifdef EMSCRIPTEN
+    EM_ASM({ console.log("[init] argv rebuilt via EM_ASM"); });
+#endif
+    fflush(stdout); printf("[init] argv rebuilt, entering qemu_init body\n");
+    fprintf(stderr, "[init] entering qemu_init body\n");
+    fflush(stdout);
 
 /*****************************************************************************/
 
@@ -3154,6 +3201,7 @@ void qemu_init(int argc, char **argv)
     module_call_init(MODULE_INIT_OPTS);
 
     error_init(argv[0]);
+    fflush(stdout); printf("[init] opts registered\n");
     qemu_init_exec_dir(argv[0]);
 
     os_setup_limits();
@@ -3163,8 +3211,11 @@ void qemu_init(int argc, char **argv)
     module_allow_arch(target_name());
 #endif
 
+    fflush(stdout); printf("[init] before subsystems\n");
     qemu_init_subsystems();
+    fflush(stdout); printf("[init] subsystems done\n");
 
+    fflush(stdout); printf("[init] first pass\n");
     /* first pass of option parsing */
     optind = 1;
     while (optind < argc) {
@@ -3183,11 +3234,17 @@ void qemu_init(int argc, char **argv)
         }
     }
 
+    fflush(stdout); printf("[init] first pass done\n");
     machine_opts_dict = qdict_new();
     if (userconfig) {
+        fflush(stdout); printf("[init] reading default config\n");
         qemu_read_default_config_file(&error_fatal);
+        fflush(stdout); printf("[init] default config read\n");
+    } else {
+        fflush(stdout); printf("[init] skipping userconfig\n");
     }
 
+    fflush(stdout); printf("[init] second pass\n");
     /* second pass of option parsing */
     optind = 1;
     for(;;) {
@@ -4008,7 +4065,9 @@ void qemu_init(int argc, char **argv)
     qemu_process_early_options();
 
     qemu_process_help_options();
+    fflush(stdout); printf("[init] early options done\n");
     qemu_maybe_daemonize(pid_file);
+    fflush(stdout); printf("[init] daemonize done\n");
 
     /*
      * The trace backend must be initialized after daemonizing.
@@ -4024,6 +4083,7 @@ void qemu_init(int argc, char **argv)
     trace_init_file();
 
     qemu_init_main_loop(&error_fatal);
+    fflush(stdout); printf("[init] main loop init done\n");
     cpu_timers_init();
 
     user_register_global_props();
@@ -4035,6 +4095,22 @@ void qemu_init(int argc, char **argv)
     parse_memory_options();
 
     qemu_create_machine(machine_opts_dict);
+    fflush(stdout); printf("[init] machine created\n");
+#ifdef EMSCRIPTEN
+    {
+        {
+            extern void xemu_wasm_dump_ramblocks(void);
+            xemu_wasm_dump_ramblocks();
+        }
+    }
+#endif
+#ifdef EMSCRIPTEN
+    {
+        extern unsigned long xemu_wasm_stack_size(void);
+        fprintf(stderr, "[stack] main thread stack=%lu tid=%lu\n",
+                xemu_wasm_stack_size(), (unsigned long)pthread_self());
+    }
+#endif
 
     /*
      * Load incoming CPR state before any devices are created, because it
@@ -4045,8 +4121,11 @@ void qemu_init(int argc, char **argv)
     suspend_mux_open();
 
     qemu_disable_default_devices();
+    fflush(stdout); printf("[init] default devices disabled\n");
     qemu_setup_display();
+    fflush(stdout); printf("[init] display setup done\n");
     qemu_create_default_devices();
+    fflush(stdout); printf("[init] default devices done\n");
     qemu_create_early_backends();
 
     qemu_apply_legacy_machine_options(machine_opts_dict);
@@ -4105,6 +4184,7 @@ void qemu_init(int argc, char **argv)
     /* NB: for machine none cpu_type could STILL be NULL here! */
 
     qemu_resolve_machine_memdev();
+    fflush(stdout); printf("[init] memdev resolved\n");
     parse_numa_opts(current_machine);
 
     if (vmstate_dump_file) {
@@ -4118,6 +4198,7 @@ void qemu_init(int argc, char **argv)
         qmp_x_exit_preconfig(&error_fatal);
     }
     qemu_init_displays();
+    fflush(stdout); printf("[init] displays done\n");
     accel_setup_post(current_machine);
     if (migrate_mode() != MIG_MODE_CPR_EXEC) {
         os_setup_post();

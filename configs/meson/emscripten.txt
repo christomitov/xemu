@@ -1,8 +1,8 @@
 [built-in options]
-c_args = ['-pthread']
-cpp_args = ['-pthread']
+c_args = ['-pthread', '-Wno-error=incompatible-pointer-types']
+cpp_args = ['-pthread', '-Wno-error=incompatible-pointer-types']
 objc_args = ['-pthread']
 # -sPROXY_TO_PTHREAD link time flag always requires -pthread even during
 # configuration so explicitly add the flag here.
-c_link_args = ['-pthread','-sASYNCIFY=1','-sPROXY_TO_PTHREAD=1','-sFORCE_FILESYSTEM','-sALLOW_TABLE_GROWTH','-sTOTAL_MEMORY=2GB','-sWASM_BIGINT','-sEXPORT_ES6=1','-sASYNCIFY_IMPORTS=ffi_call_js','-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,TTY,FS']
-cpp_link_args = ['-pthread','-sASYNCIFY=1','-sPROXY_TO_PTHREAD=1','-sFORCE_FILESYSTEM','-sALLOW_TABLE_GROWTH','-sTOTAL_MEMORY=2GB','-sWASM_BIGINT','-sEXPORT_ES6=1','-sASYNCIFY_IMPORTS=ffi_call_js','-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,TTY,FS']
+c_link_args = ['-pthread','-sASYNCIFY=1','-sPROXY_TO_PTHREAD=1','-sFORCE_FILESYSTEM','-sALLOW_TABLE_GROWTH','-sTOTAL_MEMORY=2GB','-sWASM_BIGINT','-sEXPORT_ES6=1','-sASYNCIFY_IMPORTS=ffi_call_js','-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,TTY,FS,HEAPU8,ENV','-sDEFAULT_PTHREAD_STACK_SIZE=8MB','-sSTACK_SIZE=16MB','-sSTACK_OVERFLOW_CHECK=2','--profiling-funcs']
+cpp_link_args = ['-pthread','-sASYNCIFY=1','-sPROXY_TO_PTHREAD=1','-sFORCE_FILESYSTEM','-sALLOW_TABLE_GROWTH','-sTOTAL_MEMORY=2GB','-sWASM_BIGINT','-sEXPORT_ES6=1','-sASYNCIFY_IMPORTS=ffi_call_js','-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,TTY,FS,HEAPU8,ENV','-sDEFAULT_PTHREAD_STACK_SIZE=8MB','-sSTACK_SIZE=16MB','-sSTACK_OVERFLOW_CHECK=2','--profiling-funcs']

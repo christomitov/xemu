@@ -74,12 +74,19 @@ static void aio_bh_enqueue(QEMUBH *bh, unsigned new_flags)
 {
     AioContext *ctx = bh->ctx;
     unsigned old_flags;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("bh enqueue pre");
+#endif
 
     /*
      * Synchronizes with atomic_fetch_and() in aio_bh_dequeue(), ensuring that
      * insertion starts after BH_PENDING is set.
      */
     old_flags = qatomic_fetch_or(&bh->flags, BH_PENDING | new_flags);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("bh enqueue post-fetchor");
+#endif
 
     if (!(old_flags & BH_PENDING)) {
         /*
@@ -157,6 +164,11 @@ QEMUBH *aio_bh_new_full(AioContext *ctx, QEMUBHFunc *cb, void *opaque,
 
 void aio_bh_call(QEMUBH *bh)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("before BH");
+    xemu_wasm_dbg_ring_put("[bh] call %s bh=%p\n", bh->name ? bh->name : "?", (void*)bh);
+#endif
     bool last_engaged_in_io = false;
 
     /* Make a copy of the guard-pointer as cb may free the bh */
@@ -170,6 +182,9 @@ void aio_bh_call(QEMUBH *bh)
     }
 
     bh->cb(bh->opaque);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("after BH");
+#endif
 
     if (reentrancy_guard) {
         reentrancy_guard->engaged_in_io = last_engaged_in_io;
@@ -544,7 +559,18 @@ static void co_schedule_bh_cb(void *opaque)
 
         /* Protected by write barrier in qemu_aio_coroutine_enter */
         qatomic_set(&co->scheduled, NULL);
+#ifdef EMSCRIPTEN
+        {
+            extern void xemu_wasm_lowmem_check(const char *);
+            extern void xemu_wasm_dbg_ring_put(const char *, ...);
+            xemu_wasm_dbg_ring_put("[coro] enter co=%p\n", (void*)(uintptr_t)co);
+            xemu_wasm_lowmem_check("pre coro enter");
+            qemu_aio_coroutine_enter(ctx, co);
+            xemu_wasm_lowmem_check("post coro enter");
+        }
+#else
         qemu_aio_coroutine_enter(ctx, co);
+#endif
     }
 }
 

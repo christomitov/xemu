@@ -574,8 +574,45 @@ void bql_lock_impl(const char *file, int line)
 {
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
 
+#ifdef EMSCRIPTEN
+    {
+        static int bql_trace;
+        if (bql_trace++ % 256 == 0) {
+            extern void xemu_wasm_dbg_ring_put(const char *, ...);
+            xemu_wasm_dbg_ring_put("[bql] lock tid=%lu %s:%d\n",
+                    (unsigned long)pthread_self(), file, line);
+        }
+    }
+#endif
     g_assert(!bql_locked());
+#ifdef EMSCRIPTEN
+    /* The emscripten futex-based mutex has exhibited lost wakeups (a
+     * sleeper never woken, waiters count stuck) when main and the vCPU
+     * contend on the BQL; a sleeping waiter can hang forever. Poll with
+     * trylock instead of sleeping: the holder always releases, so the
+     * spinner makes progress. */
+    {
+        static unsigned long bql_spin_count;
+        while (qemu_mutex_trylock(&bql) != 0) {
+            if (++bql_spin_count == 100000000UL) {
+                extern void xemu_wasm_dbg_ring_put(const char *, ...);
+                xemu_wasm_dbg_ring_put("[bql] spin 100M fails tid=%lu\n",
+                        (unsigned long)pthread_self());
+                bql_spin_count = 0;
+            }
+        }
+        bql_spin_count = 0;
+    }
+#else
     bql_lock_fn(&bql, file, line);
+#endif
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[bql] got tid=%lu %s:%d\n",
+                (unsigned long)pthread_self(), file, line);
+    }
+#endif
 }
 
 void bql_unlock(void)

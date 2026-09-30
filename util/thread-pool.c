@@ -108,7 +108,22 @@ static void *worker_thread(void *opaque)
         req->state = THREAD_ACTIVE;
         qemu_mutex_unlock(&pool->lock);
 
+#ifdef EMSCRIPTEN
+        {
+            extern void xemu_wasm_lowmem_check(const char *);
+            extern void xemu_wasm_dbg_ring_put(const char *, ...);
+            xemu_wasm_lowmem_check("pool worker pre");
+            xemu_wasm_dbg_ring_put("[pool] call func=%p tid=%lu\n",
+                    (void*)(uintptr_t)req->func, (unsigned long)pthread_self());
+        }
+#endif
         ret = req->func(req->arg);
+#ifdef EMSCRIPTEN
+        {
+            extern void xemu_wasm_lowmem_check(const char *);
+            xemu_wasm_lowmem_check("pool worker post");
+        }
+#endif
 
         req->ret = ret;
         /* Write ret before state.  */
@@ -177,12 +192,22 @@ static void thread_pool_completion_bh(void *opaque)
     ThreadPoolElementAio *elem, *next;
 
     defer_call_begin(); /* cb() may use defer_call() to coalesce work */
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("thread_pool_completion_bh enter");
+#endif
 
 restart:
     QLIST_FOREACH_SAFE(elem, &pool->head, all, next) {
         if (elem->state != THREAD_DONE) {
             continue;
         }
+#ifdef EMSCRIPTEN
+        xemu_wasm_dbg_ring_put("[pool] complete elem=%p ret=%d\n",
+                (void*)(uintptr_t)elem, elem->ret);
+        xemu_wasm_lowmem_check("thread_pool_completion_bh pre-cb");
+#endif
 
         trace_thread_pool_complete_aio(pool, elem, elem->common.opaque,
                                        elem->ret);
@@ -198,6 +223,9 @@ restart:
             qemu_bh_schedule(pool->completion_bh);
 
             elem->common.cb(elem->common.opaque, elem->ret);
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("thread_pool_completion_bh post-cb");
+#endif
 
             /* We can safely cancel the completion_bh here regardless of someone
              * else having scheduled it meanwhile because we reenter the

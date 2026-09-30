@@ -111,7 +111,17 @@ static void rr_wait_io_event(void)
 
     while (all_cpu_threads_idle()) {
         rr_stop_kick_timer();
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[vcpu] rr idle -> cond_wait\n");
+        xemu_wasm_lowmem_check("rr pre cond_wait");
         qemu_cond_wait_bql(first_cpu->halt_cond);
+        xemu_wasm_lowmem_check("rr post cond_wait");
+        xemu_wasm_dbg_ring_put("[vcpu] rr woke\n");
+#else
+        qemu_cond_wait_bql(first_cpu->halt_cond);
+#endif
     }
 
     rr_start_kick_timer();
@@ -179,6 +189,15 @@ static int rr_cpu_count(void)
 
 static void *rr_cpu_thread_fn(void *arg)
 {
+#ifdef EMSCRIPTEN
+    { extern void xemu_wasm_assert_stack(unsigned long, const char *);
+      xemu_wasm_assert_stack(8*1024*1024 - 1024*1024, "vcpu rr"); }
+#endif
+#ifdef EMSCRIPTEN
+    extern unsigned long xemu_wasm_stack_size(void);
+    fprintf(stderr, "[stack] vcpu(rr) thread stack=%lu tid=%lu\n",
+            xemu_wasm_stack_size(), (unsigned long)pthread_self());
+#endif
     Notifier force_rcu;
     CPUState *cpu = arg;
 

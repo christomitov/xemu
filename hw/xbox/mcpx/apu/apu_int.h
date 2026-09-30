@@ -23,7 +23,9 @@
 
 #include "qemu/osdep.h"
 #include <math.h>
+#ifndef XEMU_WASM_NO_SDL
 #include <SDL3/SDL.h>
+#endif
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_device.h"
@@ -42,6 +44,11 @@
 #include "fpconv.h"
 #include "vp/vp.h"
 #include "dsp/gp_ep.h"
+
+#ifdef XEMU_WASM_NO_SDL
+/* No SDL in the browser build; the monitor stream is opaque and unused. */
+typedef void SDL_AudioStream;
+#endif
 
 #define GET_MASK(v, mask) (((v) & (mask)) >> ctz32(mask))
 

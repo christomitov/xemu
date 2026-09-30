@@ -836,6 +836,19 @@ extern int use_rt_clock;
 
 static inline int64_t get_clock(void)
 {
+#ifdef EMSCRIPTEN
+    /*
+     * CLOCK_MONOTONIC under emscripten pthreads has a per-worker origin:
+     * a worker's monotonic reading starts near 0, while the main thread
+     * (and thus the clock offsets taken at init) use the process base.
+     * QEMU subtracts these values across threads (cpu_ticks_offset taken
+     * on main, virtual clock read on the vCPU thread), so any origin
+     * mismatch yields epoch-scale garbage timers. Use the wall clock,
+     * which emscripten backs with a shared epoch (Date.now()), on every
+     * thread.
+     */
+    return get_clock_realtime();
+#else
     if (use_rt_clock) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -845,6 +858,7 @@ static inline int64_t get_clock(void)
            changes, so it should be avoided. */
         return get_clock_realtime();
     }
+#endif
 }
 #endif
 

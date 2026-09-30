@@ -911,6 +911,12 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 {
     trace_exec_tb(tb, pc);
     tb = cpu_tb_exec(cpu, tb, tb_exit);
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_lowmem_check(const char *);
+        xemu_wasm_lowmem_check("per-TB");
+    }
+#endif
     if (*tb_exit != TB_EXIT_REQUESTED) {
         *last_tb = tb;
         return;
@@ -1017,10 +1023,21 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 #endif
             /* See if we can patch the calling TB. */
             if (last_tb) {
+#ifdef EMSCRIPTEN
+                extern void xemu_wasm_lowmem_check(const char *);
+                xemu_wasm_lowmem_check("pre tb_add_jump");
+#endif
                 tb_add_jump(last_tb, tb_exit, tb);
+#ifdef EMSCRIPTEN
+                xemu_wasm_lowmem_check("post tb_add_jump");
+#endif
             }
 
             cpu_loop_exec_tb(cpu, tb, s.pc, &last_tb, &tb_exit);
+#ifdef EMSCRIPTEN
+            extern void xemu_wasm_lowmem_check(const char *);
+            xemu_wasm_lowmem_check("post TB exec");
+#endif
 
             /* Try to align the host and virtual clocks
                if the guest is in advance */

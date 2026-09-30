@@ -1929,6 +1929,22 @@ static void *file_ram_alloc(RAMBlock *block,
  * dirty bitmaps.
  * Called with the ramlist lock held.
  */
+#ifdef EMSCRIPTEN
+void xemu_wasm_dump_ramblocks(void)
+{
+    RAMBlock *block;
+    int i = 0;
+    RAMBLOCK_FOREACH(block) {
+        fprintf(stderr, "[ramblock] %d: id=%s host=%p offset=%08llx max_length=%08llx used=%08llx\n",
+                i++, block->idstr, block->host,
+                (unsigned long long)block->offset,
+                (unsigned long long)block->max_length,
+                (unsigned long long)block->used_length);
+    }
+}
+#endif
+
+
 static ram_addr_t find_ram_offset(ram_addr_t size)
 {
     RAMBlock *block, *next_block;
@@ -2892,7 +2908,18 @@ static void *qemu_ram_ptr_length(RAMBlock *block, ram_addr_t addr,
                                     1, lock, is_write);
     }
 
-    return ramblock_ptr(block, addr);
+    void *rp = ramblock_ptr(block, addr);
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)rp < 1024) {
+        static bool ramptr_warned;
+        if (!ramptr_warned) {
+            ramptr_warned = true;
+            fprintf(stderr, "[ramptr] tiny ptr=%p block=%s addr=%llx\n", rp,
+                    block->idstr ? block->idstr : "?", (unsigned long long)addr);
+        }
+    }
+#endif
+    return rp;
 }
 
 /*
@@ -3323,6 +3350,17 @@ bool prepare_mmio_access(MemoryRegion *mr)
 {
     bool release_lock = false;
 
+#ifdef EMSCRIPTEN
+    {
+        static int pma_trace;
+        if (pma_trace++ % 64 == 0) {
+            extern void xemu_wasm_dbg_ring_put(const char *, ...);
+            xemu_wasm_dbg_ring_put("[mmio] tid=%lu mr=%s\n",
+                    (unsigned long)pthread_self(),
+                    mr->name ? mr->name : "(null)");
+        }
+    }
+#endif
     if (!bql_locked() && !mr->lockless_io) {
         bql_lock();
         release_lock = true;
@@ -3404,6 +3442,13 @@ static MemTxResult flatview_write_continue_step(MemTxAttrs attrs,
         uint8_t *ram_ptr = qemu_ram_ptr_length(mr->ram_block, mr_addr, l,
                                                false, true);
 
+#ifdef EMSCRIPTEN
+        if ((uintptr_t)ram_ptr < 1024) {
+            fprintf(stderr, "[physmem] WRITE bad ram_ptr=%p mr=%s len=%llu\n",
+                    (void*)ram_ptr, mr->name ? mr->name : "?", (unsigned long long)*l);
+            abort();
+        }
+#endif
         memmove(ram_ptr, buf, *l);
         invalidate_and_set_dirty(mr, mr_addr, *l);
 
@@ -3503,6 +3548,13 @@ static MemTxResult flatview_read_continue_step(MemTxAttrs attrs, uint8_t *buf,
         uint8_t *ram_ptr = qemu_ram_ptr_length(mr->ram_block, mr_addr, l,
                                                false, false);
 
+#ifdef EMSCRIPTEN
+        if ((uintptr_t)ram_ptr < 1024) {
+            fprintf(stderr, "[physmem] READ bad ram_ptr=%p mr=%s len=%llu\n",
+                    (void*)ram_ptr, mr->name ? mr->name : "?", (unsigned long long)*l);
+            abort();
+        }
+#endif
         memcpy(buf, ram_ptr, *l);
 
         return MEMTX_OK;
@@ -3884,7 +3936,17 @@ void *address_space_map(AddressSpace *as,
 
         if (l == 0) {
             *plen = 0;
+#ifdef EMSCRIPTEN
+            static bool bounce_warned;
+            if (!bounce_warned) {
+                bounce_warned = true;
+                fprintf(stderr, "[map] bounce exhausted addr=%llx len=%llu\n",
+                        (unsigned long long)addr, (unsigned long long)len);
+            }
             return NULL;
+#else
+            return NULL;
+#endif
         }
 
         BounceBuffer *bounce = g_malloc0(l + sizeof(BounceBuffer));
@@ -4211,6 +4273,15 @@ int qemu_ram_foreach_block(RAMBlockIterFunc func, void *opaque)
     RAMBlock *block;
     int ret = 0;
 
+#ifdef EMSCRIPTEN
+    {
+        RCU_READ_LOCK_GUARD();
+        RAMBLOCK_FOREACH(block) {
+            fprintf(stderr, "[ram] %s host=%p size=%llu\n", block->idstr,
+                    (void*)block->host, (unsigned long long)block->max_length);
+        }
+    }
+#endif
     RCU_READ_LOCK_GUARD();
     RAMBLOCK_FOREACH(block) {
         ret = func(block, opaque);

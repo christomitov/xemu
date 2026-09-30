@@ -35,6 +35,8 @@ typedef struct {
 
     CoroutineAction action;
 
+    pthread_t last_tid; /* thread-affinity tracker (wasm debug) */
+
     emscripten_fiber_t fiber;
 } CoroutineEmscripten;
 
@@ -63,6 +65,12 @@ Coroutine *qemu_coroutine_new(void)
 
     co->stack_size = COROUTINE_STACK_SIZE;
     co->stack = qemu_alloc_stack(&co->stack_size);
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)co->stack < 0x20000) {
+        fprintf(stderr, "[co] qemu_alloc_stack returned %p\n", co->stack);
+        abort();
+    }
+#endif
 
     co->asyncify_stack_size = COROUTINE_STACK_SIZE;
     co->asyncify_stack = g_malloc0(co->asyncify_stack_size);
@@ -90,7 +98,56 @@ CoroutineAction qemu_coroutine_switch(Coroutine *from_, Coroutine *to_,
 
     set_current(to_);
     to->action = action;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("co switch pre");
+    xemu_wasm_dbg_ring_put("[co] swap from=%p to=%p action=%d\n",
+            (void*)(uintptr_t)from_, (void*)(uintptr_t)to_, (int)action);
+    {
+        emscripten_fiber_t *tf = &to->fiber, *ff = &from->fiber;
+        if ((uintptr_t)tf->stack_base < 0x20000 ||
+            (uintptr_t)ff->stack_base < 0x20000) {
+            fprintf(stderr, "[co] BAD stack_base to=%p from=%p (action=%d)\n",
+                    tf->stack_base, ff->stack_base, (int)action);
+            abort();
+        }
+        if ((uintptr_t)tf->asyncify_data.stack_ptr == 0 ||
+            (uintptr_t)tf->asyncify_data.stack_ptr >= (uintptr_t)tf->asyncify_data.stack_limit ||
+            (uintptr_t)tf->asyncify_data.stack_limit == 0) {
+            fprintf(stderr, "[co] BAD to asyncify_data ptr=%p limit=%p\n",
+                    tf->asyncify_data.stack_ptr, tf->asyncify_data.stack_limit);
+            abort();
+        }
+        if ((uintptr_t)ff->asyncify_data.stack_ptr == 0 ||
+            (uintptr_t)ff->asyncify_data.stack_ptr >= (uintptr_t)ff->asyncify_data.stack_limit ||
+            (uintptr_t)ff->asyncify_data.stack_limit == 0) {
+            fprintf(stderr, "[co] BAD from asyncify_data ptr=%p limit=%p\n",
+                    ff->asyncify_data.stack_ptr, ff->asyncify_data.stack_limit);
+            abort();
+        }
+        /* asyncify bounds trace: watch for a fiber whose rewind region reaches
+         * the main stack bottom (limit near 0) or has an odd 8-byte offset */
+        xemu_wasm_dbg_ring_put("[co] ad from ptr=%p lim=%p | to ptr=%p lim=%p\n",
+                (void*)(uintptr_t)ff->asyncify_data.stack_ptr,
+                (void*)(uintptr_t)ff->asyncify_data.stack_limit,
+                (void*)(uintptr_t)tf->asyncify_data.stack_ptr,
+                (void*)(uintptr_t)tf->asyncify_data.stack_limit);
+    }
+    /* thread-affinity: record owner on switch-out, verify on switch-in */
+    from->last_tid = pthread_self();
+    xemu_wasm_lowmem_check("co switch ad");
+#endif
     emscripten_fiber_swap(&from->fiber, &to->fiber);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("co switch post");
+    if (to->last_tid != 0 && !pthread_equal(to->last_tid, pthread_self())) {
+        fprintf(stderr, "[co] THREAD MISMATCH co=%p switch-in tid=%lu owner=%lu entry=%p\n",
+                (void*)(uintptr_t)to_, (unsigned long)pthread_self(),
+                (unsigned long)to->last_tid, (void*)(uintptr_t)to->base.entry);
+        abort();
+    }
+#endif
     return from->action;
 }
 

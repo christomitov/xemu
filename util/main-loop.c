@@ -187,12 +187,25 @@ void qemu_init_main_loop_lock(void)
 
 void qemu_mutex_lock_main_loop(void)
 {
+#ifdef EMSCRIPTEN
+    /* The emscripten pthread mutex on this lock has exhibited corrupted
+     * state (__lock=0 with an ever-growing waiters word) that puts the
+     * caller to sleep on a futex that is never woken, hanging the main
+     * loop for good. Only the main thread ever takes this lock here (the
+     * vCPU does not call main_loop_wait), so skip it entirely on wasm. */
+    return;
+#else
     qemu_mutex_lock(&qemu_main_loop_lock);
+#endif
 }
 
 void qemu_mutex_unlock_main_loop(void)
 {
+#ifdef EMSCRIPTEN
+    return;
+#else
     qemu_mutex_unlock(&qemu_main_loop_lock);
+#endif
 }
 #endif
 
@@ -375,14 +388,47 @@ static int os_host_main_loop_wait(int64_t timeout)
     qemu_mutex_unlock_main_loop();
 #endif
     ret = qemu_poll_ns((GPollFD *)gpollfds->data, gpollfds->len, timeout);
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        extern QemuMutex qemu_main_loop_lock;
+        static int addr_printed;
+        unsigned w0 = 0, w1 = 0;
+        memcpy(&w0, (void *)&qemu_main_loop_lock, 4);
+        memcpy(&w1, (char *)&qemu_main_loop_lock + 4, 4);
+        xemu_wasm_dbg_ring_put("[ml] pre-mainloop-lock w=%08x/%08x r=%d\n",
+                               w0, w1, ret);
+        if (!addr_printed) {
+            addr_printed = 1;
+            fprintf(stderr, "[ml] mainloop-lock addr=%p\n",
+                    (void *)&qemu_main_loop_lock);
+        }
+    }
+#endif
 #ifdef XBOX
-    qemu_mutex_lock_main_loop();
+    {
+        extern void xemu_wasm_dbg_ring_snapshot(const char *);
+        xemu_wasm_dbg_ring_snapshot("/xemu/ring-snap.txt");
+        qemu_mutex_lock_main_loop();
+    }
 #endif
 
     replay_mutex_lock();
     bql_lock();
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[ml] post-bql\n");
+    }
+#endif
 
     glib_pollfds_poll();
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[ml] post-glib\n");
+    }
+#endif
 
     g_main_context_release(context);
 
@@ -644,6 +690,7 @@ void main_loop_poll_remove_notifier(Notifier *notify)
 
 void main_loop_wait(int nonblocking)
 {
+    { static int wasm_n; wasm_n++; if ((wasm_n % 10) == 0) xemu_wasm_dbg_ring_put("[loop] iter %d\n", wasm_n); }
     MainLoopPoll mlpoll = {
         .state = MAIN_LOOP_POLL_FILL,
         .timeout = UINT32_MAX,
@@ -670,6 +717,14 @@ void main_loop_wait(int nonblocking)
     timeout_ns = qemu_soonest_timeout(timeout_ns,
                                       timerlistgroup_deadline_ns(
                                           &main_loop_tlg));
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        int64_t dl = timerlistgroup_deadline_ns(&main_loop_tlg);
+        xemu_wasm_dbg_ring_put("[loop] poll timeout=%lld rt_deadline=%lld\n",
+                               (long long)timeout_ns, (long long)dl);
+    }
+#endif
 
     ret = os_host_main_loop_wait(timeout_ns);
     mlpoll.state = ret < 0 ? MAIN_LOOP_POLL_ERR : MAIN_LOOP_POLL_OK;

@@ -202,6 +202,24 @@ static void xbox_memory_init(PCMachineState *pcms,
 }
 
 /* PC hardware initialisation */
+#ifdef EMSCRIPTEN
+static int xemu_wasm_skip(const char *what) {
+    static int cached = -1;
+    static char skip_buf[64];
+    if (cached < 0) {
+        cached = 0;
+        FILE *f = fopen("/xemu/skip", "r");
+        if (f) {
+            size_t n = fread(skip_buf, 1, sizeof(skip_buf) - 1, f);
+            fclose(f);
+            if (n > 0) { skip_buf[n] = 0; cached = 1; }
+        }
+        fprintf(stderr, "[skip] devices disabled: %s\n",
+                cached ? skip_buf : "none");
+    }
+    return cached && strstr(skip_buf, what) != NULL;
+}
+#endif
 static void xbox_init(MachineState *machine)
 {
     xbox_init_common(machine, NULL, NULL);
@@ -314,6 +332,10 @@ void xbox_init_common(MachineState *machine,
     }
 
     /* USB */
+#ifndef EMSCRIPTEN_NO_OHCI_SKIP
+    {
+        if (!xemu_wasm_skip("ohci")) {
+#endif
     PCIDevice *usb1 = pci_new(PCI_DEVFN(3, 0), "pci-ohci");
     qdev_prop_set_uint32(&usb1->qdev, "num-ports", 4);
     pci_realize_and_unref(usb1, pci_bus, &error_fatal);
@@ -321,6 +343,10 @@ void xbox_init_common(MachineState *machine,
     PCIDevice *usb0 = pci_new(PCI_DEVFN(2, 0), "pci-ohci");
     qdev_prop_set_uint32(&usb0->qdev, "num-ports", 4);
     pci_realize_and_unref(usb0, pci_bus, &error_fatal);
+#ifndef EMSCRIPTEN_NO_OHCI_SKIP
+        }
+    }
+#endif
 
     /* Ethernet! */
     PCIDevice *nvnet = pci_new(PCI_DEVFN(4, 0), "nvnet");
@@ -328,13 +354,39 @@ void xbox_init_common(MachineState *machine,
     pci_realize_and_unref(nvnet, pci_bus, &error_fatal);
 
     /* APU! */
+
+#ifdef EMSCRIPTEN
+    /* wasm debug: XEMU_WASM_SKIP=apu,aci,ohci,nv2a,dvd (comma list) */
+    {
+        if (!xemu_wasm_skip("apu")) {
+            mcpx_apu_init(pci_bus, PCI_DEVFN(5, 0), ram_memory);
+        }
+    }
+#else
     mcpx_apu_init(pci_bus, PCI_DEVFN(5, 0), ram_memory);
+#endif
 
     /* ACI! */
+#ifdef EMSCRIPTEN
+    {
+        if (!xemu_wasm_skip("aci")) {
+            pci_create_simple(pci_bus, PCI_DEVFN(6, 0), "mcpx-aci");
+        }
+    }
+#else
     pci_create_simple(pci_bus, PCI_DEVFN(6, 0), "mcpx-aci");
+#endif
 
     /* GPU! */
+#ifdef EMSCRIPTEN
+    {
+        if (!xemu_wasm_skip("nv2a")) {
+            nv2a_init(agp_bus, PCI_DEVFN(0, 0), ram_memory);
+        }
+    }
+#else
     nv2a_init(agp_bus, PCI_DEVFN(0, 0), ram_memory);
+#endif
 
     /* FIXME: Stub the memory controller */
     pci_create_simple(pci_bus, PCI_DEVFN(0, 3), "pci-testdev");

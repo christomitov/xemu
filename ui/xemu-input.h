@@ -25,12 +25,16 @@
 #ifndef XEMU_INPUT_H
 #define XEMU_INPUT_H
 
+#ifndef XEMU_WASM_NO_SDL
 #include <SDL3/SDL.h>
+#endif
 #include <stdbool.h>
 
 #include "qemu/queue.h"
 #include "xemu-settings.h"
+#ifndef XEMU_WASM_NO_SDL
 #include <SDL3/SDL.h>
+#endif
 
 #define DRIVER_DUKE "usb-xbox-gamepad"
 #define DRIVER_S "usb-xbox-gamepad-s"
@@ -99,10 +103,12 @@ typedef struct ControllerState {
 
     enum controller_input_device_type type;
     const char         *name;
+#ifndef XEMU_WASM_NO_SDL
     SDL_Gamepad        *sdl_gamepad; // if type == INPUT_DEVICE_SDL_GAMEPAD
     SDL_Joystick       *sdl_joystick;
     SDL_JoystickID      sdl_joystick_id;
     SDL_GUID            sdl_joystick_guid;
+#endif
 
     enum peripheral_type peripheral_types[2];
     void *peripherals[2];
@@ -125,7 +131,9 @@ extern "C" {
 extern int *g_keyboard_scancode_map[25];
 
 void xemu_input_init(void);
+#ifndef XEMU_WASM_NO_SDL
 void xemu_input_process_sdl_events(const SDL_Event *event);
+#endif
 void xemu_input_update_controllers(void);
 void xemu_input_update_controller(ControllerState *state);
 void xemu_input_update_sdl_kbd_controller_state(ControllerState *state);

@@ -1067,6 +1067,29 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
     if (is_ram || is_romd) {
         /* RAM and ROMD both have associated host memory. */
         addend = (uintptr_t)memory_region_get_ram_ptr(section->mr) + xlat;
+#ifdef EMSCRIPTEN
+        /* The earlier guard ((addend & PAGE_MASK) < 4096) compared unsigned,
+         * so any negative addend (host < guest) slipped through. Check the
+         * actual host page base instead: the main stack guard zone is
+         * 0..0x1000000 and RAM must live above heap_base (0x13d21d0). */
+        {
+            /* fast path computes host = vaddr + addend mod 2^32 (both
+             * 32-bit); replicate with unsigned math and flag results that
+             * land in the main stack guard zone (0..0x1400000) or wrap
+             * past 4GB into it (page offset can push sum over 2^32). */
+            uint32_t host_page = (uint32_t)addr_page + (uint32_t)addend;
+            if (host_page < 0x1400000u || host_page > 0xFFFFE000u) {
+                fprintf(stderr, "[tlb] BAD host page=%lld guest va=%llx "
+                        "pa=%llx addend=%p mr=%s xlat=%llx\n",
+                        (long long)host_page,
+                        (unsigned long long)addr, (unsigned long long)xlat,
+                        (void*)(uintptr_t)memory_region_get_ram_ptr(section->mr),
+                        section->mr->name ? section->mr->name : "?",
+                        (unsigned long long)xlat);
+                abort();
+            }
+        }
+#endif
     } else {
         /* I/O does not; force the host address to NULL. */
         addend = 0;
@@ -2177,6 +2200,25 @@ static uint64_t do_ld_beN(CPUState *cpu, MMULookupPageData *p,
      * It is a given that we cross a page and therefore there is no
      * atomicity for the load as a whole, but subobjects may need attention.
      */
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
     atom = mop & MO_ATOM_MASK;
     switch (atom) {
     case MO_ATOM_SUBALIGN:
@@ -2226,6 +2268,25 @@ static Int128 do_ld16_beN(CPUState *cpu, MMULookupPageData *p,
      * It is a given that we cross a page and therefore there is no
      * atomicity for the load as a whole, but subobjects may need attention.
      */
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
     atom = mop & MO_ATOM_MASK;
     switch (atom) {
     case MO_ATOM_SUBALIGN:
@@ -2587,6 +2648,25 @@ static uint64_t do_st_leN(CPUState *cpu, MMULookupPageData *p,
      * It is a given that we cross a page and therefore there is no atomicity
      * for the store as a whole, but subobjects may need attention.
      */
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
     atom = mop & MO_ATOM_MASK;
     switch (atom) {
     case MO_ATOM_SUBALIGN:
@@ -2641,6 +2721,25 @@ static uint64_t do_st16_leN(CPUState *cpu, MMULookupPageData *p,
      * It is a given that we cross a page and therefore there is no atomicity
      * for the store as a whole, but subobjects may need attention.
      */
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
     atom = mop & MO_ATOM_MASK;
     switch (atom) {
     case MO_ATOM_SUBALIGN:
@@ -2680,6 +2779,25 @@ static void do_st_1(CPUState *cpu, MMULookupPageData *p, uint8_t val,
     } else if (unlikely(p->flags & TLB_DISCARD_WRITE)) {
         /* nothing */
     } else {
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
         *(uint8_t *)p->haddr = val;
     }
 }
@@ -2699,6 +2817,25 @@ static void do_st_2(CPUState *cpu, MMULookupPageData *p, uint16_t val,
         if (memop & MO_BSWAP) {
             val = bswap16(val);
         }
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
         store_atom_2(cpu, ra, p->haddr, memop, val);
     }
 }
@@ -2718,6 +2855,25 @@ static void do_st_4(CPUState *cpu, MMULookupPageData *p, uint32_t val,
         if (memop & MO_BSWAP) {
             val = bswap32(val);
         }
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
         store_atom_4(cpu, ra, p->haddr, memop, val);
     }
 }
@@ -2737,6 +2893,25 @@ static void do_st_8(CPUState *cpu, MMULookupPageData *p, uint64_t val,
         if (memop & MO_BSWAP) {
             val = bswap64(val);
         }
+#ifdef EMSCRIPTEN
+    if (unlikely((uintptr_t)p->haddr < 0x20000)) {
+        /* resolve the target MR for diagnostics */
+        CPUState *cpu = current_cpu;
+        hwaddr x2 = 0; int l2 = 1; MemoryRegion *mr2 = NULL;
+        if (cpu) {
+            AddressSpace *as = cpu_get_address_space(cpu, cpu_asidx_from_attrs(cpu, p->full->attrs));
+            mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+        }
+        fprintf(stderr, "[st] haddr=%p vaddr=%llx pa=%llx flags=%x mmio=%d mr=%s ram_ptr=%p\n",
+                (void*)(uintptr_t)p->haddr,
+                (unsigned long long)p->addr,
+                (unsigned long long)p->full->phys_addr,
+                p->flags, !!(p->flags & TLB_MMIO),
+                mr2 && mr2->name ? mr2->name : "?",
+                mr2 && memory_region_is_ram(mr2) ? memory_region_get_ram_ptr(mr2) : NULL);
+        abort();
+    }
+#endif
         store_atom_8(cpu, ra, p->haddr, memop, val);
     }
 }

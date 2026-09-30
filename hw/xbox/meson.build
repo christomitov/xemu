@@ -14,7 +14,11 @@ specific_ss.add(files(
 	'xbox.c',
 	'xbox_pci.c',
 	'xid.c',
-	'xblc.c',
+	))
+if host_os != 'emscripten'
+  specific_ss.add(files('xblc.c'))
+endif
+specific_ss.add(files(
 	'xid-gamepad.c',
 	))
 subdir('nv2a')

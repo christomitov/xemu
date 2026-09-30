@@ -801,6 +801,12 @@ if 'cpp' in all_languages
 endif
 
 add_project_arguments(qemu_cflags, native: false, language: 'c')
+if host_os == 'emscripten'
+  # xemu's configure drops --extra-cflags in its emscripten path; XBOX must
+  # reach every compile unit regardless (net/slirp.h, hw/xbox feature gates).
+  add_project_arguments('-DXBOX=1', '-DXEMU_WASM_NO_SDL=1', '-DEMSCRIPTEN=1',
+                        native: false, language: ['c', 'cpp'])
+endif
 add_project_arguments(cc.get_supported_arguments(warn_flags), native: false, language: 'c')
 if 'cpp' in all_languages
   add_project_arguments(qemu_cxxflags, native: false, language: 'cpp')
@@ -861,6 +867,16 @@ coref = []
 iokit = []
 pvg = not_found
 emulator_link_args = []
+# Wasm link flags for the main emulator target: meson ignores per-cross-file
+# link args for the emulator executable, so set them where the target does
+# inherit them (emulator_link_args).  The 16MB main/8MB pthread stacks are
+# required - QEMU's call chains blow the 64KB default.
+if host_os == 'emscripten'
+  emulator_link_args += ['-sDEFAULT_PTHREAD_STACK_SIZE=8MB',
+                         '-sSTACK_SIZE=16MB',
+                         '-sSTACK_OVERFLOW_CHECK=2',
+                         '--profiling-funcs']
+endif
 midl = not_found
 widl = not_found
 pathcch = not_found
@@ -1459,10 +1475,12 @@ if not get_option('blkio').auto() or have_block
                      method: 'pkg-config',
                      required: get_option('blkio'))
 endif
+curl = not_found
+if host_os != 'emscripten'
 curl = dependency('libcurl', version: '>=7.29.0',
                   method: 'pkg-config',
                   required: false)
-if not curl.found()
+if not curl.found() and not get_option('curl').disabled()
   if host_os == 'windows'
     curl_platform_opts = ['schannel=enabled', 'sspi=enabled']
   elif host_os == 'darwin'
@@ -1493,6 +1511,7 @@ if not curl.found()
     ] + curl_platform_opts)
   curl = curl_sub.get_variable('curl_dep')
 endif
+endif  # host_os != 'emscripten'
 libudev = not_found
 if host_os == 'linux' and (have_system or have_tools)
   libudev = dependency('libudev',
@@ -1672,7 +1691,7 @@ if not get_option('brlapi').auto() or have_system
 endif
 
 sdl = not_found
-if not get_option('sdl').auto() or have_system
+if host_os != 'emscripten' and (not get_option('sdl').auto() or have_system)
   sdl = dependency('sdl3', required: false, allow_fallback: false)
   if not sdl.found() and not get_option('sdl').disabled()
     sdl3_cmake_opts = cmake.subproject_options()
@@ -1882,10 +1901,13 @@ if not get_option('coreaudio').auto() or (host_os == 'darwin' and have_system)
                          required: get_option('coreaudio'))
 endif
 
-epoxy = dependency('epoxy', required: true)
+epoxy = host_os == 'emscripten' ? not_found : dependency('epoxy', required: true)
 
 opengl = not_found
-if not get_option('opengl').auto() or have_system or have_vhost_user_gpu
+if host_os == 'emscripten'
+  # GL comes from the browser (WebGL2) via the wasm renderer backend; no host GL.
+  opengl = not_found
+elif not get_option('opengl').auto() or have_system or have_vhost_user_gpu
   # FIXME: Use meson's 'gl' dep
   if host_os == 'darwin'
     opengl_libs=['-framework', 'OpenGL']
@@ -2431,12 +2453,17 @@ endif
 if host_os == 'windows'
   libpcap = declare_dependency(include_directories: 'winpcap-loader/include',
                                link_args: ['-lws2_32'])
+elif host_os == 'emscripten'
+  libpcap = not_found
 else
   libpcap = dependency('libpcap', method: 'pkg-config', required: true)
 endif
 
 libsamplerate = dependency('samplerate', method: 'pkg-config', required: true)
 
+imgui = not_found
+implot = not_found
+if host_os != 'emscripten'
 imgui_proj = subproject('imgui', required: true,
                          default_options: [
                            'default_library=static',
@@ -2462,9 +2489,18 @@ imgui = imgui_proj.get_variable('imgui_dep')
 implot_proj = subproject('implot', required: true,
                          default_options: ['default_library=static'])
 implot = implot_proj.get_variable('implot_dep')
+endif  # host_os != 'emscripten'
 
+# genconfig is SDL-free (pure python header generator) and required on all hosts
 genconfig_proj = subproject('genconfig', required: true)
 genconfig = genconfig_proj.get_variable('cnode_dep')
+
+if host_os == 'emscripten'
+  # Wasm build: no ImGui/SDL UI. Browser frontend replaces it.
+  # Minimal stub deps so xemu sources that reference these variables still configure.
+  imgui = declare_dependency()
+  implot = declare_dependency()
+endif
 
 subdir('thirdparty')
 
@@ -2473,6 +2509,8 @@ subdir('thirdparty')
 #################
 
 config_host_data = configuration_data()
+
+config_host_data.set('CONFIG_XEMU_WASM', host_os == 'emscripten')
 
 config_host_data.set('CONFIG_HAVE_RUST', have_rust)
 audio_drivers_selected = []

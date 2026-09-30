@@ -14,4 +14,7 @@ specific_ss.add(files(
 	'stubs.c',
 	'user.c',
 	))
+if host_os == 'emscripten'
+  specific_ss.add(files('xemu-wasm-fb.c'))
+endif
 subdir('pgraph')

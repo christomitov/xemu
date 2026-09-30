@@ -379,6 +379,12 @@ static void bmdma_irq(void *opaque, int n, int level)
 
 void bmdma_cmd_writeb(BMDMAState *bm, uint32_t val)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("bmdma_cmd_writeb");
+    xemu_wasm_dbg_ring_put("[ide] bmdma_cmd val=%x\n", val);
+#endif
     trace_bmdma_cmd_writeb(val);
 
     /* Ignore writes to SSBM if it keeps the old value */

@@ -20,6 +20,16 @@ system_ss.add(files(
 subdir('thirdparty')
 
 xemu_ss = ss.source_set()
+if host_os == 'emscripten'
+  # Wasm build: browser frontend replaces ImGui/SDL UI.
+  # Compile only SDL-free xemu support files + wasm stubs/entry.
+  xemu_ss.add(files(
+    'xemu-net.c',
+    'xemu-widescreen.c',
+    'xemu-settings-wasm.c',
+    'xemu-wasm.c',
+  ))
+else
 xemu_ss.add(files(
   'xemu-input.c',
   'xemu-monitor.c',
@@ -33,6 +43,7 @@ xemu_ss.add(files(
   'xemu-thumbnail.cc',
   'xemu-widescreen.c',
 ))
+endif
 
 if host_os == 'windows'
   d3d11 = cc.find_library('d3d11', required: true)
@@ -40,21 +51,22 @@ if host_os == 'windows'
   xemu_ss.add(nvapi, d3d11, dxgi)
 endif
 
-subdir('xui')
-
-if host_os == 'darwin'
-  xemu_cocoa = dependency('appleframeworks', modules: 'Cocoa')
-  xemu_ss.add(xemu_cocoa)
+if host_os != 'emscripten'
+  subdir('xui')
 endif
 
-if host_os == 'linux'
+if host_os == 'linux' and host_os != 'emscripten'
   xemu_ss.add([gtk, files('xemu-os-utils-linux.c')])
 elif host_os == 'windows'
   xemu_ss.add(files('xemu-os-utils-windows.c'))
 elif host_os == 'darwin'
   xemu_ss.add(files('xemu-os-utils-macos.m'))
 endif
-xemu_ss.add(imgui, implot, stb_image, sdl, opengl, fa, fpng, json, fatx, tomlplusplus, genconfig)
+if host_os != 'emscripten'
+  xemu_ss.add(imgui, implot, stb_image, sdl, opengl, fa, fpng, json, fatx, tomlplusplus, genconfig)
+else
+  xemu_ss.add([imgui, implot, genconfig, json, fatx, tomlplusplus])
+endif
 system_ss.add_all(xemu_ss)
 
 system_ss.add(when: pixman, if_true: files('console-vc.c'), if_false: files('console-vc-stubs.c'))

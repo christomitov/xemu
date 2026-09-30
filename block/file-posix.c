@@ -112,7 +112,7 @@
 #include <sys/diskslice.h>
 #endif
 
-#ifdef EMSCRIPTEN
+#if defined(EMSCRIPTEN) || defined(__EMSCRIPTEN__)
 #include <sys/ioctl.h>
 #endif
 
@@ -1798,6 +1798,18 @@ static ssize_t handle_aiocb_rw_vector(RawPosixAIOData *aiocb)
 {
     ssize_t len;
 
+#ifdef EMSCRIPTEN
+    for (int i = 0; i < aiocb->io.niov; i++) {
+        uintptr_t b = (uintptr_t)aiocb->io.iov[i].iov_base;
+        if (b < 1024 || b + aiocb->io.iov[i].iov_len < b) {
+            fprintf(stderr, "[io] bad iov[%d]=%p len=%zu off=%lld type=%d\n",
+                    i, (void *)b, (size_t)aiocb->io.iov[i].iov_len,
+                    (long long)aiocb->aio_offset, aiocb->aio_type);
+            abort();
+        }
+    }
+#endif
+
     len = RETRY_ON_EINTR(
         (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) ?
             qemu_pwritev(aiocb->aio_fildes,
@@ -1809,6 +1821,12 @@ static ssize_t handle_aiocb_rw_vector(RawPosixAIOData *aiocb)
                           aiocb->io.niov,
                           aiocb->aio_offset)
     );
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_lowmem_check(const char *);
+        xemu_wasm_lowmem_check("vector io post");
+    }
+#endif
 
     if (len == -1) {
         return -errno;
@@ -1827,6 +1845,24 @@ static ssize_t handle_aiocb_rw_linear(RawPosixAIOData *aiocb, char *buf)
     ssize_t offset = 0;
     ssize_t len;
 
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)buf < 1024) {
+        fprintf(stderr, "[io] bad linear buf=%p len=%zu off=%lld type=%d\n",
+                (void *)buf, (size_t)aiocb->aio_nbytes,
+                (long long)aiocb->aio_offset, aiocb->aio_type);
+        abort();
+    }
+    {
+        extern void xemu_wasm_lowmem_check(const char *);
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_lowmem_check("linear io enter");
+        xemu_wasm_dbg_ring_put("[io] linear %s len=%zu off=%lld\n",
+                (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) ?
+                "pwrite" : "pread", (size_t)aiocb->aio_nbytes,
+                (long long)aiocb->aio_offset);
+    }
+#endif
+
     while (offset < aiocb->aio_nbytes) {
         if (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) {
             len = pwrite(aiocb->aio_fildes,
@@ -1839,9 +1875,25 @@ static ssize_t handle_aiocb_rw_linear(RawPosixAIOData *aiocb, char *buf)
                         aiocb->aio_nbytes - offset,
                         aiocb->aio_offset + offset);
         }
+#ifdef EMSCRIPTEN
+        {
+            extern void xemu_wasm_lowmem_check(const char *);
+            xemu_wasm_lowmem_check("linear io post-syscall");
+        }
+#endif
         if (len == -1 && errno == EINTR) {
             continue;
-        } else if (len == -1 && errno == EINVAL &&
+        }
+#ifdef EMSCRIPTEN
+        {
+            extern void xemu_wasm_lowmem_check(const char *);
+            extern void xemu_wasm_dbg_ring_put(const char *, ...);
+            xemu_wasm_lowmem_check("linear io per-call");
+            xemu_wasm_dbg_ring_put("[io] done ret=%zd\n", len);
+            xemu_wasm_lowmem_check("linear io post");
+        }
+#endif
+        if (len == -1 && errno == EINVAL &&
                    (aiocb->bs->open_flags & BDRV_O_NOCACHE) &&
                    !(aiocb->aio_type & QEMU_AIO_WRITE) &&
                    offset > 0) {
@@ -2113,7 +2165,7 @@ static int handle_aiocb_write_zeroes_unmap(void *opaque)
 }
 
 #ifndef HAVE_COPY_FILE_RANGE
-#ifndef EMSCRIPTEN
+#if !defined(EMSCRIPTEN) && !defined(__EMSCRIPTEN__)
 static
 #endif
 ssize_t copy_file_range(int in_fd, off_t *in_off, int out_fd,

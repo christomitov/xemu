@@ -1212,6 +1212,10 @@ static uint64_t nam_read(void *opaque, hwaddr addr, unsigned size)
 static void nam_write(void *opaque, hwaddr addr, uint64_t val,
                       unsigned size)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_milestone(const char *);
+    xemu_wasm_milestone("ac97-nam-write");
+#endif
     dolog("nam_write [0x%"HWADDR_PRIx"] = 0x%"PRIx64" (%d)\n", addr, val, size);
 
     if ((addr / size) > 256) {

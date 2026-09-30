@@ -358,6 +358,13 @@ static void *qemu_thread_start(void *args)
     void *arg = qemu_thread_args->arg;
     void *r;
 
+#ifdef EMSCRIPTEN
+    { extern unsigned long xemu_wasm_stack_size(void);
+      extern void xemu_wasm_assert_stack(unsigned long, const char *);
+      (void)xemu_wasm_stack_size;
+      xemu_wasm_assert_stack(8*1024*1024 - 1024*1024, qemu_thread_args->name ? qemu_thread_args->name : "qemu-thread"); }
+#endif
+
     /* Attempt to set the threads name; note that this is for debug, so
      * we're not going to fail if we can't set it.
      */
@@ -411,6 +418,15 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     if (err) {
         error_exit(err, __func__);
     }
+
+#ifdef EMSCRIPTEN
+    /* Emscripten: on-demand workers (beyond PTHREAD_POOL_SIZE) otherwise get
+     * a 64KB stack, which is fatal for QEMU's deep call chains. */
+    err = pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+    if (err) {
+        error_exit(err, __func__);
+    }
+#endif
 
     if (mode == QEMU_THREAD_DETACHED) {
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);

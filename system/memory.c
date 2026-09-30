@@ -488,7 +488,22 @@ static MemTxResult memory_region_write_accessor(MemoryRegion *mr,
         trace_memory_region_ops_write(get_cpu_index(), mr, abs_addr, tmp, size,
                                       memory_region_name(mr));
     }
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    {
+        /* rotating static buffers: the check machinery keeps the label
+         * pointer for prev/last reporting, so it must outlive the call */
+        static char lbls[8][64];
+        static int li;
+        char *lbl = lbls[li++ & 7];
+        snprintf(lbl, 64, "wacc %s", memory_region_name(mr));
+        xemu_wasm_lowmem_check(lbl);
+        mr->ops->write(mr->opaque, addr, tmp, size);
+        xemu_wasm_lowmem_check(lbl);
+    }
+#else
     mr->ops->write(mr->opaque, addr, tmp, size);
+#endif
     return MEMTX_OK;
 }
 
@@ -509,7 +524,21 @@ static MemTxResult memory_region_write_with_attrs_accessor(MemoryRegion *mr,
         trace_memory_region_ops_write(get_cpu_index(), mr, abs_addr, tmp, size,
                                       memory_region_name(mr));
     }
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    {
+        static char lbls[8][64];
+        static int li;
+        char *lbl = lbls[li++ & 7];
+        snprintf(lbl, 64, "wattrs %s", memory_region_name(mr));
+        xemu_wasm_lowmem_check(lbl);
+        MemTxResult r = mr->ops->write_with_attrs(mr->opaque, addr, tmp, size, attrs);
+        xemu_wasm_lowmem_check(lbl);
+        return r;
+    }
+#else
     return mr->ops->write_with_attrs(mr->opaque, addr, tmp, size, attrs);
+#endif
 }
 
 static MemTxResult access_with_adjusted_size(hwaddr addr,
@@ -1471,6 +1500,10 @@ MemTxResult memory_region_dispatch_read(MemoryRegion *mr,
 {
     unsigned size = memop_size(op);
     MemTxResult r;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check(mr->name ? mr->name : "unnamed-mr-read");
+#endif
 
     if (mr->alias) {
         return memory_region_dispatch_read(mr->alias,
@@ -1520,6 +1553,10 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
                                          MemTxAttrs attrs)
 {
     unsigned size = memop_size(op);
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check(mr->name ? mr->name : "unnamed-mr-write");
+#endif
 
     if (mr->alias) {
         return memory_region_dispatch_write(mr->alias,
