@@ -1497,11 +1497,43 @@ static ffi_type *typecode_to_ffi(int argmask)
     g_assert_not_reached();
 }
 
+/*
+ * Direct-call signature for TCI on 32-bit hosts (see tci-direct-call.c.inc):
+ * stored right after the ffi_cif so tci.c can find it from the cif pointer.
+ * UINT_MAX = not expressible (Int128), use ffi_call.
+ */
+static unsigned tci_direct_sig(unsigned typemask, int nargs)
+{
+    static const int kind[8] = {
+        [dh_typecode_void] = 0, [dh_typecode_i32] = 1, [dh_typecode_s32] = 1,
+        [dh_typecode_ptr] = 1, [dh_typecode_i64] = 2, [dh_typecode_s64] = 2,
+        [dh_typecode_i128] = -1,
+    };
+    int rk = kind[typemask & 7];
+    unsigned sig;
+
+    if (TCG_TARGET_REG_BITS != 32 || sizeof(void *) != 4 || rk < 0) {
+        return UINT_MAX;
+    }
+    sig = rk | (nargs << 2);
+    for (int j = 0; j < nargs; ++j) {
+        int k = kind[extract32(typemask, (j + 1) * 3, 3)];
+        if (k <= 0) {
+            return UINT_MAX;
+        }
+        if (k == 2) {
+            sig |= 1u << (5 + j);
+        }
+    }
+    return sig;
+}
+
 static ffi_cif *init_ffi_layout(TCGHelperInfo *info)
 {
     unsigned typemask = info->typemask;
     struct {
         ffi_cif cif;
+        unsigned direct_sig;
         ffi_type *args[];
     } *ca;
     ffi_status status;
@@ -1515,6 +1547,7 @@ static ffi_cif *init_ffi_layout(TCGHelperInfo *info)
     ca = g_malloc0(sizeof(*ca) + nargs * sizeof(ffi_type *));
     ca->cif.rtype = typecode_to_ffi(typemask & 7);
     ca->cif.nargs = nargs;
+    ca->direct_sig = tci_direct_sig(typemask, nargs);
 
     if (nargs != 0) {
         ca->cif.arg_types = ca->args;
