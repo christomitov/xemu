@@ -939,6 +939,48 @@ void tlb_reset_dirty(CPUState *cpu, uintptr_t start, uintptr_t length)
     qemu_spin_unlock(&cpu->neg.tlb.c.lock);
 }
 
+/*
+ * Invalidate only the entries whose host page overlaps [start, start+length)
+ * (xemu surface access traps: a full flush also wipes the TB jump cache and
+ * made every arm/disarm cost thousands of refills). vCPU thread only.
+ */
+static void tlb_flush_host_range_entry(CPUTLBEntry *ent, uintptr_t start,
+                                       uintptr_t length)
+{
+    uint64_t a = ent->addr_read;
+    if (a == -1) {
+        a = ent->addr_write;
+    }
+    if (a == -1) {
+        a = ent->addr_code;
+    }
+    if (a == -1) {
+        return;
+    }
+    uintptr_t host = (uintptr_t)((a & TARGET_PAGE_MASK) + ent->addend);
+    if (host < start + length && start < host + TARGET_PAGE_SIZE) {
+        memset(ent, -1, sizeof(*ent));
+    }
+}
+
+void tlb_flush_host_range(CPUState *cpu, uintptr_t start, uintptr_t length)
+{
+    qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    for (int mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
+        CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+        CPUTLBDescFast *fast = cpu_tlb_fast(cpu, mmu_idx);
+        unsigned int n = tlb_n_entries(fast);
+
+        for (unsigned int i = 0; i < n; i++) {
+            tlb_flush_host_range_entry(&fast->table[i], start, length);
+        }
+        for (unsigned int i = 0; i < CPU_VTLB_SIZE; i++) {
+            tlb_flush_host_range_entry(&desc->vtable[i], start, length);
+        }
+    }
+    qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+}
+
 /* Called with tlb_c.lock held */
 static inline void tlb_set_dirty1_locked(CPUTLBEntry *tlb_entry,
                                          vaddr addr)
