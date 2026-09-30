@@ -194,6 +194,18 @@ static void add_instance(WasmTBHeader *h, int func_idx)
     e->used = 1;
     h->instance = e;
     instances_alive++;
+
+    /*
+     * Age the used bits once when the cache is 3/4 full, so that the first
+     * eviction sees what ran recently, not everything that ever ran (which
+     * made it drop hot code at random: a multi-second fps drop in games).
+     */
+    if (instances_alive == MAX_INSTANCES * 3 / 4) {
+        for (int i = 0; i < MAX_INSTANCES; i++) {
+            instances[i].used = 0;
+        }
+        e->used = 1;
+    }
 }
 
 static int get_instance(WasmTBHeader *h)
@@ -214,7 +226,7 @@ static int get_instance(WasmTBHeader *h)
 }
 
 /*
- * Free a quarter of the slots, second-chance (clock) order: modules entered
+ * Free 1/16 of the slots, second-chance (clock) order: modules entered
  * since the last sweep are kept, cold ones dropped. Dropped modules count as
  * gone right away: their table slots are freed now and V8 reclaims them
  * whenever it GCs (waiting for the FinalizationRegistry kept the vCPU
@@ -223,7 +235,7 @@ static int get_instance(WasmTBHeader *h)
  */
 static void remove_instances(void)
 {
-    int target = MAX_INSTANCES / 4, removed = 0;
+    int target = MAX_INSTANCES / 16, removed = 0;
 
     for (int scanned = 0; removed < target && scanned < 2 * MAX_INSTANCES;
          scanned++) {
