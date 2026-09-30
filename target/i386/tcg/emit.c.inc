@@ -2002,6 +2002,7 @@ static void gen_DIV(DisasContext *s, X86DecodedInsn *decode)
 
 static void gen_EMMS(DisasContext *s, X86DecodedInsn *decode)
 {
+    s->mmx_entered = false;
     gen_helper_emms(tcg_env);
 }
 
@@ -2025,6 +2026,7 @@ static void gen_EXTRQ_r(DisasContext *s, X86DecodedInsn *decode)
 
 static void gen_FXRSTOR(DisasContext *s, X86DecodedInsn *decode)
 {
+    s->mmx_entered = false;
     if ((s->flags & HF_EM_MASK) || (s->flags & HF_TS_MASK)) {
         gen_NM_exception(s);
     } else {
@@ -4796,6 +4798,7 @@ static void gen_XRSTOR(DisasContext *s, X86DecodedInsn *decode)
 {
     TCGv_i64 features = tcg_temp_new_i64();
 
+    s->mmx_entered = false;
     tcg_gen_concat_tl_i64(features, cpu_regs[R_EAX], cpu_regs[R_EDX]);
     gen_helper_xrstor(tcg_env, s->A0, features);
     if (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_MPX) {

@@ -27,6 +27,7 @@ typedef struct WasmContext {
     void *tb_ptr;           /* 8: current TB header; NULL once we exit */
     uintptr_t *tci_tb_ptr;  /* 12: &tci_tb_ptr, the helper return address */
     uint32_t do_init;       /* 16: 1 = start the block from its entry */
+    void *relink;           /* 20: TB header whose successor links went stale */
 } WasmContext;
 
 #define WASM_CTX_ENV_OFF        0
@@ -34,6 +35,7 @@ typedef struct WasmContext {
 #define WASM_CTX_TB_PTR_OFF     8
 #define WASM_CTX_TCI_TB_PTR_OFF 12
 #define WASM_CTX_DO_INIT_OFF    16
+#define WASM_CTX_RELINK_OFF     20
 
 typedef struct WasmTBHeader {
     const uint32_t *tci_ptr;    /* TCI bytecode entry */
@@ -43,8 +45,19 @@ typedef struct WasmTBHeader {
     uint32_t import_size;       /* in bytes */
     int32_t counter;            /* TCI executions so far */
     void *instance;             /* struct WasmInstance *, or NULL */
-    uint32_t pad;
+    uint32_t relinks;           /* times re-instantiated with fresh links */
+    /*
+     * Successor links (goto_tb slots 0/1), filled when the module is
+     * instantiated: the successor's header and the table index of its
+     * function, which the module imports as chain.s0/s1 and tail-calls
+     * while both still match (see wasm_goto_tb_in_l32_0).
+     */
+    void *link_hdr[2];
+    uint32_t link_fidx[2];
 } WasmTBHeader;
+
+#define WASM_TB_LINK_HDR_OFF    32
+#define WASM_TB_LINK_FIDX_OFF   40
 
 QEMU_BUILD_BUG_ON(sizeof(WasmTBHeader) % 8 != 0);
 
@@ -60,6 +73,9 @@ typedef struct WasmInstance {
 #define WASM_INSTANCE_FIDX_OFF  4
 #define WASM_INSTANCE_USED_OFF  8
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, instance) != WASM_TB_INSTANCE_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_hdr) != WASM_TB_LINK_HDR_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_fidx) != WASM_TB_LINK_FIDX_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmContext, relink) != WASM_CTX_RELINK_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, func_idx) != WASM_INSTANCE_FIDX_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
 

@@ -238,6 +238,11 @@ typedef struct DisasContext {
     int fpstt_delta;
     TCGv_fp fpregs[8];
     TCGv_fp ft0;
+    /*
+     * MMX state already entered earlier in this TB (fpstt = 0, tags valid)
+     * with no x87/EMMS/state restore since: the next enter_mmx is a no-op.
+     */
+    bool mmx_entered;
 } DisasContext;
 
 /*
@@ -1863,6 +1868,10 @@ static void gen_fxchg_ST0_STN(DisasContext *s, int st_index)
 
 static void gen_enter_mmx(DisasContext *s)
 {
+    if (s->mmx_entered) {
+        return;
+    }
+    s->mmx_entered = true;
 #ifdef EMSCRIPTEN
     if (!g_use_hard_fpu) {
         /* helper_enter_mmx: fpstt = 0, all 8 tags valid (0) */
@@ -1880,9 +1889,8 @@ static void gen_enter_mmx(DisasContext *s)
     tcg_gen_movi_i32(fpstt, 0);
 
     TCGv_i32 v = tcg_constant_i32(0);
-    for (int i = 0; i < 8; i++) {
-        tcg_gen_st8_i32(v, tcg_env, offsetof(CPUX86State, fptags[0]) + i);
-    }
+    tcg_gen_st_i32(v, tcg_env, offsetof(CPUX86State, fptags[0]));
+    tcg_gen_st_i32(v, tcg_env, offsetof(CPUX86State, fptags[4]));
 }
 
 static void gen_flds_FT0(DisasContext *s, TCGv_i32 arg)
@@ -3042,6 +3050,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
     int modrm = s->modrm;
     int mod, rm, op;
 
+    s->mmx_entered = false;
     if (s->flags & (HF_EM_MASK | HF_TS_MASK)) {
         /* if CR0.EM or CR0.TS are set, generate an FPU exception */
         /* XXX: what to do if illegal op ? */
@@ -4407,6 +4416,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->fpstt_delta = 0;
     dc->ft0 = NULL;
     dc->flcr_set = false;
+    dc->mmx_entered = false;
 }
 
 static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)

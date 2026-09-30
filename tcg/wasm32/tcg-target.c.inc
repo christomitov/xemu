@@ -168,7 +168,9 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 
 /* Function indices: imports first, then the TB function itself. */
 #define CHECK_UNWINDING_IDX 0   /* helper.u: 1 unless Asyncify unwinds */
-#define HELPER_IDX_START    1   /* imported TCG helpers */
+#define CHAIN_S0_IDX        1   /* chain.s0/s1: linked goto_tb successors */
+#define CHAIN_CALL_IDX      3   /* chain.call(ctx, fidx): rewind forwarding */
+#define HELPER_IDX_START    4   /* imported TCG helpers */
 
 /* Wasm opcodes */
 #define W_UNREACHABLE   0x00
@@ -180,23 +182,25 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define W_RETURN        0x0f
 #define W_CALL          0x10
 #define W_RETURN_CALL_INDIRECT 0x13
+#define W_RETURN_CALL   0x12
 
 /*
- * Direct TB chaining (XEMU_WASM_CHAIN=1): a TB tail-calls the next TB's
- * module through the shared function table instead of returning to the C
- * dispatcher. Every module then imports that table, which some V8 versions
- * make expensive to instantiate (Node 22: ~1.8 ms/module), so it is opt-in
- * until measured per browser.
+ * Successor linking (XEMU_WASM_LINK=0 disables): each module imports its two
+ * goto_tb successors as functions (chain.s0/s1), bound when it is
+ * instantiated, and tail-calls them while the link is still valid, instead
+ * of returning to the C dispatcher for every block transition. Unlike
+ * importing the whole function table this keeps instantiation cheap.
  */
-static int wasm_chain = -1;
-static bool wasm_chain_enabled(void)
+static int wasm_link = -1;
+static bool wasm_link_enabled(void)
 {
-    if (wasm_chain < 0) {
-        const char *e = getenv("XEMU_WASM_CHAIN");
-        wasm_chain = e && *e == '1';
+    if (wasm_link < 0) {
+        const char *e = getenv("XEMU_WASM_LINK");
+        wasm_link = !(e && *e == '0');
     }
-    return wasm_chain;
+    return wasm_link;
 }
+static WasmTBHeader *cur_hdr;   /* header of the TB being generated */
 #define W_SELECT        0x1b
 #define W_LOCAL_GET     0x20
 #define W_LOCAL_SET     0x21
@@ -1366,13 +1370,16 @@ static void wasm_exit_tb(TCGContext *s, uintptr_t arg)
  * Continue with the TB whose header is in L32_0: loop if it is this one,
  * else return to the dispatcher. Nested inside @depth "if"s of the region.
  */
-static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
+static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
 {
     wasm_var(s, W_LOCAL_GET, L32_0);
     wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
     wasm8(s, W_I32_EQ);
     wasm_if(s, W_BLOCKTYPE_VOID);
     wasm_count_tb_exec(s);
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_tb_selfloop);
+#endif
     wasm_i64_const(s, 0);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm_br(s, depth + 2);     /* the loop */
@@ -1383,13 +1390,21 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
     wasm_mem(s, W_I32_STORE, WASM_CTX_TB_PTR_OFF);
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 1);
 
-    if (wasm_chain_enabled()) {
+    if (slot >= 0 && wasm_link_enabled()) {
+        uint32_t lh = (uint32_t)(uintptr_t)cur_hdr + WASM_TB_LINK_HDR_OFF + 4 * slot;
+        uint32_t lf = (uint32_t)(uintptr_t)cur_hdr + WASM_TB_LINK_FIDX_OFF + 4 * slot;
         /*
-         * if (next && next->instance && next->instance->tb == next)
-         *     return_call_indirect(ctx, next->instance->func_idx)
-         * ctx.tb_ptr names the TB running now (see the rewind in tb_start).
+         * if (next == link_hdr[slot]) {
+         *     inst = next->instance;
+         *     if (inst && inst->tb == next && inst->func_idx == link_fidx[slot])
+         *         return_call chain.s<slot>(ctx);
+         * }
+         * ctx.relink = this TB   (link missing or stale: dispatcher relinks)
          */
         wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, lh);
+        wasm_mem(s, W_I32_LOAD, 0);
+        wasm8(s, W_I32_EQ);
         wasm_if(s, W_BLOCKTYPE_VOID);
         wasm_var(s, W_LOCAL_GET, L32_0);
         wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
@@ -1399,20 +1414,32 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
         wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_TB_OFF);
         wasm_var(s, W_LOCAL_GET, L32_0);
         wasm8(s, W_I32_EQ);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
+        wasm_i32_const(s, lf);
+        wasm_mem(s, W_I32_LOAD, 0);
+        wasm8(s, W_I32_EQ);
+        wasm8(s, W_I32_AND);
         wasm_if(s, W_BLOCKTYPE_VOID);
         wasm_var(s, W_LOCAL_GET, L32_1);
         wasm_i32_const(s, 1);
         wasm_mem(s, W_I32_STORE, WASM_INSTANCE_USED_OFF);
         wasm_count_tb_exec(s);
+#ifdef EMSCRIPTEN
+        wasm_count(s, &xemu_wasm_stats.n_tb_linked);
+#endif
         wasm_var(s, W_LOCAL_GET, CTX_IDX);
-        wasm_var(s, W_LOCAL_GET, L32_1);
-        wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
-        wasm8(s, W_RETURN_CALL_INDIRECT);
-        wasm_uleb(s, 0);            /* type 0: (i32) -> i32 */
-        wasm_uleb(s, 0);            /* table 0 (imported) */
+        wasm8(s, W_RETURN_CALL);
+        wasm_uleb(s, CHAIN_S0_IDX + slot);
         wasm8(s, W_END);
         wasm8(s, W_END);
         wasm8(s, W_END);
+        wasm_var(s, W_LOCAL_GET, CTX_IDX);
+        wasm_i32_const(s, (int32_t)(uintptr_t)cur_hdr);
+        wasm_mem(s, W_I32_STORE, WASM_CTX_RELINK_OFF);
+#ifdef EMSCRIPTEN
+        wasm_count(s, &xemu_wasm_stats.n_tb_linkmiss);
+#endif
     }
     wasm_i32_const(s, 0);
     wasm8(s, W_RETURN);
@@ -1420,9 +1447,12 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
 
 static void wasm_goto_ptr(TCGContext *s, TCGReg arg)
 {
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_tb_gotoptr);
+#endif
     wasm_get_r32(s, arg);
     wasm_var(s, W_LOCAL_SET, L32_0);
-    wasm_goto_tb_in_l32_0(s, 0);
+    wasm_goto_tb_in_l32_0(s, 0, -1);
 }
 
 static void wasm_goto_tb(TCGContext *s, int which, uintptr_t reset_ptr)
@@ -1434,7 +1464,7 @@ static void wasm_goto_tb(TCGContext *s, int which, uintptr_t reset_ptr)
     wasm_i32_const(s, (int32_t)reset_ptr);
     wasm8(s, W_I32_NE);
     wasm_if(s, W_BLOCKTYPE_VOID);
-    wasm_goto_tb_in_l32_0(s, 1);
+    wasm_goto_tb_in_l32_0(s, 1, which);
     wasm8(s, W_END);
 }
 
@@ -3096,6 +3126,7 @@ static void tcg_out_tb_start(TCGContext *s)
     }
 
     memset(h, 0, sizeof(*h));
+    cur_hdr = h;
     s->code_ptr += sizeof(*h) / sizeof(tcg_insn_unit);
     h->tci_ptr = s->code_ptr;
 
@@ -3120,10 +3151,10 @@ static void tcg_out_tb_start(TCGContext *s)
 
     /* Asyncify rewind: the registers saved before the unwinding call */
     wasm8(s, W_ELSE);
-    if (wasm_chain_enabled()) {
+    if (wasm_link_enabled()) {
         /*
-         * The dispatcher re-calls the first TB of a chain; if a TB it
-         * tail-called (ctx.tb_ptr) is the one that unwound, continue there.
+         * The dispatcher re-calls the first TB of a chain; if a TB it linked
+         * to (ctx.tb_ptr) is the one that unwound, rewind that one instead.
          */
         wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
         wasm_i32_const(s, (int32_t)(uintptr_t)h);
@@ -3133,9 +3164,8 @@ static void tcg_out_tb_start(TCGContext *s)
         wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
         wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
         wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
-        wasm8(s, W_RETURN_CALL_INDIRECT);
-        wasm_uleb(s, 0);
-        wasm_uleb(s, 0);
+        wasm_var(s, W_CALL, CHAIN_CALL_IDX);
+        wasm8(s, W_RETURN);
         wasm8(s, W_END);
     }
     for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
@@ -3245,27 +3275,20 @@ static int tcg_out_tb_end(TCGContext *s)
     /* magic, version */
     mod_bytes(&w, "\0asm\x01\0\0\0", 8);
 
-    /* type section: 0 = TB function, 1 = helper.u, 2.. = helpers */
+    /* types: 0 = TB function, 1 = helper.u, 2 = chain.call, 3.. = helpers */
     sec = mod_section_begin(&w, 1);
-    mod_uleb(&w, 2 + helpers_num);
+    mod_uleb(&w, 3 + helpers_num);
     mod_bytes(&w, "\x60\x01\x7f\x01\x7f", 5);   /* (i32) -> i32 */
     mod_bytes(&w, "\x60\x00\x01\x7f", 4);       /* () -> i32 */
+    mod_bytes(&w, "\x60\x02\x7f\x7f\x01\x7f", 6);   /* (i32, i32) -> i32 */
     for (LinkedBuf *p = types_buf_root; p; p = p->next) {
         mod_bytes(&w, p->data, p->size);
     }
     mod_section_end(&w, sec);
 
-    /* import section */
+    /* import section: memory, helper.u, chain.s0/s1/call, helpers */
     sec = mod_section_begin(&w, 2);
-    mod_uleb(&w, 2 + helpers_num + wasm_chain_enabled());
-    if (wasm_chain_enabled()) {
-        mod_name(&w, "env");
-        mod_name(&w, "table");
-        mod8(&w, 0x01);             /* table */
-        mod8(&w, 0x70);             /* funcref */
-        mod8(&w, 0x00);             /* min 0, no max */
-        mod_uleb(&w, 0);
-    }
+    mod_uleb(&w, 5 + helpers_num);
     mod_name(&w, "env");
     mod_name(&w, "buffer");
     mod8(&w, 0x02);             /* memory */
@@ -3276,13 +3299,25 @@ static int tcg_out_tb_end(TCGContext *s)
     mod_name(&w, "u");
     mod8(&w, 0x00);             /* func */
     mod_uleb(&w, 1);
+    mod_name(&w, "chain");
+    mod_name(&w, "s0");
+    mod8(&w, 0x00);
+    mod_uleb(&w, 0);
+    mod_name(&w, "chain");
+    mod_name(&w, "s1");
+    mod8(&w, 0x00);
+    mod_uleb(&w, 0);
+    mod_name(&w, "chain");
+    mod_name(&w, "call");
+    mod8(&w, 0x00);
+    mod_uleb(&w, 2);
     for (int i = 0; i < helpers_num; i++) {
         char name[16];
         snprintf(name, sizeof(name), "%d", i);
         mod_name(&w, "helper");
         mod_name(&w, name);
         mod8(&w, 0x00);
-        mod_uleb(&w, 2 + i);
+        mod_uleb(&w, 3 + i);
     }
     mod_section_end(&w, sec);
 

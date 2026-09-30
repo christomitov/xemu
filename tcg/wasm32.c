@@ -74,8 +74,10 @@ __thread WasmContext wasm_ctx;
  * call: 0 means Asyncify is unwinding the stack.
  */
 EM_JS(int, wasm32_instantiate, (const uint8_t *wasm_begin, int wasm_size,
-                                const uint32_t *import_vec, int import_count),
+                                const uint32_t *import_vec, int import_count,
+                                int s0, int s1),
 {
+    const J = Module.__wasm32_jit;
     const helper = {};
     helper.u = () => (Asyncify.state != Asyncify.State.Unwinding) ? 1 : 0;
     for (let i = 0; i < import_count; i++) {
@@ -85,14 +87,44 @@ EM_JS(int, wasm32_instantiate, (const uint8_t *wasm_begin, int wasm_size,
     const bytes = HEAPU8.slice(wasm_begin, wasm_begin + wasm_size);
     const mod = new WebAssembly.Module(bytes);
     const inst = new WebAssembly.Instance(mod, {
-        "env": { "buffer": wasmMemory, "table": wasmTable },
+        "env": { "buffer": wasmMemory },
         "helper": helper,
+        "chain": { "s0": s0 ? wasmTable.get(s0) : J.dummy,
+                   "s1": s1 ? wasmTable.get(s1) : J.dummy, "call": J.call },
     });
-    Module.__wasm32_jit.registry.register(inst, 0);
-    return addFunction(inst.exports.start, 'ii');
+    J.registry.register(inst, 0);
+    const f = addFunction(inst.exports.start, 'ii');
+    J.mods.set(f, { mod, helper });   /* for cheap relinks */
+    return f;
+});
+
+/*
+ * Re-instantiate an already compiled module with fresh successor links;
+ * returns the new function's table index (the old one is removed), or 0.
+ */
+EM_JS(int, wasm32_relink, (int old, int s0, int s1),
+{
+    const J = Module.__wasm32_jit;
+    const rec = J.mods.get(old);
+    if (!rec) {
+        return 0;
+    }
+    const inst = new WebAssembly.Instance(rec.mod, {
+        "env": { "buffer": wasmMemory },
+        "helper": rec.helper,
+        "chain": { "s0": s0 ? wasmTable.get(s0) : J.dummy,
+                   "s1": s1 ? wasmTable.get(s1) : J.dummy, "call": J.call },
+    });
+    J.registry.register(inst, 0);
+    const f = addFunction(inst.exports.start, 'ii');
+    J.mods.delete(old);
+    removeFunction(old);
+    J.mods.set(f, rec);
+    return f;
 });
 
 EM_JS(void, wasm32_remove_function, (int idx), {
+    Module.__wasm32_jit.mods.delete(idx);
     removeFunction(idx);
 });
 
@@ -102,6 +134,13 @@ EM_JS(void, wasm32_js_init, (int *collected), {
         registry: new FinalizationRegistry(() => {
             Atomics.add(HEAP32, collected >> 2, 1);
         }),
+        /* table index -> { compiled module, helper imports } */
+        mods: new Map(),
+        /* placeholder for an unlinked successor (never called: the
+         * generated guard checks link_hdr/link_fidx first) */
+        dummy: (ctx) => 0,
+        /* Asyncify rewind of a linked TB (rare): call it by table index */
+        call: (ctx, f) => wasmTable.get(f)(ctx),
     };
 });
 
@@ -284,6 +323,87 @@ static void wasm32_init(void)
 
 typedef uint32_t (*wasm_func_ptr)(WasmContext *);
 
+static int compile_tb(WasmTBHeader *h, int depth);
+
+/*
+ * Successor links of @h from its chained goto_tb slots: header and table
+ * index of each successor that has a live module (compiling a hot one first
+ * when @depth allows). Returns true if they differ from what @h had.
+ */
+static bool compute_links(WasmTBHeader *h, int depth, int fidx[2])
+{
+    TranslationBlock *tb = tcg_tb_lookup((uintptr_t)h);
+    bool changed = false;
+
+    for (int n = 0; n < 2; n++) {
+        WasmTBHeader *b = NULL;
+        fidx[n] = 0;
+        if (tb && tb->jmp_reset_offset[n] != TB_JMP_OFFSET_INVALID) {
+            uintptr_t tgt = qatomic_read(&tb->jmp_target_addr[n]);
+            uintptr_t reset = (uintptr_t)tb->tc.ptr + tb->jmp_reset_offset[n];
+            if (tgt && tgt != reset) {
+                WasmTBHeader *c = (WasmTBHeader *)tgt;
+                int f = get_instance(c);
+                if (!f && depth == 0 && c != h &&
+                    c->counter >= wasm32_jit_threshold / 2 &&
+                    can_add_instance()) {
+                    f = compile_tb(c, depth + 1);
+                }
+                if (f > 0) {
+                    b = c;
+                    fidx[n] = f;
+                }
+            }
+        }
+        if (h->link_hdr[n] != b || h->link_fidx[n] != (uint32_t)fidx[n]) {
+            changed = true;
+        }
+        h->link_hdr[n] = b;
+        h->link_fidx[n] = fidx[n];
+    }
+    return changed;
+}
+
+static int compile_tb(WasmTBHeader *h, int depth)
+{
+    int links[2];
+    int fidx;
+
+    compute_links(h, depth, links);
+    XPHASE_SET(XPHASE_VCPU, "jit_compile");
+    double t0 = emscripten_get_now();
+    fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
+                              h->import_ptr, h->import_size / 4,
+                              links[0], links[1]);
+    double t1 = emscripten_get_now();
+    XPHASE_SET(XPHASE_VCPU, "dispatch");
+    jit_debt_ms += t1 - t0;
+    jit_budget_update(t1);
+    XSTAT_INC(n_jit_compile);
+    XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
+    add_instance(h, fidx);
+    return fidx;
+}
+
+/* A TB whose successor link was missing/stale asked to be relinked. */
+static void relink_tb(WasmTBHeader *h)
+{
+    WasmInstance *e = h->instance;
+    int links[2];
+
+    if (!e || e->tb != h || h->relinks >= 16) {
+        return;
+    }
+    h->relinks++;
+    if (compute_links(h, 1, links)) {
+        int f = wasm32_relink(e->func_idx, links[0], links[1]);
+        if (f > 0) {
+            e->func_idx = f;
+            XSTAT_INC(n_jit_relink);
+        }
+    }
+}
+
 uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                                             const void *v_tb_ptr)
 {
@@ -333,17 +453,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             res = tci_exec_tb(env, h->tci_ptr);
             XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else {
-            XPHASE_SET(XPHASE_VCPU, "jit_compile");
-            double t0 = emscripten_get_now();
-            fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
-                                      h->import_ptr, h->import_size / 4);
-            double t1 = emscripten_get_now();
-            XPHASE_SET(XPHASE_VCPU, "dispatch");
-            jit_debt_ms += t1 - t0;
-            jit_budget_update(t1);
-            XSTAT_INC(n_jit_compile);
-            XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
-            add_instance(h, fidx);
+            fidx = compile_tb(h, 0);
             if (unlikely(wasm32_jit_debug > 0)) {
                 wasm32_jit_debug--;
                 fprintf(stderr, "[jit] instantiate tb=%p size=%u imports=%u "
@@ -357,6 +467,11 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 fprintf(stderr, "[jit]  -> res=%lx next=%p\n",
                         (unsigned long)res, wasm_ctx.tb_ptr);
             }
+        }
+        if (unlikely(wasm_ctx.relink)) {
+            WasmTBHeader *rh = wasm_ctx.relink;
+            wasm_ctx.relink = NULL;
+            relink_tb(rh);
         }
         if (wasm_ctx.tb_ptr == NULL) {
             return res;

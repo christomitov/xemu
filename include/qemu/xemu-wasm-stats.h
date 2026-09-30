@@ -28,6 +28,11 @@
     X(n_jit_threshold)   /* current adaptive JIT threshold (gauge) */        \
     X(n_jit_instances)   /* live wasm modules (gauge) */                     \
     X(n_jit_evict)       /* modules dropped at the instance cap */           \
+    X(n_jit_relink)      /* modules re-instantiated with fresh links */      \
+    X(n_tb_linked)       /* TB transitions via a successor link */           \
+    X(n_tb_selfloop)     /* goto_tb to the same TB (wasm loop) */            \
+    X(n_tb_gotoptr)      /* indirect: goto_ptr after lookup_tb_ptr */        \
+    X(n_tb_linkmiss)     /* chained goto_tb whose link was missing/stale */  \
     X(n_mmio_read)       /* guest loads from device registers */             \
     X(n_mmio_write)                                                          \
     X(ns_mmio)           /* time in device read/write handlers */            \
