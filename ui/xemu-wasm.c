@@ -204,6 +204,11 @@ void xemu_wasm_dbg_ring_dump(void)
 
 void xemu_wasm_dbg_ring_snapshot(const char *path)
 {
+#ifndef XEMU_WASM_TRIPWIRE
+    /* was called on every poll enter/exit: each fopen/fwrite/fclose is a
+     * syscall proxied to the browser main thread */
+    return;
+#endif
     if (!ring_addr_printed) {
         ring_addr_printed = 1;
         fprintf(stderr, "[ml] ring addr=%p len=%u\n", ring, ring_len);

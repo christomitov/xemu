@@ -334,16 +334,40 @@ int qemu_timeout_ns_to_ms(int64_t ns)
 /* qemu implementation of g_poll which uses a nanosecond timeout but is
  * otherwise identical to g_poll
  */
+#ifdef EMSCRIPTEN
+#include <emscripten/threading.h>
+/*
+ * emscripten's poll() only reports readiness, it never blocks for the
+ * timeout, so the main loop used to spin (~8k iterations/s plus proxied
+ * syscalls). Poll without blocking; if nothing is ready, sleep on a futex
+ * until the deadline or until another thread signals an EventNotifier
+ * (event_notifier_set -> qemu_poll_kick). Waits are capped so a wakeup
+ * source that bypasses EventNotifier still gets noticed within 10 ms.
+ */
+static uint32_t poll_kick_seq;
+
+void qemu_poll_kick(void)
+{
+    __atomic_add_fetch(&poll_kick_seq, 1, __ATOMIC_SEQ_CST);
+    emscripten_futex_wake(&poll_kick_seq, INT_MAX);
+}
+
 int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
 {
-#ifdef EMSCRIPTEN
-    extern void xemu_wasm_lowmem_check(const char *);
-    extern void xemu_wasm_dbg_ring_put(const char *, ...);
-    extern void xemu_wasm_dbg_ring_snapshot(const char *);
-    xemu_wasm_dbg_ring_put("[poll] enter t=%lld n=%d\n", (long long)timeout, nfds);
-    xemu_wasm_lowmem_check("poll enter");
-    xemu_wasm_dbg_ring_snapshot("/xemu/ring-snap.txt");
-#endif
+    struct timespec zero = { 0, 0 };
+    uint32_t seq = __atomic_load_n(&poll_kick_seq, __ATOMIC_SEQ_CST);
+    int r = ppoll((struct pollfd *)fds, nfds, &zero, NULL);
+
+    if (r != 0 || timeout == 0) {
+        return r;
+    }
+    double ms = timeout < 0 ? 10.0 : MIN(timeout / 1e6, 10.0);
+    emscripten_futex_wait(&poll_kick_seq, seq, ms);
+    return ppoll((struct pollfd *)fds, nfds, &zero, NULL);
+}
+#else
+int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
+{
 #ifdef CONFIG_PPOLL
     if (timeout < 0) {
         return ppoll((struct pollfd *)fds, nfds, NULL, NULL);
@@ -359,11 +383,6 @@ int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
         ts.tv_sec = tvsec;
         ts.tv_nsec = timeout % 1000000000LL;
         int r = ppoll((struct pollfd *)fds, nfds, &ts, NULL);
-#ifdef EMSCRIPTEN
-        xemu_wasm_lowmem_check("poll exit");
-        xemu_wasm_dbg_ring_put("[poll] exit r=%d\n", r);
-        xemu_wasm_dbg_ring_snapshot("/xemu/ring-snap.txt");
-#endif
         return r;
     }
 #else
@@ -386,6 +405,7 @@ int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
     return g_poll(fds, nfds, qemu_timeout_ns_to_ms(timeout));
 #endif
 }
+#endif /* EMSCRIPTEN */
 
 
 void timer_init_full(QEMUTimer *ts,
