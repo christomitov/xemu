@@ -106,7 +106,6 @@ void module_call_init(module_init_type type)
     l = find_type(type);
 
     QTAILQ_FOREACH(e, l, node) {
-        fprintf(stderr, "[module] calling init %p type=%d\n", (void*)(uintptr_t)e->init, type);
         if (!e->init) {
             fprintf(stderr, "[module] NULL init entry!\n");
             continue;

@@ -214,8 +214,6 @@ static int xemu_wasm_skip(const char *what) {
             fclose(f);
             if (n > 0) { skip_buf[n] = 0; cached = 1; }
         }
-        fprintf(stderr, "[skip] devices disabled: %s\n",
-                cached ? skip_buf : "none");
     }
     return cached && strstr(skip_buf, what) != NULL;
 }

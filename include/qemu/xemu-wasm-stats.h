@@ -21,6 +21,12 @@
     X(n_tb_exec)         /* translated blocks executed */                    \
     X(n_tb_gen)          /* blocks translated */                             \
     X(n_cpu_exit)        /* longjmp exits from the cpu loop */               \
+    X(n_helper)          /* helper calls from translated code (TCI) */       \
+    X(n_tlb_fill)        /* softmmu TLB refills (page walks) */              \
+    X(n_mmio_read)       /* guest loads from device registers */             \
+    X(n_mmio_write)                                                          \
+    X(ns_mmio)           /* time in device read/write handlers */            \
+    X(n_watch_access)    /* CPU accesses trapped on GPU-surface pages */     \
     X(n_vcpu_bql_wait)   /* contended BQL acquisitions by the vCPU */        \
     X(ns_vcpu_bql_wait)                                                      \
     /* main loop */                                                          \

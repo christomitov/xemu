@@ -399,11 +399,6 @@ static int os_host_main_loop_wait(int64_t timeout)
         memcpy(&w1, (char *)&qemu_main_loop_lock + 4, 4);
         xemu_wasm_dbg_ring_put("[ml] pre-mainloop-lock w=%08x/%08x r=%d\n",
                                w0, w1, ret);
-        if (!addr_printed) {
-            addr_printed = 1;
-            fprintf(stderr, "[ml] mainloop-lock addr=%p\n",
-                    (void *)&qemu_main_loop_lock);
-        }
     }
 #endif
 #ifdef XBOX

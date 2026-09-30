@@ -50,6 +50,10 @@ int socket_set_nodelay(int fd)
 
 int qemu_madvise(void *addr, size_t len, int advice)
 {
+#ifdef EMSCRIPTEN
+    /* no madvise in wasm; the libc stub only prints a warning */
+    return 0;
+#endif
     if (advice == QEMU_MADV_INVALID) {
         errno = EINVAL;
         return -1;

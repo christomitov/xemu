@@ -340,7 +340,7 @@ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time)
             {
                 uint64_t dd = muldiv64(current_time - s->count_load_time, PIT_FREQ,
                                        NANOSECONDS_PER_SECOND);
-                fprintf(stderr, "[pit] STORM count=%d mode=%d gate=%d "
+                if (0) fprintf(stderr, "[pit] STORM count=%d mode=%d gate=%d "
                         "load_time=%lld now=%lld expire=%lld delta=%lld "
                         "d=%llu base=%llu\n",
                         s->count, s->mode, s->gate,

@@ -391,6 +391,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 }
                 unsigned sig = use_ffi ? UINT_MAX : *(unsigned *)(cif + 1);
                 uint64_t rv;
+                XSTAT_INC(n_helper);
                 if (tci_direct_call(sig, func, stack, &rv)) {
                     if (len == 1) {
                         *(uint32_t *)stack = (uint32_t)rv;
