@@ -1483,6 +1483,7 @@ void pgraph_wgpu_clear_surface(NV2AState *d, uint32_t parameter)
         /* this clear's scissor/blend/stencil: re-send the draw state next */
         memset(ds->pass_sc, 0xff, sizeof(ds->pass_sc));
         ds->pass_pipeline = NULL;
+        ds->pass_vb_buf[0] = 0;     /* slot 0 = the clear triangle below */
         if (do_color) {
             WGPUColor blend_constant = { color[0], color[1], color[2],
                                          color[3] };

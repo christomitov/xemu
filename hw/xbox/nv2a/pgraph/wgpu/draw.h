@@ -139,6 +139,10 @@ typedef struct PGRAPHWgpuDrawState {
     uint32_t pass_bg_gen;   /* 0 = none bound (generations start at 1) */
     uint32_t pass_bg_off[2];
     bool pass_index_bound;  /* whole index buffer bound in this pass */
+    /* vertex buffer slots bound in this pass: storage buffer index + 1
+     * (0 = unknown) and offset */
+    uint8_t pass_vb_buf[16];
+    uint64_t pass_vb_off[16];
 
     /* pipelines (draw.c) */
     Lru pipeline_cache;

@@ -140,6 +140,7 @@ void pgraph_wgpu_begin_render_pass(PGRAPHState *pg,
     memset(r->draw.pass_sc, 0xff, sizeof(r->draw.pass_sc));
     r->draw.pass_bg_gen = 0;
     r->draw.pass_index_bound = false;
+    memset(r->draw.pass_vb_buf, 0, sizeof(r->draw.pass_vb_buf));
 }
 
 /* Throwaway depth target for passes without a zeta surface, grown to fit. */
