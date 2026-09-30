@@ -41,10 +41,59 @@
 #define TCG_TARGET_CALL_ARG_I128        TCG_CALL_ARG_NORMAL
 #define TCG_TARGET_CALL_RET_I128        TCG_CALL_RET_NORMAL
 
+/* Only the host FP ops (TCG_OPF_FP) are not in the TCGOutOp tables. */
 static TCGConstraintSetIndex
 tcg_target_op_def(TCGOpcode op, TCGType type, unsigned flags)
 {
-    return C_NotImplemented;
+    switch (op) {
+    case INDEX_op_flcr:
+        return C_O0_I1(r);
+    case INDEX_op_st80f_f32:
+    case INDEX_op_st80f_f64:
+        return C_O0_I2(r, r);
+    case INDEX_op_add_f32:
+    case INDEX_op_add_f64:
+    case INDEX_op_sub_f32:
+    case INDEX_op_sub_f64:
+    case INDEX_op_mul_f32:
+    case INDEX_op_mul_f64:
+    case INDEX_op_div_f32:
+    case INDEX_op_div_f64:
+    case INDEX_op_com_f32:
+    case INDEX_op_com_f64:
+        return C_O1_I2(r, r, r);
+    case INDEX_op_ld80f_f32:
+    case INDEX_op_ld80f_f64:
+    case INDEX_op_abs_f32:
+    case INDEX_op_abs_f64:
+    case INDEX_op_chs_f32:
+    case INDEX_op_chs_f64:
+    case INDEX_op_cos_f32:
+    case INDEX_op_cos_f64:
+    case INDEX_op_sin_f32:
+    case INDEX_op_sin_f64:
+    case INDEX_op_sqrt_f32:
+    case INDEX_op_sqrt_f64:
+    case INDEX_op_cvt32f_f64:
+    case INDEX_op_cvt32f_i32:
+    case INDEX_op_cvt32f_i64:
+    case INDEX_op_cvt32i_f32:
+    case INDEX_op_cvt32i_f64:
+    case INDEX_op_cvt64f_f32:
+    case INDEX_op_cvt64f_i32:
+    case INDEX_op_cvt64f_i64:
+    case INDEX_op_cvt64i_f32:
+    case INDEX_op_cvt64i_f64:
+    case INDEX_op_mov32f_i32:
+    case INDEX_op_mov32i_f32:
+    case INDEX_op_mov64f_i64:
+    case INDEX_op_mov64i_f64:
+    case INDEX_op_mov_f32:
+    case INDEX_op_mov_f64:
+        return C_O1_I1(r, r);
+    default:
+        return C_NotImplemented;
+    }
 }
 
 static const int tcg_target_reg_alloc_order[] = {
@@ -97,7 +146,7 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define BLOCK_PTR_IDX       TCG_TARGET_NB_REGS
 #define NUM_GLOBALS         (TCG_TARGET_NB_REGS + 1)
 
-/* Locals: the WasmContext pointer (param), 4 x i32, 2 x i64 scratch. */
+/* Locals: the WasmContext pointer (param), 4 x i32, 2 x i64, 1 x f64. */
 #define CTX_IDX             0
 #define L32_0               1
 #define L32_1               2
@@ -105,6 +154,7 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define L32_3               4
 #define L64_0               5
 #define L64_1               6
+#define LF64_0              7
 
 /* Function indices: imports first, then the TB function itself. */
 #define CHECK_UNWINDING_IDX 0   /* helper.u: 1 unless Asyncify unwinds */
@@ -1556,7 +1606,7 @@ static void tcg_out_ld(TCGContext *s, TCGType type, TCGReg val, TCGReg base,
                        intptr_t offset)
 {
     WASM_CLASS(11);
-    bool i32 = type == TCG_TYPE_I32;
+    bool i32 = type == TCG_TYPE_I32 || type == TCG_TYPE_F32;
 
     tci_out_ldst(s, i32 ? INDEX_op_ld32u : INDEX_op_ld, val, base, offset);
     wasm_ldst(s, i32 ? W_I64_LOAD32_U : W_I64_LOAD, false, val, base, offset);
@@ -1566,7 +1616,7 @@ static void tcg_out_st(TCGContext *s, TCGType type, TCGReg val, TCGReg base,
                        intptr_t offset)
 {
     WASM_CLASS(11);
-    bool i32 = type == TCG_TYPE_I32;
+    bool i32 = type == TCG_TYPE_I32 || type == TCG_TYPE_F32;
 
     tci_out_ldst(s, i32 ? INDEX_op_st32 : INDEX_op_st, val, base, offset);
     wasm_ldst(s, i32 ? W_I64_STORE32 : W_I64_STORE, true, val, base, offset);
@@ -2534,6 +2584,9 @@ static void tcg_target_init(TCGContext *s)
     tcg_target_available_regs[TCG_TYPE_I32] = BIT(TCG_TARGET_NB_REGS) - 1;
     /* Registers available for 64 bit operations. */
     tcg_target_available_regs[TCG_TYPE_I64] = BIT(TCG_TARGET_NB_REGS) - 1;
+    /* Host FP values are bit patterns in the same registers. */
+    tcg_target_available_regs[TCG_TYPE_F32] = BIT(TCG_TARGET_NB_REGS) - 1;
+    tcg_target_available_regs[TCG_TYPE_F64] = BIT(TCG_TARGET_NB_REGS) - 1;
     /*
      * The "registers" are interpreter locals / module globals and cannot
      * be clobbered by helpers, but calls return into R0 (and R1).
@@ -2570,12 +2623,377 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
     g_assert_not_reached();
 }
 
-/* All opcodes go through the TCGOutOp tables. */
+/*
+ * Host floating point (TCG_TARGET_HAS_fpu), for the i386 hard-FPU x87 path.
+ * F32/F64 values are bit patterns in the i64 registers (F32 zero-extended),
+ * reinterpreted around native wasm f32/f64 instructions. See wasm32.h.
+ */
+#define W_F32_EQ            0x5b
+#define W_F32_NE            0x5c
+#define W_F64_EQ            0x61
+#define W_F64_NE            0x62
+#define W_F64_LT            0x63
+#define W_F64_LE            0x65
+#define W_F64_GE            0x66
+#define W_F32_ABS           0x8b
+#define W_F32_NEG           0x8c
+#define W_F32_SQRT          0x91
+#define W_F32_ADD           0x92
+#define W_F32_SUB           0x93
+#define W_F32_MUL           0x94
+#define W_F32_DIV           0x95
+#define W_F64_ABS           0x99
+#define W_F64_NEG           0x9a
+#define W_F64_CEIL          0x9b
+#define W_F64_FLOOR         0x9c
+#define W_F64_TRUNC         0x9d
+#define W_F64_NEAREST       0x9e
+#define W_F64_SQRT          0x9f
+#define W_F64_ADD           0xa0
+#define W_F64_SUB           0xa1
+#define W_F64_MUL           0xa2
+#define W_F64_DIV           0xa3
+#define W_F32_CONVERT_I32_S 0xb2
+#define W_F32_CONVERT_I64_S 0xb4
+#define W_F32_DEMOTE_F64    0xb6
+#define W_F64_CONVERT_I32_S 0xb7
+#define W_F64_CONVERT_I64_S 0xb9
+#define W_F64_PROMOTE_F32   0xbb
+#define W_I32_REINTERPRET_F32 0xbc
+#define W_I64_REINTERPRET_F64 0xbd
+#define W_F32_REINTERPRET_I32 0xbe
+#define W_F64_REINTERPRET_I64 0xbf
+#define W_F64_CONST         0x44
+#define W_I32_LT_U          0x49
+#define W_PREFIX_FC         0xfc
+#define W_FC_I32_TRUNC_SAT_F64_S 0x02
+#define W_FC_I64_TRUNC_SAT_F64_S 0x06
+
+static void wasm_get_f64(TCGContext *s, TCGReg r)
+{
+    wasm_get_r(s, r);
+    wasm8(s, W_F64_REINTERPRET_I64);
+}
+
+static void wasm_get_f32(TCGContext *s, TCGReg r)
+{
+    wasm_get_r32(s, r);
+    wasm8(s, W_F32_REINTERPRET_I32);
+}
+
+static void wasm_get_fp(TCGContext *s, bool dp, TCGReg r)
+{
+    if (dp) {
+        wasm_get_f64(s, r);
+    } else {
+        wasm_get_f32(s, r);
+    }
+}
+
+static void wasm_set_fp(TCGContext *s, bool dp, TCGReg r)
+{
+    if (dp) {
+        wasm8(s, W_I64_REINTERPRET_F64);
+    } else {
+        wasm8(s, W_I32_REINTERPRET_F32);
+        wasm8(s, W_I64_EXTEND_I32_U);
+    }
+    wasm_set_r(s, r);
+}
+
+static void wasm_f64_const(TCGContext *s, double d)
+{
+    uint64_t v;
+
+    memcpy(&v, &d, 8);
+    wasm8(s, W_F64_CONST);
+    for (int i = 0; i < 8; i++) {
+        wasm8(s, v >> (i * 8));
+    }
+}
+
+/*
+ * Call a plain C function (not a TCG helper) imported by table index;
+ * @type is its wasm function type, e.g. "\x60\x01\x7f\x01\x7e".
+ * The arguments are already on the wasm stack. It must not suspend.
+ */
+static void wasm_call_c(TCGContext *s, const void *func,
+                        const char *type, int type_len)
+{
+    int idx = get_helper_idx(func);
+
+    if (idx < 0) {
+        idx = register_helper(func);
+        for (int i = 0; i < type_len; i++) {
+            types_out8(type[i]);
+        }
+    }
+    wasm_var(s, W_CALL, idx);
+}
+
+/*
+ * float -> int: round the f64 on the stack per the flcr rounding control,
+ * then convert, giving the x86 "integer indefinite" on NaN/overflow.
+ */
+static void wasm_fp_to_int(TCGContext *s, bool i64, TCGReg d)
+{
+    wasm_var(s, W_LOCAL_SET, LF64_0);
+    /* L32_0 = RC */
+    wasm_i32_const(s, (int32_t)(uintptr_t)&tcg_wasm_fpcr);
+    wasm_mem(s, W_I32_LOAD, 0);
+    wasm_i32_const(s, 13);
+    wasm8(s, W_I32_SHR_U);
+    wasm_i32_const(s, 3);
+    wasm8(s, W_I32_AND);
+    wasm_var(s, W_LOCAL_SET, L32_0);
+    /* RC == 1 ? floor : nearest */
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm8(s, W_F64_FLOOR);
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm8(s, W_F64_NEAREST);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_EQ);
+    wasm8(s, W_SELECT);
+    /* RC == 2 ? ceil : trunc */
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm8(s, W_F64_CEIL);
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm8(s, W_F64_TRUNC);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_i32_const(s, 2);
+    wasm8(s, W_I32_EQ);
+    wasm8(s, W_SELECT);
+    /* RC < 2 ? first : second */
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_i32_const(s, 2);
+    wasm8(s, W_I32_LT_U);
+    wasm8(s, W_SELECT);
+    wasm_var(s, W_LOCAL_SET, LF64_0);
+
+    /* in range ? trunc_sat(r) : INT_MIN */
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm8(s, W_PREFIX_FC);
+    wasm_uleb(s, i64 ? W_FC_I64_TRUNC_SAT_F64_S : W_FC_I32_TRUNC_SAT_F64_S);
+    if (i64) {
+        wasm_i64_const(s, INT64_MIN);
+    } else {
+        wasm_i32_const(s, INT32_MIN);
+    }
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    wasm_f64_const(s, i64 ? -9223372036854775808.0 : -2147483648.0);
+    wasm8(s, W_F64_GE);
+    wasm_var(s, W_LOCAL_GET, LF64_0);
+    if (i64) {
+        wasm_f64_const(s, 9223372036854775808.0);
+        wasm8(s, W_F64_LT);
+    } else {
+        wasm_f64_const(s, 2147483647.0);
+        wasm8(s, W_F64_LE);
+    }
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_SELECT);
+    if (!i64) {
+        wasm8(s, W_I64_EXTEND_I32_U);
+    }
+    wasm_set_r(s, d);
+}
+
+/* d = comisd-style flags of (a1, a2): ZF 0x40, PF 0x04, CF 0x01 */
+static void wasm_fp_com(TCGContext *s, bool dp, TCGReg d, TCGReg a1, TCGReg a2)
+{
+    uint8_t op_lt = dp ? W_F64_LT : 0x5d /* f32.lt */;
+    uint8_t op_eq = dp ? W_F64_EQ : W_F32_EQ;
+    uint8_t op_ne = dp ? W_F64_NE : W_F32_NE;
+
+    wasm_i64_const(s, 0x45);                /* unordered */
+    wasm_get_fp(s, dp, a1);
+    wasm_get_fp(s, dp, a2);
+    wasm8(s, op_lt);
+    wasm8(s, W_I64_EXTEND_I32_U);           /* CF */
+    wasm_get_fp(s, dp, a1);
+    wasm_get_fp(s, dp, a2);
+    wasm8(s, op_eq);
+    wasm8(s, W_I64_EXTEND_I32_U);
+    wasm_i64_const(s, 6);
+    wasm8(s, W_I64_SHL);                    /* ZF */
+    wasm8(s, W_I64_OR);
+    wasm_get_fp(s, dp, a1);
+    wasm_get_fp(s, dp, a1);
+    wasm8(s, op_ne);
+    wasm_get_fp(s, dp, a2);
+    wasm_get_fp(s, dp, a2);
+    wasm8(s, op_ne);
+    wasm8(s, W_I32_OR);                     /* either is NaN */
+    wasm8(s, W_SELECT);
+    wasm_set_r(s, d);
+}
+
 static void tcg_out_op(TCGContext *s, TCGOpcode opc, TCGType type,
                        const TCGArg args[TCG_MAX_OP_ARGS],
                        const int const_args[TCG_MAX_OP_ARGS])
 {
-    g_assert_not_reached();
+    TCGReg a0 = args[0], a1 = args[1], a2 = args[2];
+    bool dp = false;
+    uint8_t wop;
+
+    WASM_CLASS(16);
+
+#define FP_CASE(x) \
+    case glue(glue(INDEX_op_, x), _f64): \
+        dp = true; /* fall through */ \
+    case glue(glue(INDEX_op_, x), _f32)
+
+    switch (opc) {
+    case INDEX_op_flcr:
+        tcg_out_op_r(s, opc, a0);
+        wasm_i32_const(s, (int32_t)(uintptr_t)&tcg_wasm_fpcr);
+        wasm_get_r32(s, a0);
+        wasm_mem(s, W_I32_STORE, 0);
+        break;
+
+    case INDEX_op_ld80f_f64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm_call_c(s, tcg_wasm_ld80f_f64, "\x60\x01\x7f\x01\x7e", 5);
+        wasm_set_r(s, a0);
+        break;
+    case INDEX_op_ld80f_f32:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm_call_c(s, tcg_wasm_ld80f_f32, "\x60\x01\x7f\x01\x7f", 5);
+        wasm8(s, W_I64_EXTEND_I32_U);
+        wasm_set_r(s, a0);
+        break;
+    case INDEX_op_st80f_f64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm_get_r(s, a0);
+        wasm_call_c(s, tcg_wasm_st80f_f64, "\x60\x02\x7f\x7e\x00", 5);
+        break;
+    case INDEX_op_st80f_f32:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm_get_r32(s, a0);
+        wasm_call_c(s, tcg_wasm_st80f_f32, "\x60\x02\x7f\x7f\x00", 5);
+        break;
+
+    case INDEX_op_sin_f64:
+    case INDEX_op_cos_f64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r(s, a1);
+        wasm_call_c(s, opc == INDEX_op_sin_f64 ? (void *)tcg_wasm_sin_f64
+                                               : (void *)tcg_wasm_cos_f64,
+                    "\x60\x01\x7e\x01\x7e", 5);
+        wasm_set_r(s, a0);
+        break;
+    case INDEX_op_sin_f32:
+    case INDEX_op_cos_f32:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm_call_c(s, opc == INDEX_op_sin_f32 ? (void *)tcg_wasm_sin_f32
+                                               : (void *)tcg_wasm_cos_f32,
+                    "\x60\x01\x7f\x01\x7f", 5);
+        wasm8(s, W_I64_EXTEND_I32_U);
+        wasm_set_r(s, a0);
+        break;
+
+    FP_CASE(add):
+        wop = dp ? W_F64_ADD : W_F32_ADD;
+        goto do_binary;
+    FP_CASE(sub):
+        wop = dp ? W_F64_SUB : W_F32_SUB;
+        goto do_binary;
+    FP_CASE(mul):
+        wop = dp ? W_F64_MUL : W_F32_MUL;
+        goto do_binary;
+    FP_CASE(div):
+        wop = dp ? W_F64_DIV : W_F32_DIV;
+    do_binary:
+        tcg_out_op_rrr(s, opc, a0, a1, a2);
+        wasm_get_fp(s, dp, a1);
+        wasm_get_fp(s, dp, a2);
+        wasm8(s, wop);
+        wasm_set_fp(s, dp, a0);
+        break;
+
+    FP_CASE(abs):
+        wop = dp ? W_F64_ABS : W_F32_ABS;
+        goto do_unary;
+    FP_CASE(chs):
+        wop = dp ? W_F64_NEG : W_F32_NEG;
+        goto do_unary;
+    FP_CASE(sqrt):
+        wop = dp ? W_F64_SQRT : W_F32_SQRT;
+    do_unary:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_fp(s, dp, a1);
+        wasm8(s, wop);
+        wasm_set_fp(s, dp, a0);
+        break;
+
+    FP_CASE(com):
+        tcg_out_op_rrr(s, opc, a0, a1, a2);
+        wasm_fp_com(s, dp, a0, a1, a2);
+        break;
+
+    case INDEX_op_cvt32f_f64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_f32(s, a1);
+        wasm8(s, W_F64_PROMOTE_F32);
+        wasm_set_fp(s, true, a0);
+        break;
+    case INDEX_op_cvt64f_f32:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_f64(s, a1);
+        wasm8(s, W_F32_DEMOTE_F64);
+        wasm_set_fp(s, false, a0);
+        break;
+    FP_CASE(cvt32i):
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm8(s, dp ? W_F64_CONVERT_I32_S : W_F32_CONVERT_I32_S);
+        wasm_set_fp(s, dp, a0);
+        break;
+    FP_CASE(cvt64i):
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_r(s, a1);
+        wasm8(s, dp ? W_F64_CONVERT_I64_S : W_F32_CONVERT_I64_S);
+        wasm_set_fp(s, dp, a0);
+        break;
+    case INDEX_op_cvt64f_i32:
+    case INDEX_op_cvt64f_i64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_f64(s, a1);
+        wasm_fp_to_int(s, opc == INDEX_op_cvt64f_i64, a0);
+        break;
+    case INDEX_op_cvt32f_i32:
+    case INDEX_op_cvt32f_i64:
+        tcg_out_op_rr(s, opc, a0, a1);
+        wasm_get_f32(s, a1);
+        wasm8(s, W_F64_PROMOTE_F32);
+        wasm_fp_to_int(s, opc == INDEX_op_cvt32f_i64, a0);
+        break;
+
+    case INDEX_op_mov32f_i32:
+    case INDEX_op_mov32i_f32:
+    case INDEX_op_mov_f32:
+        tcg_out_op_rr(s, INDEX_op_mov_f32, a0, a1);
+        wasm_get_r32(s, a1);
+        wasm8(s, W_I64_EXTEND_I32_U);
+        wasm_set_r(s, a0);
+        break;
+    case INDEX_op_mov64f_i64:
+    case INDEX_op_mov64i_f64:
+    case INDEX_op_mov_f64:
+        tcg_out_op_rr(s, INDEX_op_mov, a0, a1);
+        wasm_mov(s, a0, a1);
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+#undef FP_CASE
 }
 
 /*
@@ -2787,7 +3205,8 @@ static int tcg_out_tb_end(TCGContext *s)
     sec = mod_section_begin(&w, 10);
     mod_uleb(&w, 1);
     body = mod_uleb5_placeholder(&w);
-    mod_bytes(&w, "\x02\x04\x7f\x02\x7e", 5);   /* locals: 4 x i32, 2 x i64 */
+    /* locals: 4 x i32, 2 x i64, 1 x f64 */
+    mod_bytes(&w, "\x03\x04\x7f\x02\x7e\x01\x7c", 7);
     {
         uint8_t *code = w.p;
         if (w.p + code_len <= w.end) {

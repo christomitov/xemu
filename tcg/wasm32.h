@@ -73,4 +73,26 @@ static inline const uint32_t *wasm32_tci_chain(void *next)
 /* The TCI entry point, in tci.c. */
 uintptr_t tci_exec_tb(CPUArchState *env, const void *tci_ptr);
 
+/*
+ * Host floating point ops (TCG_TARGET_HAS_fpu, used by the i386 "hard FPU"
+ * x87 path). F32/F64 temps live in the ordinary 64-bit registers as bit
+ * patterns (F32 zero-extended); both encodings reinterpret them.
+ *
+ * tcg_wasm_fpcr is the value of the last flcr op, in MXCSR format: its
+ * rounding control (bits 13-14) applies to float->int conversions. Wasm
+ * arithmetic always rounds to nearest-even.
+ *
+ * The floatx80 <-> binary32/64 conversions (ld80f/st80f) and sin/cos are
+ * out-of-line C functions, called directly from both TCI and wasm code.
+ */
+extern uint32_t tcg_wasm_fpcr;
+uint64_t tcg_wasm_ld80f_f64(uint32_t ptr);
+uint32_t tcg_wasm_ld80f_f32(uint32_t ptr);
+void tcg_wasm_st80f_f64(uint32_t ptr, uint64_t v);
+void tcg_wasm_st80f_f32(uint32_t ptr, uint32_t v);
+uint64_t tcg_wasm_sin_f64(uint64_t v);
+uint64_t tcg_wasm_cos_f64(uint64_t v);
+uint32_t tcg_wasm_sin_f32(uint32_t v);
+uint32_t tcg_wasm_cos_f32(uint32_t v);
+
 #endif

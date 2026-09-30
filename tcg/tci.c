@@ -25,6 +25,7 @@
 #include "disas/dis-asm.h"
 #include "tcg-has.h"
 #include <ffi.h>
+#include <math.h>
 #include "tci-direct-call.c.inc"
 #include "tci-helper-meta.h"
 
@@ -394,6 +395,230 @@ static void tci_qemu_st(CPUArchState *env, uint64_t taddr, uint64_t val,
     }
 }
 
+#if defined(CONFIG_TCG_WASM_JIT) && TCG_TARGET_HAS_fpu
+/*
+ * Host floating point support (see wasm32.h). x87 registers are stored in
+ * env as floatx80 (sign+15-bit exponent, 64-bit mantissa with explicit
+ * integer bit). The common cases (normal numbers in range) are converted
+ * inline with round-to-nearest-even, like an x87 host's fld m80/fstp m64;
+ * everything else goes through binary128 long double (wasm32's long
+ * double), which has the same exponent width and bias as floatx80, so
+ * that step is exact and the compiler runtime does the final rounding.
+ */
+uint32_t tcg_wasm_fpcr = 0x1f80;
+
+typedef union {
+    long double ld;
+    struct {
+        uint64_t lo, hi;
+    };
+} TciF128;
+
+QEMU_BUILD_BUG_ON(sizeof(long double) != 16);
+
+static long double fx80_to_ld(uint64_t m, uint16_t se)
+{
+    TciF128 u;
+    uint64_t e = se & 0x7fff;
+    uint64_t hf = m >> 15;
+
+    if (e == 0 && (hf >> 48)) {
+        e = 1;                  /* pseudo-denormal */
+    }
+    u.lo = m << 49;
+    u.hi = ((uint64_t)(se >> 15) << 63) | (e << 48) | (hf & 0xffffffffffffull);
+    return u.ld;
+}
+
+static void ld_to_fx80(long double v, uint8_t *p)
+{
+    TciF128 u = { .ld = v };
+    uint64_t e = (u.hi >> 48) & 0x7fff;
+    uint64_t m = ((u.hi & 0xffffffffffffull) << 15) | (u.lo >> 49);
+    uint16_t se = ((u.hi >> 63) << 15) | e;
+
+    if (e) {
+        m |= 1ull << 63;
+    }
+    memcpy(p, &m, 8);
+    memcpy(p + 8, &se, 2);
+}
+
+uint64_t tcg_wasm_ld80f_f64(uint32_t ptr)
+{
+    const uint8_t *p = (const uint8_t *)(uintptr_t)ptr;
+    uint64_t m, r;
+    uint16_t se;
+    uint32_t e;
+    double d;
+
+    memcpy(&m, p, 8);
+    memcpy(&se, p + 8, 2);
+    e = se & 0x7fff;
+    if (likely(e - 15361 < 2046 && (m >> 63))) {
+        uint64_t q = m >> 11, rem = m & 0x7ff;
+
+        q += rem > 0x400 || (rem == 0x400 && (q & 1));
+        /* a mantissa carry (q == 2^53) bumps the exponent, maybe to inf */
+        return ((uint64_t)(se >> 15) << 63) +
+               ((uint64_t)(e - 15360) << 52) + (q - (1ull << 52));
+    }
+    d = (double)fx80_to_ld(m, se);
+    memcpy(&r, &d, 8);
+    return r;
+}
+
+uint32_t tcg_wasm_ld80f_f32(uint32_t ptr)
+{
+    const uint8_t *p = (const uint8_t *)(uintptr_t)ptr;
+    uint64_t m;
+    uint32_t r, e;
+    uint16_t se;
+    float f;
+
+    memcpy(&m, p, 8);
+    memcpy(&se, p + 8, 2);
+    e = se & 0x7fff;
+    if (likely(e - 16257 < 254 && (m >> 63))) {
+        uint64_t q = m >> 40, rem = m & ((1ull << 40) - 1);
+
+        q += rem > (1ull << 39) || (rem == (1ull << 39) && (q & 1));
+        return ((uint32_t)(se >> 15) << 31) +
+               ((e - 16256) << 23) + (uint32_t)(q - (1u << 23));
+    }
+    f = (float)fx80_to_ld(m, se);
+    memcpy(&r, &f, 4);
+    return r;
+}
+
+void tcg_wasm_st80f_f64(uint32_t ptr, uint64_t v)
+{
+    uint8_t *p = (uint8_t *)(uintptr_t)ptr;
+    uint32_t e = (v >> 52) & 0x7ff;
+    double d;
+
+    if (likely(e - 1 < 2046)) {
+        uint64_t m = (1ull << 63) | (v << 11);
+        uint16_t se = ((v >> 63) << 15) | (e + 15360);
+
+        memcpy(p, &m, 8);
+        memcpy(p + 8, &se, 2);
+        return;
+    }
+    memcpy(&d, &v, 8);
+    ld_to_fx80(d, p);
+}
+
+void tcg_wasm_st80f_f32(uint32_t ptr, uint32_t v)
+{
+    uint8_t *p = (uint8_t *)(uintptr_t)ptr;
+    uint32_t e = (v >> 23) & 0xff;
+    float f;
+
+    if (likely(e - 1 < 254)) {
+        uint64_t m = (1ull << 63) | ((uint64_t)(v & 0x7fffff) << 40);
+        uint16_t se = ((v >> 31) << 15) | (e + 16256);
+
+        memcpy(p, &m, 8);
+        memcpy(p + 8, &se, 2);
+        return;
+    }
+    memcpy(&f, &v, 4);
+    ld_to_fx80(f, p);
+}
+
+static inline double tci_f64(uint64_t v)
+{
+    double d;
+    memcpy(&d, &v, 8);
+    return d;
+}
+
+static inline uint64_t tci_f64_bits(double d)
+{
+    uint64_t v;
+    memcpy(&v, &d, 8);
+    return v;
+}
+
+static inline float tci_f32(uint64_t v)
+{
+    uint32_t u = v;
+    float f;
+    memcpy(&f, &u, 4);
+    return f;
+}
+
+static inline uint64_t tci_f32_bits(float f)
+{
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    return u;
+}
+
+uint64_t tcg_wasm_sin_f64(uint64_t v)
+{
+    return tci_f64_bits(sin(tci_f64(v)));
+}
+
+uint64_t tcg_wasm_cos_f64(uint64_t v)
+{
+    return tci_f64_bits(cos(tci_f64(v)));
+}
+
+uint32_t tcg_wasm_sin_f32(uint32_t v)
+{
+    return tci_f32_bits(sinf(tci_f32(v)));
+}
+
+uint32_t tcg_wasm_cos_f32(uint32_t v)
+{
+    return tci_f32_bits(cosf(tci_f32(v)));
+}
+
+/* Round to integer per the flcr rounding control (x86 RC encoding). */
+static double tci_fp_round(double x)
+{
+    switch ((tcg_wasm_fpcr >> 13) & 3) {
+    case 0:
+        return rint(x);         /* nearest-even: the default environment */
+    case 1:
+        return floor(x);
+    case 2:
+        return ceil(x);
+    default:
+        return trunc(x);
+    }
+}
+
+/* float -> int with x86 "integer indefinite" on NaN/overflow */
+static uint32_t tci_fp_to_i32(double x)
+{
+    double r = tci_fp_round(x);
+    return r >= -2147483648.0 && r <= 2147483647.0 ? (int32_t)r : INT32_MIN;
+}
+
+static uint64_t tci_fp_to_i64(double x)
+{
+    double r = tci_fp_round(x);
+    return r >= -9223372036854775808.0 && r < 9223372036854775808.0
+           ? (int64_t)r : INT64_MIN;
+}
+
+/* comisd-style flags: ZF (0x40), PF (0x04), CF (0x01) */
+static uint64_t tci_fp_com(double a, double b)
+{
+    if (a < b) {
+        return 0x01;
+    } else if (a == b) {
+        return 0x40;
+    } else if (a > b) {
+        return 0;
+    }
+    return 0x45;
+}
+#endif
+
 /* Interpret pseudo code in tb. */
 /*
  * Disable CFI checks.
@@ -551,6 +776,162 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         case INDEX_op_tci_setcarry:
             carry = true;
             break;
+
+#if defined(CONFIG_TCG_WASM_JIT) && TCG_TARGET_HAS_fpu
+            /* Host floating point (see wasm32.h) */
+        case INDEX_op_flcr:
+            tci_args_r(insn, &r0);
+            tcg_wasm_fpcr = regs[r0];
+            break;
+        case INDEX_op_ld80f_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_ld80f_f64(regs[r1]);
+            break;
+        case INDEX_op_ld80f_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_ld80f_f32(regs[r1]);
+            break;
+        case INDEX_op_st80f_f64:
+            tci_args_rr(insn, &r0, &r1);
+            tcg_wasm_st80f_f64(regs[r1], regs[r0]);
+            break;
+        case INDEX_op_st80f_f32:
+            tci_args_rr(insn, &r0, &r1);
+            tcg_wasm_st80f_f32(regs[r1], regs[r0]);
+            break;
+        case INDEX_op_abs_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = regs[r1] & ~(1ull << 63);
+            break;
+        case INDEX_op_abs_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = (uint32_t)regs[r1] & ~(1u << 31);
+            break;
+        case INDEX_op_chs_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = regs[r1] ^ (1ull << 63);
+            break;
+        case INDEX_op_chs_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = (uint32_t)regs[r1] ^ (1u << 31);
+            break;
+        case INDEX_op_add_f64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f64_bits(tci_f64(regs[r1]) + tci_f64(regs[r2]));
+            break;
+        case INDEX_op_add_f32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f32_bits(tci_f32(regs[r1]) + tci_f32(regs[r2]));
+            break;
+        case INDEX_op_sub_f64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f64_bits(tci_f64(regs[r1]) - tci_f64(regs[r2]));
+            break;
+        case INDEX_op_sub_f32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f32_bits(tci_f32(regs[r1]) - tci_f32(regs[r2]));
+            break;
+        case INDEX_op_mul_f64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f64_bits(tci_f64(regs[r1]) * tci_f64(regs[r2]));
+            break;
+        case INDEX_op_mul_f32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f32_bits(tci_f32(regs[r1]) * tci_f32(regs[r2]));
+            break;
+        case INDEX_op_div_f64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f64_bits(tci_f64(regs[r1]) / tci_f64(regs[r2]));
+            break;
+        case INDEX_op_div_f32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_f32_bits(tci_f32(regs[r1]) / tci_f32(regs[r2]));
+            break;
+        case INDEX_op_sqrt_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f64_bits(sqrt(tci_f64(regs[r1])));
+            break;
+        case INDEX_op_sqrt_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f32_bits(sqrtf(tci_f32(regs[r1])));
+            break;
+        case INDEX_op_sin_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_sin_f64(regs[r1]);
+            break;
+        case INDEX_op_sin_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_sin_f32(regs[r1]);
+            break;
+        case INDEX_op_cos_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_cos_f64(regs[r1]);
+            break;
+        case INDEX_op_cos_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tcg_wasm_cos_f32(regs[r1]);
+            break;
+        case INDEX_op_com_f64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_fp_com(tci_f64(regs[r1]), tci_f64(regs[r2]));
+            break;
+        case INDEX_op_com_f32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            regs[r0] = tci_fp_com(tci_f32(regs[r1]), tci_f32(regs[r2]));
+            break;
+        case INDEX_op_cvt32f_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f64_bits(tci_f32(regs[r1]));
+            break;
+        case INDEX_op_cvt64f_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f32_bits(tci_f64(regs[r1]));
+            break;
+        case INDEX_op_cvt32i_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f64_bits((int32_t)regs[r1]);
+            break;
+        case INDEX_op_cvt32i_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f32_bits((int32_t)regs[r1]);
+            break;
+        case INDEX_op_cvt64i_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f64_bits((int64_t)regs[r1]);
+            break;
+        case INDEX_op_cvt64i_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_f32_bits((int64_t)regs[r1]);
+            break;
+        case INDEX_op_cvt64f_i32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_fp_to_i32(tci_f64(regs[r1]));
+            break;
+        case INDEX_op_cvt32f_i32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_fp_to_i32(tci_f32(regs[r1]));
+            break;
+        case INDEX_op_cvt64f_i64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_fp_to_i64(tci_f64(regs[r1]));
+            break;
+        case INDEX_op_cvt32f_i64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = tci_fp_to_i64(tci_f32(regs[r1]));
+            break;
+        case INDEX_op_mov32f_i32:
+        case INDEX_op_mov32i_f32:
+        case INDEX_op_mov_f32:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = (uint32_t)regs[r1];
+            break;
+        case INDEX_op_mov64f_i64:
+        case INDEX_op_mov64i_f64:
+        case INDEX_op_mov_f64:
+            tci_args_rr(insn, &r0, &r1);
+            regs[r0] = regs[r1];
+            break;
+#endif
 
             /* Load/store operations (32 bit). */
 
