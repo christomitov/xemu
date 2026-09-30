@@ -62,7 +62,7 @@ typedef struct DisplayUniforms {
     "    let raw = textureSampleLevel(tex, samp, uv, 0.0);\n" \
     "    var c = sample_base(uv, raw);\n" \
     "    if (u.pvideo_enable != 0u) {\n" \
-    "        let sc = v.pos.xy * u.pvideo_scale.z;\n" \
+    "        let sc = v.uv * u.display_size * u.pvideo_scale.z;\n" \
     "        let lo = u.pvideo_pos.xy;\n" \
     "        let hi = u.pvideo_pos.xy + u.pvideo_pos.zw;\n" \
     "        let inside = all(sc >= lo) && all(sc <= hi);\n" \
@@ -101,7 +101,38 @@ typedef struct DisplayUniforms {
     "    return vec4f(b, raw.a);\n"
 #define DISPLAY_AA_NONE "    return raw;\n"
 
+/*
+ * Catmull-Rom bicubic upscale in 9 bilinear taps: the canvas is sized to
+ * the screen's physical pixels, so this (not the browser's bilinear
+ * stretch) scales the 480p frame up — noticeably sharper.
+ */
+#define DISPLAY_AA_BICUBIC \
+    "    let size = vec2f(textureDimensions(tex, 0));\n" \
+    "    let sp = uv * size;\n" \
+    "    let tp1 = floor(sp - 0.5) + 0.5;\n" \
+    "    let f = sp - tp1;\n" \
+    "    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));\n" \
+    "    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);\n" \
+    "    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));\n" \
+    "    let w3 = f * f * (-0.5 + 0.5 * f);\n" \
+    "    let w12 = w1 + w2;\n" \
+    "    let t0 = (tp1 - 1.0) / size;\n" \
+    "    let t3 = (tp1 + 2.0) / size;\n" \
+    "    let t12 = (tp1 + w2 / w12) / size;\n" \
+    "    var r = vec3f(0.0);\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t0.x, t0.y), 0.0).rgb * w0.x * w0.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t12.x, t0.y), 0.0).rgb * w12.x * w0.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t3.x, t0.y), 0.0).rgb * w3.x * w0.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t0.x, t12.y), 0.0).rgb * w0.x * w12.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t12.x, t12.y), 0.0).rgb * w12.x * w12.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t3.x, t12.y), 0.0).rgb * w3.x * w12.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t0.x, t3.y), 0.0).rgb * w0.x * w3.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t12.x, t3.y), 0.0).rgb * w12.x * w3.y;\n" \
+    "    r += textureSampleLevel(tex, samp, vec2f(t3.x, t3.y), 0.0).rgb * w3.x * w3.y;\n" \
+    "    return vec4f(clamp(r, vec3f(0.0), vec3f(1.0)), raw.a);\n"
+
 static const char display_wgsl_fxaa[] = DISPLAY_WGSL(DISPLAY_AA_FXAA);
+static const char display_wgsl_bicubic[] = DISPLAY_WGSL(DISPLAY_AA_BICUBIC);
 static const char display_wgsl[] = DISPLAY_WGSL(DISPLAY_AA_NONE);
 
 static void ensure_pvideo_texture(PGRAPHWgpuState *r, int width, int height)
@@ -332,12 +363,19 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
                        .bindGroupLayoutCount = 1,
                        .bindGroupLayouts = &disp->bind_group_layout });
 
-    /* FXAA on by default (XEMU_AA=0 disables); plain shader if it fails */
+    /*
+     * Upscale filter: bicubic by default, XEMU_AA=1 = FXAA (bilinear),
+     * XEMU_FILTER=bilinear = plain; plain if the chosen shader fails.
+     */
     const char *aa = getenv("XEMU_AA");
+    const char *filter = getenv("XEMU_FILTER");
     disp->pipeline = NULL;
-    if (!aa || strcmp(aa, "0")) {
+    if (aa && !strcmp(aa, "1")) {
         disp->pipeline = create_display_pipeline(r, layout, display_wgsl_fxaa,
                                                  true);
+    } else if (!filter || strcmp(filter, "bilinear")) {
+        disp->pipeline = create_display_pipeline(r, layout,
+                                                 display_wgsl_bicubic, true);
     }
     if (!disp->pipeline) {
         disp->pipeline = create_display_pipeline(r, layout, display_wgsl,
@@ -457,8 +495,21 @@ static void ensure_source(PGRAPHWgpuState *r, int width, int height)
     disp->height = height;
 }
 
+/* physical pixel size of the canvas on the page (0 = unknown), set by the
+ * page via xemu_wasm_set_display_size() on load/resize */
+volatile int xemu_wasm_display_w, xemu_wasm_display_h;
+
+/* guest display size (scaled surface pixels), for the overlay mapping */
+static int guest_display_w, guest_display_h;
+
 static void configure_canvas(PGRAPHWgpuState *r, int width, int height)
 {
+    guest_display_w = width;
+    guest_display_h = height;
+    if (xemu_wasm_display_w > 0 && xemu_wasm_display_h > 0) {
+        width = MIN(xemu_wasm_display_w, 3840);
+        height = MIN(xemu_wasm_display_h, 2400);
+    }
     if (r->surface_width != width || r->surface_height != height) {
         WGPUSurfaceConfiguration cfg = {
             .device = r->device,
@@ -604,7 +655,9 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
     if (surface == disp->last_surface && pg->draw_time == disp->last_draw_time &&
         pg->frame_time == disp->last_frame_time &&
         d->pcrtc.start == disp->last_scanout && !surface->upload_pending &&
-        !pvideo_on) {
+        !pvideo_on &&
+        (xemu_wasm_display_w <= 0 || (r->surface_width == MIN(xemu_wasm_display_w, 3840) &&
+                                      r->surface_height == MIN(xemu_wasm_display_h, 2400)))) {
         XSTAT_INC(n_present_skipped);
         *bg = NULL;
         return true;
@@ -678,8 +731,8 @@ void pgraph_wgpu_render_display(NV2AState *d)
 
     DisplayUniforms u = { 0 };
     memcpy(u.xform, disp->xform_values, sizeof(u.xform));
-    u.display_size[0] = r->surface_width;
-    u.display_size[1] = r->surface_height;
+    u.display_size[0] = guest_display_w;
+    u.display_size[1] = guest_display_h;
     WGPUTextureView pv_before = disp->pvideo_view;
     update_pvideo(d, r, &u);
     wgpuQueueWriteBuffer(r->queue, disp->xform, 0, &u, sizeof(u));

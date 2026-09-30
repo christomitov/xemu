@@ -625,6 +625,14 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_phase_top(void)
     return buf;
 }
 
+/* canvas size in physical pixels, from the page (display.c) */
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_size(int w, int h)
+{
+    extern volatile int xemu_wasm_display_w, xemu_wasm_display_h;
+    xemu_wasm_display_w = w;
+    xemu_wasm_display_h = h;
+}
+
 /* page reads the struct directly from the wasm heap */
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
 {
