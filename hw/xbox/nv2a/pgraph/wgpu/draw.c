@@ -726,8 +726,11 @@ static void create_pipeline(PGRAPHState *pg, uint32_t topology)
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     PGRAPHWgpuDrawState *ds = &r->draw;
 
+    XPHASE_SET(XPHASE_GPU, "draw:textures");
     pgraph_wgpu_bind_textures(d);
+    XPHASE_SET(XPHASE_GPU, "draw:shaders");
     pgraph_wgpu_bind_shaders(pg);
+    XPHASE_SET(XPHASE_GPU, "draw:pipeline");
 
     ShaderBinding *sb = r->shaders.shader_binding;
     if (!sb || !sb->vsh_module || !sb->psh_module || !sb->pipeline_layout) {
@@ -1022,7 +1025,9 @@ static bool begin_pre_draw(PGRAPHState *pg, uint32_t topology)
     if (pg->clearing) {
         create_clear_pipeline(pg);
     } else {
+        XPHASE_SET(XPHASE_GPU, "draw:pipeline");
         create_pipeline(pg, topology);
+        XPHASE_SET(XPHASE_GPU, "draw");
     }
     if (!ds->pipeline_binding || !ds->pipeline_binding->pipeline) {
         return false;
@@ -1042,7 +1047,9 @@ static bool begin_pre_draw(PGRAPHState *pg, uint32_t topology)
 
     if (!pg->clearing) {
         /* vk: pgraph_vk_update_descriptor_sets */
+        XPHASE_SET(XPHASE_GPU, "draw:bindgroup");
         ds->bind_group = pgraph_wgpu_update_bind_group(pg);
+        XPHASE_SET(XPHASE_GPU, "draw");
         if (!ds->bind_group) {
             return false;
         }
@@ -1526,10 +1533,13 @@ static void draw_indexed(NV2AState *d, const PrimConv *pc)
         return;
     }
 
+    XPHASE_SET(XPHASE_GPU, "draw:vertex");
     pgraph_wgpu_upload_vertex_data(d);
+    XPHASE_SET(XPHASE_GPU, "draw");
     size_t index_offset =
         pgraph_wgpu_update_index_buffer(pg, ds->indices, index_size);
 
+    XPHASE_SET(XPHASE_GPU, "draw:encode");
     begin_draw(pg);
     if (pgraph_wgpu_set_vertex_buffers(pg)) {
         /*
