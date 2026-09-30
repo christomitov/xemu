@@ -593,6 +593,10 @@ int main(int argc, char **argv)
         if (rend && strcmp(rend, "webgpu") == 0) {
             g_config.display.renderer = CONFIG_DISPLAY_RENDERER_WEBGPU;
         }
+        /* full startup animation unless the page asks to skip it
+         * (XEMU_BOOT_ANIM=0, page URL ?noanim) */
+        const char *anim = getenv("XEMU_BOOT_ANIM");
+        g_config.general.skip_boot_anim = anim && strcmp(anim, "0") == 0;
     }
 
     fwrite("[MAIN] calling qemu_init\n", 25, 1, stderr);
