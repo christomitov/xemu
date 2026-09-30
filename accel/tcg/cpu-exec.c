@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "qemu/qemu-print.h"
 #include "qapi/error.h"
 #include "qapi/type-helpers.h"
@@ -458,6 +459,7 @@ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
     }
 
     qemu_thread_jit_execute();
+    XSTAT_INC(n_tb_exec);
     ret = tcg_qemu_tb_exec(cpu_env(cpu), tb_ptr);
     cpu->neg.can_do_io = true;
     qemu_plugin_disable_mem_helpers(cpu);
@@ -1051,6 +1053,7 @@ static int cpu_exec_setjmp(CPUState *cpu, SyncClocks *sc)
 {
     /* Prepare setjmp context for exception handling. */
     if (unlikely(sigsetjmp(cpu->jmp_env, 0) != 0)) {
+        XSTAT_INC(n_cpu_exit);
         cpu_exec_longjmp_cleanup(cpu);
     }
 

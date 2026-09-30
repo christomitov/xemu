@@ -14,6 +14,7 @@
  */
 
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "qapi/error.h"
 
 static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
@@ -194,6 +195,8 @@ void pgraph_wgpu_read_buffer_sync(PGRAPHWgpuState *r, WGPUBuffer buffer,
                                   size_t offset, size_t size, void *dst)
 {
     bool ok = false;
+    XSTAT_INC(n_readback);
+    XSTAT_T0();
     pgraph_wgpu_wait(r, wgpuBufferMapAsync(
         buffer, WGPUMapMode_Read, offset, size,
         (WGPUBufferMapCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
@@ -206,6 +209,7 @@ void pgraph_wgpu_read_buffer_sync(PGRAPHWgpuState *r, WGPUBuffer buffer,
         memset(dst, 0, size);
     }
     wgpuBufferUnmap(buffer);
+    XSTAT_T1(ns_readback);
 }
 
 static void on_work_done(WGPUQueueWorkDoneStatus status, WGPUStringView msg,
@@ -337,6 +341,7 @@ static void pgraph_wgpu_flip_stall(NV2AState *d)
 {
     extern volatile uint32_t xemu_wasm_flip_count;
     xemu_wasm_flip_count++;
+    XSTAT_INC(n_flip);
     pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_FLIP_STALL);
 }
 

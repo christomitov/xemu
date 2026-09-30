@@ -30,6 +30,7 @@
 #include "qemu/compiler.h"
 #include "ui/xemu-settings.h"
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 
 static const int num_invalid_surfaces_to_keep = 10;  // FIXME: Make automatic
 static const int max_surface_frame_time_delta = 5;
@@ -364,6 +365,8 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
 
     size_t read_size = staging_stride * height;
     g_autofree uint8_t *host = g_malloc(read_size);
+    XSTAT_INC(n_surf_download);
+    XSTAT_ADD(b_surf_download, read_size);
     pgraph_wgpu_read_buffer_sync(r, staging, 0, read_size, host);
 
     size_t row_bytes = width * surface->fmt.bytes_per_pixel;
@@ -923,6 +926,8 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
             .bytesPerRow = upload_stride,
             .rowsPerImage = height,
         };
+        XSTAT_INC(n_surf_upload);
+        XSTAT_ADD(b_surf_upload, upload_stride * (height - 1) + host_row_bytes);
         wgpuQueueWriteTexture(r->queue, &dst, upload_data,
                               upload_stride * (height - 1) + host_row_bytes,
                               &layout, &(WGPUExtent3D){ width, height, 1 });

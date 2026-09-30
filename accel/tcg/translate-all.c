@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 
 #include "trace.h"
 #include "disas/disas.h"
@@ -265,6 +266,7 @@ static int setjmp_gen_code(CPUArchState *env, TranslationBlock *tb,
 /* Called with mmap_lock held for user mode emulation.  */
 TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
 {
+    XSTAT_INC(n_tb_gen);
     CPUArchState *env = cpu_env(cpu);
     TranslationBlock *tb, *existing_tb;
     tb_page_addr_t phys_pc, phys_p2;

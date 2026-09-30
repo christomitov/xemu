@@ -19,6 +19,7 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qemu/xemu-wasm-stats.h"
 #include <math.h>
 
 #include "hw/xbox/nv2a/nv2a_int.h"
@@ -641,6 +642,7 @@ int pgraph_method(NV2AState *d, unsigned int subchannel,
                    uint32_t *parameters, size_t num_words_available,
                    size_t max_lookahead_words, bool inc)
 {
+    XSTAT_INC(n_pgraph_method);
     int num_processed = 1;
 
     PGRAPHState *pg = &d->pgraph;

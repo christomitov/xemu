@@ -20,6 +20,7 @@
 #include "qemu/fast-hash.h"
 #include "qemu/mstring.h"
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 
 #define SHADER_CACHE_SIZE 1024
 #define SHADER_MODULE_CACHE_SIZE (4 * 1024)
@@ -165,6 +166,8 @@ static ShaderModuleInfo *create_shader_module(PGRAPHWgpuState *r,
 
     r->shaders.num_compiled++;
     r->shaders.compile_time_us += t3 - t0;
+    XSTAT_INC(n_shader_gen);
+    XSTAT_ADD(ns_shader_gen, (t3 - t0) * 1000);
     fprintf(stderr,
             "[wgpu] %s #%u: %.1f ms (gen %.1f, glsl->wgsl %.1f, "
             "create %.1f); total %.0f ms%s\n",

@@ -7,6 +7,7 @@
  * trigger of the heap-0 clobber (debug walk racing the live vCPU).
  */
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "hw/core/cpu.h"
 #include "qemu/main-loop.h"
 #include "qemu/timer.h"
@@ -479,6 +480,28 @@ EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_flip_count(void)
 EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_virt_ms(void)
 {
     return virt_ms_now;
+}
+
+XemuWasmStats xemu_wasm_stats;
+
+int64_t xemu_wasm_stats_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+/* page reads the struct directly from the wasm heap */
+EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
+{
+    return &xemu_wasm_stats;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_stats_fields(void)
+{
+#define XEMU_WASM_STATS_NAME(name) #name ","
+    return XEMU_WASM_STATS_FIELDS(XEMU_WASM_STATS_NAME);
+#undef XEMU_WASM_STATS_NAME
 }
 
 /* gui timer */
