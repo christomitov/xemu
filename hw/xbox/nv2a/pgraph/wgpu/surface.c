@@ -401,7 +401,7 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
     {
         extern void xemu_wasm_count(const char *key);
         char key[128];
-        snprintf(key, sizeof(key), "%s %s %ux%u fmt%u",
+        snprintf(key, sizeof(key), "dl:%s %s %ux%u fmt%u",
                  pgraph_wgpu_dl_reason ? pgraph_wgpu_dl_reason : "?",
                  surface->color ? "color" : "zeta", surface->width,
                  surface->height, surface->shape.color_format);
