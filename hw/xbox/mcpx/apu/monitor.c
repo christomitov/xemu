@@ -73,12 +73,22 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
         return;
     }
 
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("monitor pre-stream");
+#endif
     if (d->monitor.stream) {
         float vu = pow(fmax(0.0, fmin(g_config.audio.volume_limit, 1.0)), M_E);
         SDL_SetAudioStreamGain(d->monitor.stream, vu);
         SDL_PutAudioStreamData(d->monitor.stream, d->monitor.frame_buf,
                             sizeof(d->monitor.frame_buf));
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("monitor post-put");
+#endif
     }
 
     memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("monitor post-memset");
+#endif
 }

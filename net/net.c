@@ -1308,7 +1308,9 @@ static int (* const net_client_init_fun[NET_CLIENT_DRIVER__MAX])(
 #ifdef CONFIG_L2TPV3
         [NET_CLIENT_DRIVER_L2TPV3]    = net_init_l2tpv3,
 #endif
+#ifndef XEMU_WASM_NO_SDL
         [NET_CLIENT_DRIVER_PCAP]      = net_init_pcap,
+#endif
 #ifdef CONFIG_VMNET
         [NET_CLIENT_DRIVER_VMNET_HOST] = net_init_vmnet_host,
         [NET_CLIENT_DRIVER_VMNET_SHARED] = net_init_vmnet_shared,

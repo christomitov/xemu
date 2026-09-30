@@ -209,6 +209,11 @@ static void nv2a_vga_gfx_update(void *opaque)
     d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
     d->pcrtc.raster = 0;
 
+#ifdef XEMU_WASM_NO_SDL
+    extern void xemu_wasm_fb_update(NV2AState *d);
+    xemu_wasm_fb_update(d);
+#endif
+
     nv2a_update_irq(d);
 }
 

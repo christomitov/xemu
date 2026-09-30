@@ -374,10 +374,17 @@ void flush_idcache_range(uintptr_t rx, uintptr_t rw, size_t len)
 
 void flush_idcache_range(uintptr_t rx, uintptr_t rw, size_t len)
 {
+#ifdef CONFIG_XEMU_WASM
+    /* wasm has no coherent I-cache; wasm code is not self-modified in place.
+     * The wasm TCG backend never writes executable host code, so this is a
+     * no-op by construction. */
+    (void)rx; (void)rw; (void)len;
+#else
     if (rw != rx) {
         __builtin___clear_cache((char *)rw, (char *)rw + len);
     }
     __builtin___clear_cache((char *)rx, (char *)rx + len);
+#endif
 }
 
 #endif

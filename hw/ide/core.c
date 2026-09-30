@@ -802,6 +802,12 @@ static void ide_sector_read(IDEState *s)
 {
     int64_t sector_num;
     int n;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_sector_read");
+    xemu_wasm_dbg_ring_put("[ide] sector_read\n");
+#endif
 
     s->status = READY_STAT | SEEK_STAT;
     s->error = 0; /* not needed by IDE spec, but needed by Windows */
@@ -887,6 +893,12 @@ int ide_handle_rw_error(IDEState *s, int error, int op)
 static void ide_dma_cb(void *opaque, int ret)
 {
     IDEState *s = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_dma_cb enter");
+    xemu_wasm_dbg_ring_put("[ide] dma_cb ret=%d\n", ret);
+#endif
     int n;
     int64_t sector_num;
     uint64_t offset;
@@ -1286,6 +1298,12 @@ const char *ATA_IOPORT_WR_lookup[ATA_IOPORT_WR_NUM_REGISTERS] = {
 void ide_ioport_write(void *opaque, uint32_t addr, uint32_t val)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_ioport_write");
+    xemu_wasm_dbg_ring_put("[ide] ioport_write addr=%x val=%x\n", addr, val);
+#endif
     IDEState *s = ide_bus_active_if(bus);
     int reg_num = addr & 7;
 
@@ -2415,6 +2433,12 @@ static bool ide_is_pio_out(IDEState *s)
 void ide_data_writew(void *opaque, uint32_t addr, uint32_t val)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_data_writew");
+    xemu_wasm_dbg_ring_put("[ide] data_writew val=%x\n", val);
+#endif
     IDEState *s = ide_bus_active_if(bus);
     uint8_t *p;
 
@@ -2451,6 +2475,12 @@ void ide_data_writew(void *opaque, uint32_t addr, uint32_t val)
 uint32_t ide_data_readw(void *opaque, uint32_t addr)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_data_readw");
+    xemu_wasm_dbg_ring_put("[ide] data_readw\n");
+#endif
     IDEState *s = ide_bus_active_if(bus);
     uint8_t *p;
     int ret;
@@ -2489,6 +2519,12 @@ uint32_t ide_data_readw(void *opaque, uint32_t addr)
 void ide_data_writel(void *opaque, uint32_t addr, uint32_t val)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_data_writel");
+    xemu_wasm_dbg_ring_put("[ide] data_writel val=%x\n", val);
+#endif
     IDEState *s = ide_bus_active_if(bus);
     uint8_t *p;
 
@@ -2517,6 +2553,12 @@ void ide_data_writel(void *opaque, uint32_t addr, uint32_t val)
 uint32_t ide_data_readl(void *opaque, uint32_t addr)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_data_readl");
+    xemu_wasm_dbg_ring_put("[ide] data_readl\n");
+#endif
     IDEState *s = ide_bus_active_if(bus);
     uint8_t *p;
     int ret;
@@ -2752,6 +2794,12 @@ static void ide_restart_dma(IDEState *s, enum ide_dma_cmd dma_cmd)
 static void ide_restart_bh(void *opaque)
 {
     IDEBus *bus = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("ide_restart_bh enter");
+    xemu_wasm_dbg_ring_put("[ide] restart_bh\n");
+#endif
     IDEState *s;
     bool is_read;
     int error_status;

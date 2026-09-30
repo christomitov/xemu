@@ -112,6 +112,12 @@ static void dma_complete(DMAAIOCB *dbs, int ret)
 
 static void dma_blk_cb(void *opaque, int ret)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    xemu_wasm_lowmem_check("dma_blk_cb enter");
+    xemu_wasm_dbg_ring_put("[dma] blk_cb ret=%d\n", ret);
+#endif
     DMAAIOCB *dbs = (DMAAIOCB *)opaque;
     AioContext *ctx = dbs->ctx;
     dma_addr_t cur_addr, cur_len;

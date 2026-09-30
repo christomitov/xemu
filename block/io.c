@@ -974,6 +974,19 @@ static int coroutine_fn GRAPH_RDLOCK
 bdrv_driver_preadv(BlockDriverState *bs, int64_t offset, int64_t bytes,
                    QEMUIOVector *qiov, size_t qiov_offset, int flags)
 {
+#ifdef EMSCRIPTEN
+    if (qiov) {
+        for (int i = 0; i < qiov->niov; i++) {
+            uintptr_t b = (uintptr_t)qiov->iov[i].iov_base;
+            if (b < 1024) {
+                fprintf(stderr, "[blk] bad preadv iov[%d]=%p len=%zu off=%lld\n",
+                        i, (void*)b, (size_t)qiov->iov[i].iov_len, (long long)offset);
+                abort();
+            }
+        }
+    }
+#endif
+
     BlockDriver *drv = bs->drv;
     int64_t sector_num;
     unsigned int nb_sectors;
@@ -1044,6 +1057,19 @@ bdrv_driver_pwritev(BlockDriverState *bs, int64_t offset, int64_t bytes,
                     QEMUIOVector *qiov, size_t qiov_offset,
                     BdrvRequestFlags flags)
 {
+#ifdef EMSCRIPTEN
+    if (qiov) {
+        for (int i = 0; i < qiov->niov; i++) {
+            uintptr_t b = (uintptr_t)qiov->iov[i].iov_base;
+            if (b < 1024) {
+                fprintf(stderr, "[blk] bad pwritev iov[%d]=%p len=%zu off=%lld\n",
+                        i, (void*)b, (size_t)qiov->iov[i].iov_len, (long long)offset);
+                abort();
+            }
+        }
+    }
+#endif
+
     BlockDriver *drv = bs->drv;
     bool emulate_fua = false;
     int64_t sector_num;

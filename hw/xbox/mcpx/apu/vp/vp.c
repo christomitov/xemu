@@ -1278,7 +1278,18 @@ static void get_multipass_samples(MCPXAPUState *d,
     bool clear_mix = voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT,
                                     NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX);
     if (clear_mix) {
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        {
+            static char lbl[64];
+            snprintf(lbl, sizeof(lbl), "mpbin-clear v=%u mp=%d", (unsigned)v, mp_bin);
+            xemu_wasm_lowmem_check(lbl);
+        }
+#endif
         memset(&mixbins[mp_bin][0], 0, sizeof(mixbins[0]));
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("mpbin-clear post");
+#endif
     }
 
     // Dump irrelevant data for audio debug UI to avoid showing stale info
@@ -1595,6 +1606,12 @@ static void *voice_worker_thread(void *arg)
     self->queue_len = 0;
 
     do {
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[voice] iter id=%d q=%d", worker_id, self->queue_len);
+        xemu_wasm_lowmem_check("voice iter");
+#endif
         int64_t start_time = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
         g_dbg.vp.workers[worker_id].num_voices = self->queue_len;
 
@@ -1602,7 +1619,15 @@ static void *voice_worker_thread(void *arg)
             qemu_mutex_unlock(&vwd->lock);
 
             // Process queued voices
+#ifdef EMSCRIPTEN
+            { extern void xemu_wasm_lowmem_check(const char *);
+              xemu_wasm_lowmem_check("worker-mixbins pre"); }
+#endif
             memset(self->mixbins, 0, sizeof(self->mixbins));
+#ifdef EMSCRIPTEN
+            { extern void xemu_wasm_lowmem_check(const char *);
+              xemu_wasm_lowmem_check("worker-mixbins post"); }
+#endif
             if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
                 memset(self->sample_buf, 0, sizeof(self->sample_buf));
             }
@@ -1741,7 +1766,14 @@ voice_work_dispatch(MCPXAPUState *d,
     qemu_mutex_lock(&vwd->lock);
 
     if (vwd->queue_len) {
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        xemu_wasm_lowmem_check("vwd-mixbins pre");
         memset(vwd->mixbins, 0, sizeof(vwd->mixbins));
+        xemu_wasm_lowmem_check("vwd-mixbins post");
+#else
+        memset(vwd->mixbins, 0, sizeof(vwd->mixbins));
+#endif
 
         // Signal workers and wait for completion
         voice_work_schedule(d);
@@ -1768,7 +1800,11 @@ static void voice_work_init(MCPXAPUState *d)
 {
     VoiceWorkDispatch *vwd = &d->vp.voice_work_dispatch;
 
+#ifdef XEMU_WASM_NO_SDL
+    int num_workers = g_config.audio.vp.num_workers ?: 2;
+#else
     int num_workers = g_config.audio.vp.num_workers ?: SDL_GetNumLogicalCPUCores();
+#endif
     vwd->num_workers = MAX(1, MIN(num_workers, MAX_VOICE_WORKERS));
     vwd->workers = g_malloc0_n(vwd->num_workers, sizeof(VoiceWorker));
     vwd->workers_should_exit = false;

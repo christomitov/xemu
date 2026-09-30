@@ -41,11 +41,15 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
         last_known_dsp_pref = g_config.audio.use_dsp;
     }
 
+#ifdef CONFIG_XEMU_WASM
+    /* DSP engine pinned to C backend in wasm builds */
+#else
     if (last_known_jit_pref != (int)g_config.audio.use_dsp_jit) {
         dsp_set_engine(d->gp.dsp, g_config.audio.use_dsp_jit);
         dsp_set_engine(d->ep.dsp, g_config.audio.use_dsp_jit);
         last_known_jit_pref = g_config.audio.use_dsp_jit;
     }
+#endif
 }
 
 static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
@@ -451,6 +455,10 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
         }
     }
 
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("dsp post-mixbin-write");
+#endif
     bool ep_enabled = (d->ep.regs[NV_PAPU_EPRST] & NV_PAPU_GPRST_GPRST) &&
                       (d->ep.regs[NV_PAPU_EPRST] & NV_PAPU_GPRST_GPDSPRST);
 
@@ -462,6 +470,9 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
         dsp_set_cycle_count(d->gp.dsp, 0);
         do {
             dsp_run(d->gp.dsp, 1000);
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("dsp gp-run-batch");
+#endif
         } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime);
         g_dbg.gp.cycles = dsp_get_cycle_count(d->gp.dsp);
 
@@ -487,6 +498,9 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
             dsp_set_cycle_count(d->ep.dsp, 0);
             do {
                 dsp_run(d->ep.dsp, 1000);
+#ifdef EMSCRIPTEN
+                xemu_wasm_lowmem_check("dsp ep-run-batch");
+#endif
             } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime);
             g_dbg.ep.cycles = dsp_get_cycle_count(d->ep.dsp);
         }

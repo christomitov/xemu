@@ -46,6 +46,10 @@ static void update_irq(MCPXAPUState *d)
 static uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
 {
     MCPXAPUState *d = opaque;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_milestone(const char *);
+    xemu_wasm_milestone("apu-reg-access");
+#endif
 
     uint64_t r = 0;
     switch (addr) {
@@ -177,6 +181,7 @@ static void throttle(MCPXAPUState *d)
     int queued_bytes = -1;
 
     if (d->monitor.stream) {
+#ifndef XEMU_WASM_NO_SDL
         queued_bytes = SDL_GetAudioStreamQueued(d->monitor.stream);
         if (queued_bytes >= 0) {
             throttle_record_queue(d, queued_bytes);
@@ -188,6 +193,7 @@ static void throttle(MCPXAPUState *d)
             }
             queued_bytes = SDL_GetAudioStreamQueued(d->monitor.stream);
         }
+#endif
     }
 
     if (queued_bytes < 0 || queued_bytes > d->monitor.queued_bytes_low) {
@@ -244,9 +250,22 @@ static void se_frame(MCPXAPUState *d)
     /* Buffer for all mixbins for this frame */
     float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME] = { 0 };
 
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("frame pre-vp");
+#endif
     mcpx_apu_vp_frame(d, mixbins);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("frame post-vp");
+#endif
     mcpx_apu_dsp_frame(d, mixbins);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("frame post-dsp");
+#endif
     mcpx_apu_monitor_frame(d);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("frame post-monitor");
+#endif
 
     d->ep_frame_div++;
     d->frame_work_acc_us += qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start_us;
@@ -257,13 +276,24 @@ static void se_frame(MCPXAPUState *d)
 static void *mcpx_apu_frame_thread(void *arg)
 {
     MCPXAPUState *d = MCPX_APU_DEVICE(arg);
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+#endif
     qemu_mutex_lock(&d->lock);
     while (!qatomic_read(&d->exiting)) {
+#ifdef EMSCRIPTEN
+        xemu_wasm_dbg_ring_put("[apu] iter");
+        xemu_wasm_lowmem_check("apu iter");
+#endif
         if (d->pause_requested) {
             d->is_idle = true;
             qemu_cond_signal(&d->idle_cond);
             qemu_cond_wait(&d->cond, &d->lock);
             d->is_idle = false;
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("apu post-pause");
+#endif
             continue;
         }
 
@@ -279,7 +309,13 @@ static void *mcpx_apu_frame_thread(void *arg)
         if (d->set_irq) {
             qemu_mutex_unlock(&d->lock);
             bql_lock();
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("apu pre-irq");
+#endif
             update_irq(d);
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("apu post-irq");
+#endif
             bql_unlock();
             qemu_mutex_lock(&d->lock);
             d->set_irq = false;
@@ -292,11 +328,20 @@ static void *mcpx_apu_frame_thread(void *arg)
             (fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) ||
             (fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED)) {
             qemu_cond_timedwait(&d->cond, &d->lock, 5);
+#ifdef EMSCRIPTEN
+            xemu_wasm_lowmem_check("apu post-wait");
+#endif
             continue;
         }
 
         throttle(d);
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("apu post-throttle");
+#endif
         se_frame(d);
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("apu post-frame");
+#endif
     }
     qemu_mutex_unlock(&d->lock);
     return NULL;

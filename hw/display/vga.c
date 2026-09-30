@@ -526,6 +526,12 @@ void vga_ioport_write(void *opaque, uint32_t addr, uint32_t val)
         }
         s->cr[s->cr_index] = val;
         vbe_update_vgaregs(s);
+#ifdef EMSCRIPTEN
+        if (s->cr_index == 0x28 && (val & 3) >= 2) {
+            extern void xemu_wasm_milestone(const char *);
+            xemu_wasm_milestone("video-mode-set");
+        }
+#endif
 
         switch(s->cr_index) {
         case VGA_CRTC_H_TOTAL:

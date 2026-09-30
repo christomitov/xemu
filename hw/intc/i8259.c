@@ -108,7 +108,14 @@ static void pic_update_irq(PICCommonState *s)
     irq = pic_get_irq(s);
     if (irq >= 0) {
         trace_pic_update_irq(s->master, s->imr, s->irr, s->priority_add);
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        xemu_wasm_lowmem_check("pic_update pre-raise");
         qemu_irq_raise(s->int_out[0]);
+        xemu_wasm_lowmem_check("pic_update post-raise");
+#else
+        qemu_irq_raise(s->int_out[0]);
+#endif
     } else {
         qemu_irq_lower(s->int_out[0]);
     }
@@ -120,6 +127,10 @@ static void pic_set_irq(void *opaque, int irq, int level)
     PICCommonState *s = opaque;
     int mask = 1 << irq;
     int irq_index = s->master ? irq : irq + 8;
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("pic_set_irq pre");
+#endif
 
     trace_pic_set_irq(s->master, irq, level);
     pic_stat_update_irq(irq_index, level);

@@ -112,6 +112,14 @@ static inline void pit_load_count(PITChannelState *s, int val)
         val = 0x10000;
     s->count_load_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     s->count = val;
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[pit-load] count=%d mode=%d rw=%d tid=%lu\n",
+                val, s->mode, s->rw_mode,
+                (unsigned long)pthread_self());
+    }
+#endif
     pit_irq_timer_update(s, s->count_load_time);
 }
 
@@ -187,6 +195,14 @@ static void pit_ioport_write(void *opaque, hwaddr addr,
             s->write_state = RW_STATE_WORD1;
             break;
         case RW_STATE_WORD1:
+#ifdef EMSCRIPTEN
+            {
+                extern void xemu_wasm_dbg_ring_put(const char *, ...);
+                xemu_wasm_dbg_ring_put("[pit-word] lsb=%d msb=%d count=%d\n",
+                        (int)s->write_latch, (int)val,
+                        (int)(s->write_latch | (val << 8)));
+            }
+#endif
             pit_load_count(s, s->write_latch | (val << 8));
             s->write_state = RW_STATE_WORD0;
             break;
@@ -265,9 +281,86 @@ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time)
     if (!s->irq_timer || s->irq_disabled) {
         return;
     }
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("pit update pre");
+    xemu_wasm_dbg_ring_put("[pit] s=%p irq_timer=%p irq=%p mode=%d\n", (void*)s, (void*)s->irq_timer, (void*)s->irq, s->mode);
+#endif
     expire_time = pit_get_next_transition_time(s, current_time);
+#ifdef EMSCRIPTEN
+    {
+        /* The virtual clock runs at real-time rate but each timer fire costs
+         * ~1.4ms of real time on wasm. If the chain falls behind (e.g. after
+         * reset, where load_time=0 seeds a 29ms period), each fire advances
+         * the expire by only one period and can never catch up — the main
+         * loop livelocks in the PIT cb. Coalesce: skip whole missed periods
+         * so one fire brings the chain back into the future. */
+        int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        if (expire_time != -1 && expire_time < now_ns) {
+            int64_t ticks = (s->mode == 3) ? (s->count / 2) : s->count;
+            if (ticks > 1) {
+                int64_t period_ns = muldiv64(ticks, NANOSECONDS_PER_SECOND,
+                                             PIT_FREQ);
+                if (period_ns > 0) {
+                    int64_t missed = (now_ns - expire_time) / period_ns + 1;
+                    expire_time += missed * period_ns;
+                }
+            }
+        }
+    }
+#endif
+#ifdef EMSCRIPTEN
+    {
+        /* rate probe: count consecutive fires of this channel; every 256
+         * fires print the virtual clock so the real cost per fire can be
+         * computed from two consecutive prints. */
+        static unsigned pit_fires;
+        static int64_t last_report;
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        if (++pit_fires % 32 == 0) {
+            int64_t nowv = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            struct timespec rts;
+            clock_gettime(CLOCK_REALTIME, &rts);
+            int64_t rtms = rts.tv_sec * 1000LL + rts.tv_nsec / 1000000;
+            (void)rtms;
+            last_report = nowv;
+        }
+    }
+#endif
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("pit after next_transition");
+    {
+        /* one-shot storm dump: if the PIT rearm is absurdly soon (period
+         * under 2ms), the guest or a corrupt write programmed a tiny count
+         * and the timer cb livelocks the main loop. Dump state once. */
+        static int storm_dumped;
+        if (!storm_dumped && expire_time - current_time < 2000000LL &&
+            expire_time > current_time) {
+            storm_dumped = 1;
+            {
+                uint64_t dd = muldiv64(current_time - s->count_load_time, PIT_FREQ,
+                                       NANOSECONDS_PER_SECOND);
+                fprintf(stderr, "[pit] STORM count=%d mode=%d gate=%d "
+                        "load_time=%lld now=%lld expire=%lld delta=%lld "
+                        "d=%llu base=%llu\n",
+                        s->count, s->mode, s->gate,
+                        (long long)s->count_load_time, (long long)current_time,
+                        (long long)expire_time,
+                        (long long)(expire_time - current_time),
+                        (unsigned long long)dd,
+                        (unsigned long long)QEMU_ALIGN_DOWN(dd, s->count));
+            }
+        }
+    }
+#endif
     irq_level = pit_get_out(s, current_time);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("pit after get_out");
+#endif
     qemu_set_irq(s->irq, irq_level);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("pit after set_irq");
+#endif
 #ifdef DEBUG_PIT
     printf("irq_level=%d next_delay=%f\n",
            irq_level,

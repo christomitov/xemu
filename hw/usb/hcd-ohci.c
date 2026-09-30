@@ -268,6 +268,12 @@ static inline void ohci_intr_update(OHCIState *ohci)
         level = 1;
 
     qemu_set_irq(ohci->irq, level);
+#ifdef EMSCRIPTEN
+    if (level) {
+        extern void xemu_wasm_milestone(const char *);
+        xemu_wasm_milestone("usb-irq");
+    }
+#endif
 }
 
 /* Set an interrupt */
@@ -1212,8 +1218,13 @@ static void ohci_process_lists(OHCIState *ohci)
 }
 
 /* Do frame processing on frame boundary */
-static void ohci_frame_boundary(void *opaque)
-{
+#ifdef EMSCRIPTEN
+void xemu_wasm_lowmem_check(const char *where);
+#endif
+static void ohci_frame_boundary(void *opaque) {
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("ohci frame enter");
+#endif
     OHCIState *ohci = opaque;
     struct ohci_hcca hcca;
 
@@ -1275,6 +1286,9 @@ static void ohci_frame_boundary(void *opaque)
     if (ohci_put_hcca(ohci, ohci->hcca, &hcca)) {
         ohci_die(ohci);
     }
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("ohci frame exit");
+#endif
 }
 
 /*

@@ -55,8 +55,10 @@ static inline int os_set_daemonize(bool d)
 {
     return -1;
 };
-bool is_daemonized(void);
 static inline void os_daemonize(void) {}
+static inline bool os_set_runas(const char *user_id) { return false; }
+static inline void os_set_chroot(const char *path) {}
+bool is_daemonized(void);
 
 /**
  * qemu_alloc_stack:
@@ -84,6 +86,14 @@ void *qemu_alloc_stack(size_t *sz);
  * be exactly the adjusted stack size returned by qemu_alloc_stack.
  */
 void qemu_free_stack(void *stack, size_t sz);
+
+/* wasm instrumentation (ui/xemu-wasm.c) */
+extern void xemu_wasm_lowmem_check(const char *where);
+extern void xemu_wasm_dbg_ring_put(const char *fmt, ...);
+extern void xemu_wasm_dbg_ring_dump(void);
+extern void xemu_wasm_dbg_ring_snapshot(const char *path);
+extern void xemu_wasm_milestone(const char *name);
+extern unsigned long xemu_wasm_tripwire_seq(void);
 
 /* POSIX and Mingw32 differ in the name of the stdio lock functions.  */
 

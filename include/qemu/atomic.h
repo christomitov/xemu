@@ -62,7 +62,12 @@
  * want to use them because we ought not need them, and this lets us do a
  * bit of sanity checking that other 32-bit hosts might build.
  */
+#if defined(__wasm32__) || defined(__EMSCRIPTEN__)
+/* wasm has native 64-bit atomics even on a 32-bit pointer model */
+#define ATOMIC_REG_SIZE  8
+#else
 #define ATOMIC_REG_SIZE  sizeof(void *)
+#endif
 
 /* Weak atomic operations prevent the compiler moving other
  * loads/stores past the atomic operation load/store. However there is

@@ -1325,3 +1325,15 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 {
     g_assert_not_reached();
 }
+
+/* QEMU 10.2 converted all integer opcodes to the TCGOutOp table dispatch and
+ * removed tcg_out_op from the other backends, but tcg_reg_alloc_op() in
+ * tcg.c still references it. The register allocator is never reached under
+ * the TCI interpreter (tci.c executes TBs directly), so this exists only to
+ * satisfy the linker; reaching it is a bug. */
+static void tcg_out_op(TCGContext *s, TCGOpcode opc, TCGType type,
+                       const TCGArg args[TCG_MAX_OP_ARGS],
+                       const int const_args[TCG_MAX_OP_ARGS])
+{
+    g_assert_not_reached();
+}

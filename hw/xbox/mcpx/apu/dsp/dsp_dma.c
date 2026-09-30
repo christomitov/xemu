@@ -209,11 +209,18 @@ static void dsp_dma_run(DSPDMAState *s)
         size_t transfer_size = count * item_size;
 
         // FIXME: Remove this intermediate buffer
+        /* size_t, not ssize_t: on 32-bit (wasm32) ssize_t(-1) compared with
+         * an unsigned product converts to UINT_MAX, the buffer is never
+         * allocated, and DMA memcpy()s land at address 0. */
         static uint8_t *scratch_buf = NULL;
-        static ssize_t scratch_buf_size = -1;
-        if (count * item_size > scratch_buf_size) {
-            scratch_buf_size = count * item_size;
-            scratch_buf = malloc(scratch_buf_size);
+        static size_t scratch_buf_size = 0;
+        size_t needed = MAX((size_t)count * item_size, transfer_size);
+        if (dsp_interleave) {
+            needed = MAX(needed, (size_t)block_count * item_size * channel_count);
+        }
+        if (scratch_buf == NULL || needed > scratch_buf_size) {
+            scratch_buf = g_realloc(scratch_buf, needed ? needed : 1);
+            scratch_buf_size = needed;
         }
 
         if (direction) {

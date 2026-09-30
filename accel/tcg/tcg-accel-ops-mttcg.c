@@ -63,6 +63,15 @@ static void mttcg_force_rcu(Notifier *notify, void *data)
 
 static void *mttcg_cpu_thread_fn(void *arg)
 {
+#ifdef EMSCRIPTEN
+    { extern void xemu_wasm_assert_stack(unsigned long, const char *);
+      xemu_wasm_assert_stack(8*1024*1024 - 1024*1024, "vcpu mttcg"); }
+#endif
+#ifdef EMSCRIPTEN
+    extern unsigned long xemu_wasm_stack_size(void);
+    fprintf(stderr, "[stack] vcpu thread stack=%lu tid=%lu\n",
+            xemu_wasm_stack_size(), (unsigned long)pthread_self());
+#endif
     MttcgForceRcuNotifier force_rcu;
     CPUState *cpu = arg;
 

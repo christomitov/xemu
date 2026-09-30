@@ -847,7 +847,14 @@ static void audio_timer (void *opaque)
     }
     s->timer_last = now;
 
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("audio pre-run");
+#endif
     audio_run(s, "timer");
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("audio post-run");
+#endif
     audio_reset_timer(s);
 }
 
@@ -1160,8 +1167,17 @@ static void audio_run_out(AudioBackend *s)
             }
 
             if (sw->active) {
+#ifdef EMSCRIPTEN
+                extern void xemu_wasm_lowmem_check(const char *);
+                xemu_wasm_lowmem_check("pre voice cb");
+                xemu_wasm_dbg_ring_put("[audio] voice cb=%p free=%zu\n",
+                        (void*)(uintptr_t)sw->callback.fn, hw_free * sw->info.bytes_per_frame);
+#endif
                 sw->callback.fn(sw->callback.opaque,
                                 hw_free * sw->info.bytes_per_frame);
+#ifdef EMSCRIPTEN
+                xemu_wasm_lowmem_check("post voice cb");
+#endif
             }
 
             if (hw->pcm_ops->run_buffer_out) {

@@ -24,6 +24,9 @@
 
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
+#ifdef EMSCRIPTEN
+extern void xemu_wasm_lowmem_check(const char *);
+#endif
 #include "qemu/timer.h"
 #include "qemu/lockable.h"
 #include "system/cpu-timers.h"
@@ -236,6 +239,14 @@ int64_t timerlist_deadline_ns(QEMUTimerList *timer_list)
 
     delta = expire_time - qemu_clock_get_ns(timer_list->clock->type);
 
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        xemu_wasm_dbg_ring_put("[dl] list=%p type=%d exp=%lld delta=%lld\n",
+                (void*)(uintptr_t)timer_list, (int)timer_list->clock->type,
+                (long long)expire_time, (long long)delta);
+    }
+#endif
     if (delta <= 0) {
         return 0;
     }
@@ -325,6 +336,14 @@ int qemu_timeout_ns_to_ms(int64_t ns)
  */
 int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    extern void xemu_wasm_dbg_ring_put(const char *, ...);
+    extern void xemu_wasm_dbg_ring_snapshot(const char *);
+    xemu_wasm_dbg_ring_put("[poll] enter t=%lld n=%d\n", (long long)timeout, nfds);
+    xemu_wasm_lowmem_check("poll enter");
+    xemu_wasm_dbg_ring_snapshot("/xemu/ring-snap.txt");
+#endif
 #ifdef CONFIG_PPOLL
     if (timeout < 0) {
         return ppoll((struct pollfd *)fds, nfds, NULL, NULL);
@@ -339,7 +358,13 @@ int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
         }
         ts.tv_sec = tvsec;
         ts.tv_nsec = timeout % 1000000000LL;
-        return ppoll((struct pollfd *)fds, nfds, &ts, NULL);
+        int r = ppoll((struct pollfd *)fds, nfds, &ts, NULL);
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("poll exit");
+        xemu_wasm_dbg_ring_put("[poll] exit r=%d\n", r);
+        xemu_wasm_dbg_ring_snapshot("/xemu/ring-snap.txt");
+#endif
+        return r;
     }
 #else
 
@@ -368,6 +393,9 @@ void timer_init_full(QEMUTimer *ts,
                      int scale, int attributes,
                      QEMUTimerCB *cb, void *opaque)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_init_full: ts=%p\n", (void*)ts); abort(); }
+#endif
     if (!timer_list_group) {
         timer_list_group = &main_loop_tlg;
     }
@@ -406,6 +434,10 @@ static void timer_del_locked(QEMUTimerList *timer_list, QEMUTimer *ts)
 static bool timer_mod_ns_locked(QEMUTimerList *timer_list,
                                 QEMUTimer *ts, int64_t expire_time)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)timer_list < 4096) { fprintf(stderr, "[timer-assert] timer_mod_ns_locked: timer_list=%p\n", (void*)timer_list); abort(); }
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_mod_ns_locked: ts=%p\n", (void*)ts); abort(); }
+#endif
     QEMUTimer **pt, *t;
 
     /* add the timer in the sorted list */
@@ -417,9 +449,21 @@ static bool timer_mod_ns_locked(QEMUTimerList *timer_list,
         }
         pt = &t->next;
     }
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("tmr before field writes");
+#endif
     ts->expire_time = MAX(expire_time, 0);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("tmr after expire write");
+#endif
     ts->next = *pt;
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("tmr after next write");
+#endif
     qatomic_set(pt, ts);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("tmr after set");
+#endif
 
     return pt == &timer_list->active_timers;
 }
@@ -432,6 +476,13 @@ static void timerlist_rearm(QEMUTimerList *timer_list)
 /* stop a timer, but do not dealloc it */
 void timer_del(QEMUTimer *ts)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_del: ts=%p\n", (void*)ts); abort(); }
+#endif
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("timer_del enter");
+#endif
     QEMUTimerList *timer_list = ts->timer_list;
 
     if (timer_list) {
@@ -445,17 +496,39 @@ void timer_del(QEMUTimer *ts)
    >= expire_time. The corresponding callback will be called. */
 void timer_mod_ns(QEMUTimer *ts, int64_t expire_time)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_mod_ns: ts=%p\n", (void*)ts); abort(); }
+#endif
     QEMUTimerList *timer_list = ts->timer_list;
     bool rearm;
 
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("timer_mod_ns enter");
+#endif
     qemu_mutex_lock(&timer_list->active_timers_lock);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("timer_mod after lock");
+#endif
     timer_del_locked(timer_list, ts);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("timer_mod after del");
+#endif
     rearm = timer_mod_ns_locked(timer_list, ts, expire_time);
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("timer_mod after mod_locked");
+    xemu_wasm_dbg_ring_put("[mod] list=%p exp=%lld rearm=%d ts=%p\n",
+            (void*)(uintptr_t)timer_list, (long long)expire_time,
+            (int)rearm, (void*)(uintptr_t)ts);
+#endif
     qemu_mutex_unlock(&timer_list->active_timers_lock);
 
     if (rearm) {
         timerlist_rearm(timer_list);
     }
+#ifdef EMSCRIPTEN
+    xemu_wasm_lowmem_check("timer_mod exit");
+#endif
 }
 
 /* modify the current timer so that it will be fired when current_time
@@ -463,6 +536,9 @@ void timer_mod_ns(QEMUTimer *ts, int64_t expire_time)
    The corresponding callback will be called. */
 void timer_mod_anticipate_ns(QEMUTimer *ts, int64_t expire_time)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_mod_anticipate_ns: ts=%p\n", (void*)ts); abort(); }
+#endif
     QEMUTimerList *timer_list = ts->timer_list;
     bool rearm = false;
 
@@ -483,16 +559,25 @@ void timer_mod_anticipate_ns(QEMUTimer *ts, int64_t expire_time)
 
 void timer_mod(QEMUTimer *ts, int64_t expire_time)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_mod: ts=%p\n", (void*)ts); abort(); }
+#endif
     timer_mod_ns(ts, expire_time * ts->scale);
 }
 
 void timer_mod_anticipate(QEMUTimer *ts, int64_t expire_time)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_mod_anticipate: ts=%p\n", (void*)ts); abort(); }
+#endif
     timer_mod_anticipate_ns(ts, expire_time * ts->scale);
 }
 
 bool timer_pending(const QEMUTimer *ts)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_pending: ts=%p\n", (void*)ts); abort(); }
+#endif
     return ts->expire_time >= 0;
 }
 
@@ -503,6 +588,23 @@ bool timer_expired(const QEMUTimer *timer_head, int64_t current_time)
 
 bool timerlist_run_timers(QEMUTimerList *timer_list)
 {
+#ifdef EMSCRIPTEN
+    extern void xemu_wasm_lowmem_check(const char *);
+    xemu_wasm_lowmem_check("before timers");
+    xemu_wasm_dbg_ring_put("[tmr2] list=%p active=%d\n",
+            (void*)(uintptr_t)timer_list,
+            qatomic_read(&timer_list->active_timers) ? 1 : 0);
+    {
+        /* name the head timer: cb pointer + expire, so a poisoned list
+         * identifies its owner immediately */
+        QEMUTimer *hd = timer_list->active_timers;
+        if (hd) {
+            xemu_wasm_dbg_ring_put("[tmr2] head cb=%p exp=%lld\n",
+                    (void*)(uintptr_t)hd->cb,
+                    (long long)hd->expire_time);
+        }
+    }
+#endif
     QEMUTimer *ts;
     int64_t current_time;
     bool progress = false;
@@ -512,6 +614,17 @@ bool timerlist_run_timers(QEMUTimerList *timer_list)
     if (!qatomic_read(&timer_list->active_timers)) {
         return false;
     }
+#ifdef EMSCRIPTEN
+    {
+        extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        int64_t nowq = qemu_clock_get_ns(timer_list->clock->type);
+        xemu_wasm_dbg_ring_put("[tmr] run list=%p now=%lld first_exp=%lld en=%d\n",
+                (void*)(uintptr_t)timer_list, (long long)nowq,
+                (long long)(timer_list->active_timers ?
+                            timer_list->active_timers->expire_time : -1),
+                timer_list->clock->enabled);
+    }
+#endif
 
     qemu_event_reset(&timer_list->timers_done_ev);
     if (!timer_list->clock->enabled) {
@@ -576,7 +689,15 @@ bool timerlist_run_timers(QEMUTimerList *timer_list)
 
         /* run the callback (the timer list can be modified) */
         qemu_mutex_unlock(&timer_list->active_timers_lock);
+#ifdef EMSCRIPTEN
+        extern void xemu_wasm_lowmem_check(const char *);
+        xemu_wasm_lowmem_check("pre timer cb");
+        xemu_wasm_dbg_ring_put("[timercb] %p\n", (void*)(uintptr_t)cb);
+#endif
         cb(opaque);
+#ifdef EMSCRIPTEN
+        xemu_wasm_lowmem_check("post timer cb");
+#endif
         qemu_mutex_lock(&timer_list->active_timers_lock);
 
         progress = true;
@@ -667,6 +788,9 @@ void qemu_init_clocks(QEMUTimerListNotifyCB *notify_cb)
 
 uint64_t timer_expire_time_ns(const QEMUTimer *ts)
 {
+#ifdef EMSCRIPTEN
+    if ((uintptr_t)ts < 4096) { fprintf(stderr, "[timer-assert] timer_expire_time_ns: ts=%p\n", (void*)ts); abort(); }
+#endif
     return timer_pending(ts) ? ts->expire_time : -1;
 }
 
