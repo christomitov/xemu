@@ -46,6 +46,12 @@
     X(b_surf_download)                                                       \
     X(n_present)                                                             \
     X(ns_present)        /* display render + yield to the browser */         \
+    /* disk (host file layer, thread-pool workers) */                        \
+    X(n_disk_read)                                                           \
+    X(b_disk_read)                                                           \
+    X(n_disk_write)                                                          \
+    X(b_disk_write)                                                          \
+    X(ns_disk_io)        /* summed across worker threads */                  \
     /* audio */                                                              \
     X(n_apu_frame)       /* MCPX APU frames */                               \
     /* guest-visible */                                                      \

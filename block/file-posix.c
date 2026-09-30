@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "qemu/error-report.h"
@@ -1919,6 +1920,7 @@ static int handle_aiocb_rw(void *opaque)
     RawPosixAIOData *aiocb = opaque;
     ssize_t nbytes;
     char *buf;
+    XSTAT_T0();
 
     if (!(aiocb->aio_type & QEMU_AIO_MISALIGNED)) {
         /*
@@ -1993,6 +1995,16 @@ static int handle_aiocb_rw(void *opaque)
     qemu_vfree(buf);
 
 out:
+    /* disk I/O as seen by the page's Stats report (MEMFS reads/writes are
+     * proxied to the browser main thread under emscripten) */
+    if (aiocb->aio_type & QEMU_AIO_WRITE) {
+        XSTAT_INC(n_disk_write);
+        XSTAT_ADD(b_disk_write, nbytes > 0 ? nbytes : 0);
+    } else {
+        XSTAT_INC(n_disk_read);
+        XSTAT_ADD(b_disk_read, nbytes > 0 ? nbytes : 0);
+    }
+    XSTAT_T1(ns_disk_io);
     if (nbytes == aiocb->aio_nbytes) {
         return 0;
     } else if (nbytes >= 0 && nbytes < aiocb->aio_nbytes) {
