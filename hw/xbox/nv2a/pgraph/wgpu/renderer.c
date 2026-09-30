@@ -347,7 +347,6 @@ static void pgraph_wgpu_flip_stall(NV2AState *d)
 {
     extern volatile uint32_t xemu_wasm_flip_count;
     xemu_wasm_flip_count++;
-    XSTAT_INC(n_flip);
     pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_FLIP_STALL);
 }
 

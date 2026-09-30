@@ -62,6 +62,7 @@ void pgraph_wgpu_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
         return;
     }
 
+    pgraph_wgpu_dl_reason = "vertex-buffer";
     pgraph_wgpu_download_surfaces_in_range_if_dirty(pg, offset, size);
 
     size_t start_bit = offset / TARGET_PAGE_SIZE;

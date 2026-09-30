@@ -189,6 +189,11 @@ void pgraph_wgpu_surface_update(NV2AState *d, bool upload, bool color_write,
                                 bool zeta_write);
 void pgraph_wgpu_process_pending_downloads(NV2AState *d);
 void pgraph_wgpu_download_dirty_surfaces(NV2AState *d);
+/*
+ * Why the next surface download happens (static or g_intern_string()'d);
+ * set by callers on the pfifo thread, counted per reason for the Stats report.
+ */
+extern const char *pgraph_wgpu_dl_reason;
 void pgraph_wgpu_surface_download_if_dirty(NV2AState *d,
                                            SurfaceBinding *surface);
 void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
