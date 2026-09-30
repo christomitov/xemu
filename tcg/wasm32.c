@@ -59,11 +59,17 @@ static void jit_budget_update(double now)
 }
 static int wasm32_jit_debug;
 
-/* For debuggers/test harnesses: the TB the dispatcher last entered. */
+/*
+ * For the page's hot-code sampler / test harnesses: the TB being run. That
+ * is the vCPU thread's wasm_ctx.tb_ptr (region modules update it on every
+ * in-region transition); wasm_ctx is thread-local, so its address is
+ * published once from the vCPU thread. Before that: the dispatcher's view.
+ */
 void *volatile wasm32_cur_tb;
+static void *volatile *wasm32_vcpu_tb_ptr;
 EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
 {
-    return &wasm32_cur_tb;
+    return wasm32_vcpu_tb_ptr ? wasm32_vcpu_tb_ptr : &wasm32_cur_tb;
 }
 
 __thread WasmContext wasm_ctx;
@@ -325,6 +331,7 @@ static void wasm32_init(void)
         wasm32_jit_debug = atoi(env);
     }
     exec_thread = pthread_self();
+    wasm32_vcpu_tb_ptr = (void *volatile *)&wasm_ctx.tb_ptr;
     wasm_ctx.stack = g_malloc0(TCG_STATIC_CALL_ARGS_SIZE +
                                TCG_STATIC_FRAME_SIZE);
     wasm_ctx.tci_tb_ptr = &tci_tb_ptr;
@@ -393,6 +400,373 @@ static int compile_tb(WasmTBHeader *h, int depth)
     jit_budget_update(t1);
     XSTAT_INC(n_jit_compile);
     XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
+    if (!h->icount) {
+        TranslationBlock *tb = tcg_tb_lookup((uintptr_t)h);
+        h->icount = tb ? tb->icount : 0;
+    }
+    add_instance(h, fidx);
+    return fidx;
+}
+
+/*
+ * Region modules (on by default; XEMU_WASM_REGION=0 disables): a hot TB and its hot, currently
+ * chained successors are merged into one wasm function. Each member keeps
+ * its own body unchanged (prologue with the gen_tb_start interrupt check,
+ * TCI GETPC positions, exits); a br_table loop selects the member to run,
+ * and at every goto_tb/goto_ptr exit whose successor header is a member,
+ * the exit branches to that member instead of returning to this dispatcher.
+ * Entry is only through the entry TB's (freshly initialised) header; the
+ * guards compare runtime successor headers, so unlinked/invalidated
+ * successors fall through to the normal exit. tb_flush cannot happen while
+ * a region runs or is Asyncify-suspended (single vCPU thread).
+ */
+#define REGION_MAX          8
+#define REGION_MAX_BYTES    (64 * 1024) /* member bodies, total */
+#define REGION_NUM_GLOBALS  17      /* TCG regs + BLOCK_PTR (backend) */
+#define REGION_HELPER_START 4       /* HELPER_IDX_START (backend) */
+#define REGION_CUR_LOCAL    25      /* after the TB locals (backend) */
+#define REGION_L32_0        1
+
+static int region_enabled = -1;
+
+typedef struct ByteBuf {
+    uint8_t *p;
+    size_t len, cap;
+} ByteBuf;
+
+static void bb_need(ByteBuf *b, size_t n)
+{
+    if (b->len + n > b->cap) {
+        b->cap = MAX(b->cap * 2, b->len + n + 4096);
+        b->p = g_realloc(b->p, b->cap);
+    }
+}
+static void bb_u8(ByteBuf *b, uint8_t v)
+{
+    bb_need(b, 1);
+    b->p[b->len++] = v;
+}
+static void bb_bytes(ByteBuf *b, const void *src, size_t n)
+{
+    bb_need(b, n);
+    memcpy(b->p + b->len, src, n);
+    b->len += n;
+}
+static void bb_uleb(ByteBuf *b, uint32_t v)
+{
+    do {
+        uint8_t c = v & 0x7f;
+        v >>= 7;
+        bb_u8(b, c | (v ? 0x80 : 0));
+    } while (v);
+}
+static void bb_sleb(ByteBuf *b, int32_t v)
+{
+    bool more = true;
+    while (more) {
+        uint8_t c = v & 0x7f;
+        v >>= 7;
+        if ((v == 0 && !(c & 0x40)) || (v == -1 && (c & 0x40))) {
+            more = false;
+        } else {
+            c |= 0x80;
+        }
+        bb_u8(b, c);
+    }
+}
+static void bb_name(ByteBuf *b, const char *s)
+{
+    bb_uleb(b, strlen(s));
+    bb_bytes(b, s, strlen(s));
+}
+static void bb_section(ByteBuf *b, uint8_t id, ByteBuf *content)
+{
+    bb_u8(b, id);
+    bb_uleb(b, content->len);
+    bb_bytes(b, content->p, content->len);
+    content->len = 0;
+}
+
+static uint32_t rd_uleb(const uint8_t **pp)
+{
+    uint32_t v = 0;
+    int sh = 0;
+    uint8_t c;
+    do {
+        c = *(*pp)++;
+        v |= (uint32_t)(c & 0x7f) << sh;
+        sh += 7;
+    } while (c & 0x80);
+    return v;
+}
+
+/*
+ * Type entries of a TB module's helpers (types 3..): pointers into the
+ * module bytes and their lengths.
+ */
+static int tb_helper_types(WasmTBHeader *h, const uint8_t **ty, int *tylen,
+                           int max)
+{
+    const uint8_t *p = h->wasm_ptr + 8, *end = h->wasm_ptr + h->wasm_size;
+
+    while (p < end) {
+        uint8_t id = *p++;
+        uint32_t size = rd_uleb(&p);
+        const uint8_t *next = p + size;
+        if (id == 1) {
+            uint32_t n = rd_uleb(&p);
+            int k = 0;
+            for (uint32_t i = 0; i < n; i++) {
+                const uint8_t *start = p;
+                uint32_t cnt;
+                p++;                            /* 0x60 */
+                cnt = rd_uleb(&p);              /* params */
+                p += cnt;
+                cnt = rd_uleb(&p);              /* results */
+                p += cnt;
+                if (i >= 3 && k < max) {
+                    ty[k] = start;
+                    tylen[k] = p - start;
+                    k++;
+                }
+            }
+            return k;
+        }
+        p = next;
+    }
+    return 0;
+}
+
+static WasmTBHeader *tb_link_target(TranslationBlock *tb, int n)
+{
+    if (tb && tb->jmp_reset_offset[n] != TB_JMP_OFFSET_INVALID) {
+        uintptr_t tgt = qatomic_read(&tb->jmp_target_addr[n]);
+        uintptr_t reset = (uintptr_t)tb->tc.ptr + tb->jmp_reset_offset[n];
+        if (tgt && tgt != reset) {
+            return (WasmTBHeader *)tgt;
+        }
+    }
+    return NULL;
+}
+
+static bool region_member_ok(WasmTBHeader *c)
+{
+    return c->wasm_ptr && c->body_len && c->reloc_ptr &&
+           c->counter != INT32_MIN &&
+           (c->counter >= wasm32_jit_threshold / 4 || c->instance);
+}
+
+/* i32.const addr; i64.load; +1; i64.store (a stats counter) */
+static void bb_count(ByteBuf *b, uint64_t *ctr)
+{
+    int32_t a = (int32_t)(uintptr_t)ctr;
+    bb_u8(b, 0x41); bb_sleb(b, a);
+    bb_u8(b, 0x41); bb_sleb(b, a);
+    bb_u8(b, 0x29); bb_u8(b, 3); bb_u8(b, 0);       /* i64.load */
+    bb_u8(b, 0x42); bb_u8(b, 1);                    /* i64.const 1 */
+    bb_u8(b, 0x7c);                                 /* i64.add */
+    bb_u8(b, 0x37); bb_u8(b, 3); bb_u8(b, 0);       /* i64.store */
+}
+
+/* if (L32_0 == hdr[t]) { ctx.tb_ptr = hdr; ctx.do_init = 1; cur = t; br top } */
+static void region_guard(ByteBuf *b, WasmTBHeader *t_hdr, int t, int br_depth)
+{
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);       /* local.get L32_0 */
+    bb_u8(b, 0x41); bb_sleb(b, (int32_t)(uintptr_t)t_hdr);
+    bb_u8(b, 0x46);                                 /* i32.eq */
+    bb_u8(b, 0x04); bb_u8(b, 0x40);                 /* if */
+    bb_u8(b, 0x20); bb_uleb(b, 0);                  /* ctx */
+    bb_u8(b, 0x41); bb_sleb(b, (int32_t)(uintptr_t)t_hdr);
+    bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_TB_PTR_OFF);
+    bb_u8(b, 0x20); bb_uleb(b, 0);
+    bb_u8(b, 0x41); bb_sleb(b, 1);
+    bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_DO_INIT_OFF);
+    bb_count(b, &xemu_wasm_stats.n_tb_exec);
+    bb_count(b, &xemu_wasm_stats.n_tb_region);
+    bb_u8(b, 0x41); bb_sleb(b, t);
+    bb_u8(b, 0x21); bb_uleb(b, REGION_CUR_LOCAL);   /* local.set cur */
+    bb_u8(b, 0x0c); bb_uleb(b, br_depth + 1);       /* br top (+ this if) */
+    bb_u8(b, 0x0b);
+}
+
+/* Compile @h as a region with its hot chained successors; 0 if not worth it. */
+static int compile_region(WasmTBHeader *h)
+{
+    WasmTBHeader *m[REGION_MAX];
+    int n = 0;
+    uint32_t hq[256];                   /* union of helpers (table indices) */
+    const uint8_t *hty[256];
+    int htylen[256];
+    int nh = 0;
+    ByteBuf mod = { 0 }, sec = { 0 }, code = { 0 };
+    int fidx;
+
+    double t_start = emscripten_get_now();
+    uint32_t bytes = h->body_len;
+
+    m[n++] = h;
+    for (int i = 0; i < n && n < REGION_MAX; i++) {
+        TranslationBlock *tb = tcg_tb_lookup((uintptr_t)m[i]);
+        for (int s = 0; s < 2 && n < REGION_MAX; s++) {
+            WasmTBHeader *c = tb_link_target(tb, s);
+            bool dup = false;
+            for (int j = 0; j < n; j++) {
+                dup |= m[j] == c;
+            }
+            if (c && !dup && region_member_ok(c) &&
+                bytes + c->body_len <= REGION_MAX_BYTES) {
+                m[n++] = c;
+                bytes += c->body_len;
+            }
+        }
+    }
+    if (n < 2 || !region_member_ok(h)) {
+        return 0;
+    }
+
+    /* per member: its helper k -> union index */
+    uint8_t map[REGION_MAX][256];
+    for (int i = 0; i < n; i++) {
+        const uint8_t *ty[256];
+        int tylen[256];
+        int cnt = m[i]->import_size / 4;
+        if (cnt > 256 || tb_helper_types(m[i], ty, tylen, 256) != cnt) {
+            return 0;
+        }
+        for (int k = 0; k < cnt; k++) {
+            uint32_t q = m[i]->import_ptr[k];
+            int u;
+            for (u = 0; u < nh && hq[u] != q; u++) {
+            }
+            if (u == nh) {
+                if (nh == 255) {
+                    return 0;
+                }
+                hq[nh] = q;
+                hty[nh] = ty[k];
+                htylen[nh] = tylen[k];
+                nh++;
+            }
+            map[i][k] = u;
+        }
+    }
+
+    bb_bytes(&mod, "\0asm\x01\0\0\0", 8);
+    /* types: TB function, helper.u, chain.call, helpers */
+    bb_uleb(&sec, 3 + nh);
+    bb_bytes(&sec, "\x60\x01\x7f\x01\x7f", 5);
+    bb_bytes(&sec, "\x60\x00\x01\x7f", 4);
+    bb_bytes(&sec, "\x60\x02\x7f\x7f\x01\x7f", 6);
+    for (int u = 0; u < nh; u++) {
+        bb_bytes(&sec, hty[u], htylen[u]);
+    }
+    bb_section(&mod, 1, &sec);
+    /* imports: same layout as a TB module */
+    bb_uleb(&sec, 5 + nh);
+    bb_name(&sec, "env"); bb_name(&sec, "buffer");
+    bb_u8(&sec, 0x02); bb_u8(&sec, 0x03); bb_uleb(&sec, 0); bb_uleb(&sec, 65536);
+    bb_name(&sec, "helper"); bb_name(&sec, "u"); bb_u8(&sec, 0); bb_uleb(&sec, 1);
+    bb_name(&sec, "chain"); bb_name(&sec, "s0"); bb_u8(&sec, 0); bb_uleb(&sec, 0);
+    bb_name(&sec, "chain"); bb_name(&sec, "s1"); bb_u8(&sec, 0); bb_uleb(&sec, 0);
+    bb_name(&sec, "chain"); bb_name(&sec, "call"); bb_u8(&sec, 0); bb_uleb(&sec, 2);
+    for (int u = 0; u < nh; u++) {
+        char name[16];
+        snprintf(name, sizeof(name), "%d", u);
+        bb_name(&sec, "helper"); bb_name(&sec, name);
+        bb_u8(&sec, 0); bb_uleb(&sec, 3 + u);
+    }
+    bb_section(&mod, 2, &sec);
+    bb_uleb(&sec, 1); bb_uleb(&sec, 0);
+    bb_section(&mod, 3, &sec);
+    bb_uleb(&sec, REGION_NUM_GLOBALS);
+    for (int i = 0; i < REGION_NUM_GLOBALS; i++) {
+        bb_bytes(&sec, "\x7e\x01\x42\x00\x0b", 5);
+    }
+    bb_section(&mod, 6, &sec);
+    bb_uleb(&sec, 1); bb_name(&sec, "start"); bb_u8(&sec, 0);
+    bb_uleb(&sec, REGION_HELPER_START + nh);
+    bb_section(&mod, 7, &sec);
+
+    /* the function: TB locals + cur */
+    bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e\x01\x7f", 11);
+    for (int j = 1; j < n; j++) {         /* resume/entry at member j */
+        bb_u8(&code, 0x20); bb_uleb(&code, 0);
+        bb_u8(&code, 0x28); bb_u8(&code, 2); bb_uleb(&code, WASM_CTX_TB_PTR_OFF);
+        bb_u8(&code, 0x41); bb_sleb(&code, (int32_t)(uintptr_t)m[j]);
+        bb_u8(&code, 0x46);
+        bb_u8(&code, 0x04); bb_u8(&code, 0x40);
+        bb_u8(&code, 0x41); bb_sleb(&code, j);
+        bb_u8(&code, 0x21); bb_uleb(&code, REGION_CUR_LOCAL);
+        bb_u8(&code, 0x0b);
+    }
+    bb_u8(&code, 0x03); bb_u8(&code, 0x40);         /* loop top */
+    for (int j = 0; j < n; j++) {
+        bb_u8(&code, 0x02); bb_u8(&code, 0x40);     /* block */
+    }
+    bb_u8(&code, 0x20); bb_uleb(&code, REGION_CUR_LOCAL);
+    bb_u8(&code, 0x0e); bb_uleb(&code, n);          /* br_table */
+    for (int j = 0; j < n; j++) {
+        bb_uleb(&code, j);
+    }
+    bb_uleb(&code, 0);
+    for (int i = 0; i < n; i++) {
+        const uint8_t *body = m[i]->wasm_ptr + m[i]->body_off;
+        uint32_t pos = 0;
+        TranslationBlock *tb = tcg_tb_lookup((uintptr_t)m[i]);
+        int top = n - 1 - i;        /* blocks between the body and top */
+
+        bb_u8(&code, 0x0b);                         /* end block i */
+        for (uint32_t r = 0; r < m[i]->reloc_count; r++) {
+            const WasmReloc *rl = &m[i]->reloc_ptr[r];
+            bb_bytes(&code, body + pos, rl->off - pos);
+            pos = rl->off;
+            if (rl->kind == WASM_RELOC_CALL) {
+                uint32_t idx = REGION_HELPER_START + map[i][rl->arg];
+                for (int k = 0; k < 5; k++) {
+                    bb_u8(&code, (idx & 0x7f) | (k < 4 ? 0x80 : 0));
+                    idx >>= 7;
+                }
+                pos += 5;
+            } else if (rl->kind == WASM_RELOC_GOTO) {
+                /* depth from here to top: TB loop, body level, blocks */
+                int d = rl->depth + 1 + top;
+                if (rl->arg == 0xff) {
+                    for (int t = 0; t < n; t++) {
+                        region_guard(&code, m[t], t, d);
+                    }
+                } else {
+                    WasmTBHeader *c = tb_link_target(tb, rl->arg);
+                    for (int t = 0; t < n; t++) {
+                        if (m[t] == c) {
+                            region_guard(&code, m[t], t, d);
+                        }
+                    }
+                }
+            }
+        }
+        bb_bytes(&code, body + pos, m[i]->body_len - pos);
+    }
+    bb_u8(&code, 0x0b);                             /* end loop */
+    bb_u8(&code, 0x00);                             /* unreachable */
+    bb_u8(&code, 0x0b);                             /* end func */
+    bb_uleb(&sec, 1);
+    bb_uleb(&sec, code.len);
+    bb_bytes(&sec, code.p, code.len);
+    bb_section(&mod, 10, &sec);
+
+    XPHASE_SET(XPHASE_VCPU, "jit_compile");
+    fidx = wasm32_instantiate(mod.p, mod.len, hq, nh, 0, 0);
+    double t0 = t_start, t1 = emscripten_get_now();
+    XPHASE_SET(XPHASE_VCPU, "dispatch");
+    jit_debt_ms += t1 - t0;     /* incl. region assembly */
+    jit_budget_update(t1);
+    XSTAT_INC(n_jit_compile);
+    XSTAT_INC(n_region_compile);
+    XSTAT_ADD(n_region_members, n);
+    XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
+    g_free(mod.p);
+    g_free(sec.p);
+    g_free(code.p);
     if (!h->icount) {
         TranslationBlock *tb = tcg_tb_lookup((uintptr_t)h);
         h->icount = tb ? tb->icount : 0;
@@ -470,7 +844,23 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             res = tci_exec_tb(env, h->tci_ptr);
             XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else {
-            fidx = compile_tb(h, 0);
+            if (unlikely(region_enabled < 0)) {
+                const char *e = getenv("XEMU_WASM_REGION");
+                const char *l = getenv("XEMU_WASM_LINK");
+                region_enabled = !(e && *e == '0');
+                /*
+                 * Members' chain.s0/s1 tail calls would share the region's
+                 * single pair of chain imports: not supported together.
+                 */
+                if (region_enabled && l && *l == '1') {
+                    warn_report("wasm32 regions disabled by XEMU_WASM_LINK=1");
+                    region_enabled = 0;
+                }
+            }
+            fidx = region_enabled ? compile_region(h) : 0;
+            if (!fidx) {
+                fidx = compile_tb(h, 0);
+            }
             if (unlikely(wasm32_jit_debug > 0)) {
                 wasm32_jit_debug--;
                 fprintf(stderr, "[jit] instantiate tb=%p size=%u imports=%u "

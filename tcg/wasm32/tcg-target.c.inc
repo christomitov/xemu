@@ -316,6 +316,32 @@ static void linked_buf_write(LinkedBuf *buf, uint8_t *dst)
 
 /* Code of the TB function. */
 static __thread LinkedBuf *code_buf_root, *code_buf_cur;
+
+/* Relocations of the current TB (see WasmReloc), in emission order. */
+typedef struct RelocNode {
+    struct RelocNode *next;
+    WasmReloc r;
+} RelocNode;
+static __thread RelocNode *relocs, *relocs_last;
+static __thread int relocs_num;
+
+static int wasm_code_len(void);
+static void wasm_add_reloc(uint8_t kind, uint8_t arg, uint16_t depth)
+{
+    RelocNode *e = tcg_malloc(sizeof(RelocNode));
+    e->r.off = wasm_code_len();
+    e->r.kind = kind;
+    e->r.arg = arg;
+    e->r.depth = depth;
+    e->next = NULL;
+    if (relocs_last) {
+        relocs_last->next = e;
+    } else {
+        relocs = e;
+    }
+    relocs_last = e;
+    relocs_num++;
+}
 /* Function types of the imported helpers. */
 static __thread LinkedBuf *types_buf_root, *types_buf_cur;
 
@@ -336,6 +362,21 @@ static void wasm_uleb(TCGContext *s, uint32_t v)
         v >>= 7;
         wasm8(s, b | (v ? 0x80 : 0));
     } while (v);
+}
+
+/* call imported helper @idx; helper indices get a patchable 5-byte LEB */
+static void wasm_call_idx(TCGContext *s, int idx)
+{
+    wasm8(s, 0x10);             /* call */
+    if (idx < HELPER_IDX_START) {
+        wasm_uleb(s, idx);
+        return;
+    }
+    wasm_add_reloc(WASM_RELOC_CALL, idx - HELPER_IDX_START, 0);
+    for (int i = 0; i < 5; i++) {
+        wasm8(s, (idx & 0x7f) | (i < 4 ? 0x80 : 0));
+        idx >>= 7;
+    }
 }
 
 static void wasm_sleb(TCGContext *s, int64_t v)
@@ -1101,7 +1142,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         wasm_save_regs(s);
     }
     wasm_phase(s, info->name);
-    wasm_var(s, W_CALL, func_idx);
+    wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
 
     switch (rettype) {
@@ -1310,7 +1351,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
     wasm_save_regs(s);
     wasm_phase(s, "mem_slow_ld");
-    wasm_var(s, W_CALL, func_idx);
+    wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     wasm_set_r(s, data);
     wasm_handle_unwinding(s);
@@ -1353,7 +1394,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
     wasm_save_regs(s);
     wasm_phase(s, "mem_slow_st");
-    wasm_var(s, W_CALL, func_idx);
+    wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     wasm_handle_unwinding(s);
     wasm8(s, W_END);
@@ -1385,6 +1426,9 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm_br(s, depth + 2);     /* the loop */
     wasm8(s, W_END);
+
+    /* a region module may branch to a member TB here (tcg/wasm32.c) */
+    wasm_add_reloc(WASM_RELOC_GOTO, slot < 0 ? 0xff : slot, depth + 1);
 
     wasm_var(s, W_LOCAL_GET, CTX_IDX);
     wasm_var(s, W_LOCAL_GET, L32_0);
@@ -2835,7 +2879,7 @@ static void wasm_call_c(TCGContext *s, const void *func,
             types_out8(type[i]);
         }
     }
-    wasm_var(s, W_CALL, idx);
+    wasm_call_idx(s, idx);
 }
 
 /*
@@ -3117,6 +3161,8 @@ static void tcg_out_tb_start(TCGContext *s)
     types_buf_root = types_buf_cur = new_linked_buf();
     label_info = NULL;
     block_placeholder = NULL;
+    relocs = relocs_last = NULL;
+    relocs_num = 0;
     block_idx = 0;
     helpers = helpers_last = NULL;
     helpers_num = 0;
@@ -3354,6 +3400,8 @@ static int tcg_out_tb_end(TCGContext *s)
     /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
     mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
+    h->body_off = w.p - h->wasm_ptr;
+    h->body_len = code_len - 1;     /* without the function's "end" */
     {
         uint8_t *code = w.p;
         if (w.p + code_len <= w.end) {
@@ -3384,6 +3432,12 @@ static int tcg_out_tb_end(TCGContext *s)
         mod_bytes(&w, &p->idx_on_qemu, 4);
     }
     h->import_size = w.p - (uint8_t *)h->import_ptr;
+
+    h->reloc_ptr = (const WasmReloc *)w.p;
+    h->reloc_count = relocs_num;
+    for (RelocNode *p = relocs; p; p = p->next) {
+        mod_bytes(&w, &p->r, sizeof(p->r));
+    }
 
     if (w.p > w.end) {
         return -1;
