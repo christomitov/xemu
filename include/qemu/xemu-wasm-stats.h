@@ -23,6 +23,9 @@
     X(n_cpu_exit)        /* longjmp exits from the cpu loop */               \
     X(n_helper)          /* helper calls from translated code (TCI) */       \
     X(n_tlb_fill)        /* softmmu TLB refills (page walks) */              \
+    X(n_jit_compile)     /* TBs compiled to wasm modules */                  \
+    X(ns_jit_compile)                                                        \
+    X(n_jit_threshold)   /* current adaptive JIT threshold (gauge) */        \
     X(n_mmio_read)       /* guest loads from device registers */             \
     X(n_mmio_write)                                                          \
     X(ns_mmio)           /* time in device read/write handlers */            \

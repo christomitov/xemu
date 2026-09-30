@@ -29,7 +29,33 @@
 #include "accel/tcg/getpc.h"
 #include "wasm32.h"
 
+/*
+ * Adaptive JIT threshold: a TB runs in the interpreter until it has run
+ * wasm32_jit_threshold times, then gets its own wasm module. Compiling is
+ * costly (~tens of us per module), interpreting is ~10x slower than wasm,
+ * so compile early (jit_threshold_low) while compiling stays within
+ * jit_budget of the vCPU's time, and fall back to jit_threshold_high during
+ * bursts of new code (boot) so compiles can't swamp the vCPU.
+ */
 int wasm32_jit_threshold = 1000;
+static int jit_threshold_low = 64, jit_threshold_high = 1000;
+static double jit_budget = 0.10;     /* fraction of wall time */
+static double jit_debt_ms, jit_debt_last;
+#define JIT_DEBT_MAX_MS 20.0
+
+static void jit_budget_update(double now)
+{
+    jit_debt_ms -= (now - jit_debt_last) * jit_budget;
+    if (jit_debt_ms < 0) {
+        jit_debt_ms = 0;
+    }
+    jit_debt_last = now;
+    wasm32_jit_threshold = jit_debt_ms < JIT_DEBT_MAX_MS ?
+                           jit_threshold_low : jit_threshold_high;
+#ifdef EMSCRIPTEN
+    xemu_wasm_stats.n_jit_threshold = wasm32_jit_threshold;
+#endif
+}
 static int wasm32_jit_debug;
 
 /* For debuggers/test harnesses: the TB the dispatcher last entered. */
@@ -126,7 +152,7 @@ static int get_instance(WasmTBHeader *h)
     if (e->tb != h) {
         /* dropped (or its slot reused): recompile at the next chance */
         h->instance = NULL;
-        h->counter = wasm32_jit_threshold;
+        h->counter = INT32_MAX / 2;
         return 0;
     }
     return e->func_idx;
@@ -177,6 +203,13 @@ static int exec_cnt = MAX_EXEC_NUM;
 
 static inline void trysleep(void)
 {
+    static unsigned budget_cnt;
+
+    /* let the compile budget recover (lowers the threshold again) */
+    if (unlikely((++budget_cnt & 4095) == 0) &&
+        wasm32_jit_threshold != jit_threshold_low) {
+        jit_budget_update(emscripten_get_now());
+    }
     if (unlikely(--exec_cnt == 0)) {
         exec_cnt = MAX_EXEC_NUM;
         check_instances_collected();
@@ -194,8 +227,18 @@ static void wasm32_init(void)
     const char *env = getenv("XEMU_WASM_JIT_THRESHOLD");
 
     if (env) {
-        wasm32_jit_threshold = atoi(env);
+        jit_threshold_low = atoi(env);
     }
+    env = getenv("XEMU_WASM_JIT_THRESHOLD_HIGH");
+    if (env) {
+        jit_threshold_high = atoi(env);
+    }
+    env = getenv("XEMU_WASM_JIT_BUDGET");   /* percent */
+    if (env) {
+        jit_budget = atoi(env) / 100.0;
+    }
+    jit_debt_last = emscripten_get_now();
+    jit_budget_update(jit_debt_last);
     env = getenv("XEMU_WASM_JIT_DEBUG");
     if (env) {
         wasm32_jit_debug = atoi(env);
@@ -205,8 +248,8 @@ static void wasm32_init(void)
                                TCG_STATIC_FRAME_SIZE);
     wasm_ctx.tci_tb_ptr = &tci_tb_ptr;
     wasm32_js_init(&instances_collected);
-    info_report("tcg: wasm32 JIT enabled (threshold %d)",
-                wasm32_jit_threshold);
+    info_report("tcg: wasm32 JIT enabled (threshold %d..%d, budget %.0f%%)",
+                jit_threshold_low, jit_threshold_high, jit_budget * 100);
 }
 
 typedef uint32_t (*wasm_func_ptr)(WasmContext *);
@@ -259,9 +302,15 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             XPHASE_SET(XPHASE_VCPU, NULL);
         } else {
             XPHASE_SET(XPHASE_VCPU, "jit_compile");
+            double t0 = emscripten_get_now();
             fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
                                       h->import_ptr, h->import_size / 4);
+            double t1 = emscripten_get_now();
             XPHASE_SET(XPHASE_VCPU, NULL);
+            jit_debt_ms += t1 - t0;
+            jit_budget_update(t1);
+            XSTAT_INC(n_jit_compile);
+            XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
             add_instance(h, fidx);
             if (unlikely(wasm32_jit_debug > 0)) {
                 wasm32_jit_debug--;
