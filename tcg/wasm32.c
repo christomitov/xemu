@@ -85,7 +85,7 @@ EM_JS(int, wasm32_instantiate, (const uint8_t *wasm_begin, int wasm_size,
     const bytes = HEAPU8.slice(wasm_begin, wasm_begin + wasm_size);
     const mod = new WebAssembly.Module(bytes);
     const inst = new WebAssembly.Instance(mod, {
-        "env": { "buffer": wasmMemory },
+        "env": { "buffer": wasmMemory, "table": wasmTable },
         "helper": helper,
     });
     Module.__wasm32_jit.registry.register(inst, 0);
@@ -115,11 +115,7 @@ EM_JS_DEPS(wasm32_jit, "$addFunction,$removeFunction,$wasmTable");
 static int max_instances = 40000;   /* XEMU_WASM_JIT_MAX */
 #define MAX_INSTANCES max_instances
 
-typedef struct WasmInstance {
-    void *tb;       /* the TB header this instance belongs to, or NULL */
-    int func_idx;   /* table index of its start function */
-    int used;       /* entered since the last eviction sweep */
-} WasmInstance;
+/* WasmInstance: see wasm32.h */
 
 static WasmInstance instances[MAX_INSTANCES_BUF];
 

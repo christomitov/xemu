@@ -1184,6 +1184,9 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
     if (unlikely(current_tb_modified)) {
         page_collection_unlock(pages);
         /* Force execution of one insn next time.  */
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("noexc:smc"); }
+#endif
         cpu->cflags_next_tb = 1 | CF_NOIRQ | curr_cflags(cpu);
         cpu_loop_exit_noexc(cpu);
     }

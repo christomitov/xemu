@@ -179,6 +179,24 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define W_BR            0x0c
 #define W_RETURN        0x0f
 #define W_CALL          0x10
+#define W_RETURN_CALL_INDIRECT 0x13
+
+/*
+ * Direct TB chaining (XEMU_WASM_CHAIN=1): a TB tail-calls the next TB's
+ * module through the shared function table instead of returning to the C
+ * dispatcher. Every module then imports that table, which some V8 versions
+ * make expensive to instantiate (Node 22: ~1.8 ms/module), so it is opt-in
+ * until measured per browser.
+ */
+static int wasm_chain = -1;
+static bool wasm_chain_enabled(void)
+{
+    if (wasm_chain < 0) {
+        const char *e = getenv("XEMU_WASM_CHAIN");
+        wasm_chain = e && *e == '1';
+    }
+    return wasm_chain;
+}
 #define W_SELECT        0x1b
 #define W_LOCAL_GET     0x20
 #define W_LOCAL_SET     0x21
@@ -1364,6 +1382,38 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth)
     wasm_var(s, W_LOCAL_GET, L32_0);
     wasm_mem(s, W_I32_STORE, WASM_CTX_TB_PTR_OFF);
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 1);
+
+    if (wasm_chain_enabled()) {
+        /*
+         * if (next && next->instance && next->instance->tb == next)
+         *     return_call_indirect(ctx, next->instance->func_idx)
+         * ctx.tb_ptr names the TB running now (see the rewind in tb_start).
+         */
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
+        wasm_var(s, W_LOCAL_TEE, L32_1);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_TB_OFF);
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm8(s, W_I32_EQ);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm_i32_const(s, 1);
+        wasm_mem(s, W_I32_STORE, WASM_INSTANCE_USED_OFF);
+        wasm_count_tb_exec(s);
+        wasm_var(s, W_LOCAL_GET, CTX_IDX);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
+        wasm8(s, W_RETURN_CALL_INDIRECT);
+        wasm_uleb(s, 0);            /* type 0: (i32) -> i32 */
+        wasm_uleb(s, 0);            /* table 0 (imported) */
+        wasm8(s, W_END);
+        wasm8(s, W_END);
+        wasm8(s, W_END);
+    }
     wasm_i32_const(s, 0);
     wasm8(s, W_RETURN);
 }
@@ -3070,6 +3120,24 @@ static void tcg_out_tb_start(TCGContext *s)
 
     /* Asyncify rewind: the registers saved before the unwinding call */
     wasm8(s, W_ELSE);
+    if (wasm_chain_enabled()) {
+        /*
+         * The dispatcher re-calls the first TB of a chain; if a TB it
+         * tail-called (ctx.tb_ptr) is the one that unwound, continue there.
+         */
+        wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
+        wasm_i32_const(s, (int32_t)(uintptr_t)h);
+        wasm8(s, W_I32_NE);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+        wasm_var(s, W_LOCAL_GET, CTX_IDX);
+        wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
+        wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
+        wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
+        wasm8(s, W_RETURN_CALL_INDIRECT);
+        wasm_uleb(s, 0);
+        wasm_uleb(s, 0);
+        wasm8(s, W_END);
+    }
     for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
         wasm_var(s, W_GLOBAL_GET, r);
         wasm_var(s, W_LOCAL_SET, LREG(r));
@@ -3189,7 +3257,15 @@ static int tcg_out_tb_end(TCGContext *s)
 
     /* import section */
     sec = mod_section_begin(&w, 2);
-    mod_uleb(&w, 2 + helpers_num);
+    mod_uleb(&w, 2 + helpers_num + wasm_chain_enabled());
+    if (wasm_chain_enabled()) {
+        mod_name(&w, "env");
+        mod_name(&w, "table");
+        mod8(&w, 0x01);             /* table */
+        mod8(&w, 0x70);             /* funcref */
+        mod8(&w, 0x00);             /* min 0, no max */
+        mod_uleb(&w, 0);
+    }
     mod_name(&w, "env");
     mod_name(&w, "buffer");
     mod8(&w, 0x02);             /* memory */

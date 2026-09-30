@@ -1351,6 +1351,9 @@ io_prepare(hwaddr *out_offset, CPUState *cpu, hwaddr xlat,
     mr_offset = (xlat & TARGET_PAGE_MASK) + addr;
     cpu->mem_io_pc = retaddr;
     if (!cpu->neg.can_do_io) {
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("noexc:io_recompile"); }
+#endif
         cpu_io_recompile(cpu, retaddr);
     }
 
