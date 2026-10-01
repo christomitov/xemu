@@ -88,6 +88,11 @@ typedef struct PGRAPHWgpuTextureState {
     WGPUBindGroupLayout s2t_z24s8_bgl;   /* packed words -> r32uint */
     WGPUPipelineLayout s2t_z24s8_layout;
     WGPUComputePipeline s2t_z24s8_pipeline;
+    /* Packed Z24S8 bytes reinterpreted as A8R8G8B8 / B8G8R8A8. */
+    WGPUShaderModule s2t_packed_color_module;
+    WGPUBindGroupLayout s2t_packed_color_bgl; /* packed words + source extent */
+    WGPUPipelineLayout s2t_packed_color_layout;
+    WGPURenderPipeline s2t_packed_color_pipelines[2]; /* BGRA8 / RGBA8 */
 } PGRAPHWgpuTextureState;
 
 #endif
