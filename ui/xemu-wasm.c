@@ -698,6 +698,29 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_stats_fields(void)
 /* gui timer */
 static QEMUTimer *s_gui_timer;
 
+/*
+ * The GUI tick raises the guest VBLANK: keep it at NTSC 59.94 Hz on an
+ * absolute schedule. "now + 16 ms" gave 62.5 Hz plus the callback's
+ * latency, so vsync-paced games ran ~4% fast and jittered.
+ * XEMU_WASM_VBLANK_HZ overrides (e.g. 50 for PAL).
+ */
+static void gui_timer_arm(void)
+{
+    static int64_t next_ns, period_ns;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+    if (!period_ns) {
+        const char *e = getenv("XEMU_WASM_VBLANK_HZ");
+        double hz = e ? atof(e) : 60000.0 / 1001.0;
+        period_ns = (int64_t)(1e9 / (hz > 1 ? hz : 60000.0 / 1001.0));
+    }
+    next_ns += period_ns;
+    if (next_ns < now - 100 * SCALE_MS || next_ns > now + 2 * period_ns) {
+        next_ns = now + period_ns;      /* far behind (or first): resync */
+    }
+    timer_mod(s_gui_timer, next_ns);
+}
+
 static void xemu_wasm_gui_tick(void *opaque)
 {
     static int tickn;
@@ -745,7 +768,7 @@ static void xemu_wasm_gui_tick(void *opaque)
     xemu_wasm_lowmem_check("gui tick post-getms");
     xemu_wasm_service_disc();
     xemu_wasm_lowmem_check("gui tick pre-arm");
-    timer_mod(s_gui_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
+    gui_timer_arm();
 }
 
 int main(int argc, char **argv)
@@ -807,9 +830,9 @@ int main(int argc, char **argv)
         qemu_thread_create(&sampler, "phase-sampler", phase_sampler_thread,
                            NULL, QEMU_THREAD_DETACHED);
     }
-    s_gui_timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_MS,
+    s_gui_timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_NS,
                             xemu_wasm_gui_tick, NULL);
-    timer_mod(s_gui_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
+    gui_timer_arm();
 
     bql_unlock();
     replay_mutex_unlock();

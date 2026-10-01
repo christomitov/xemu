@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "hw/irq.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -362,6 +363,10 @@ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time)
     }
 #endif
     irq_level = pit_get_out(s, current_time);
+    if (irq_level && !s->wasm_last_out) {
+        XSTAT_INC(n_pit_tick);
+    }
+    s->wasm_last_out = irq_level;
 #ifdef EMSCRIPTEN
     xemu_wasm_lowmem_check("pit after get_out");
 #endif
