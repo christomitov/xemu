@@ -406,10 +406,40 @@ static inline void wasm_i64_const(TCGContext *s, int64_t v)
     wasm_sleb(s, v);
 }
 
+/*
+ * TCG registers this TB really uses (outside the Asyncify register snapshot
+ * code). Save/restore pairs of the others are replaced by nops at the end
+ * of the TB, so V8 does not see them as live (see wasm_snapshot_site).
+ */
+static __thread uint32_t used_regs;
+static __thread bool in_snapshot;
+
 static inline void wasm_var(TCGContext *s, uint8_t op, uint32_t idx)
 {
+    if (!in_snapshot && (op == 0x20 || op == 0x21 || op == 0x22) &&
+        idx >= LREG(0) && idx < LREG(TCG_TARGET_NB_REGS)) {
+        used_regs |= 1u << (idx - LREG(0));
+    }
     wasm8(s, op);
     wasm_uleb(s, idx);
+}
+
+/* A 4-byte snapshot pair (local.get/global.set or global.get/local.set). */
+typedef struct SnapshotSite {
+    struct SnapshotSite *next;
+    uint32_t pos;
+    uint8_t reg;
+} SnapshotSite;
+static __thread SnapshotSite *snapshot_sites;
+
+static int wasm_code_len(void);
+static void wasm_snapshot_site(int reg)
+{
+    SnapshotSite *e = tcg_malloc(sizeof(*e));
+    e->pos = wasm_code_len();
+    e->reg = reg;
+    e->next = snapshot_sites;
+    snapshot_sites = e;
 }
 
 /* Memory access with alignment hint 0 (byte) and a static offset. */
@@ -474,10 +504,13 @@ static inline void wasm_set_r(TCGContext *s, TCGReg r)
 /* Registers -> their globals, before a call that may unwind (Asyncify). */
 static void wasm_save_regs(TCGContext *s)
 {
+    in_snapshot = true;
     for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+        wasm_snapshot_site(r);
         wasm_var(s, W_LOCAL_GET, LREG(r));
         wasm_var(s, W_GLOBAL_SET, r);
     }
+    in_snapshot = false;
     wasm_var(s, W_LOCAL_GET, LBLOCK);
     wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
 }
@@ -3183,6 +3216,8 @@ static void tcg_out_tb_start(TCGContext *s)
     block_placeholder = NULL;
     relocs = relocs_last = NULL;
     relocs_num = 0;
+    used_regs = 0;
+    snapshot_sites = NULL;
     block_idx = 0;
     helpers = helpers_last = NULL;
     helpers_num = 0;
@@ -3235,10 +3270,13 @@ static void tcg_out_tb_start(TCGContext *s)
         wasm8(s, W_RETURN);
         wasm8(s, W_END);
     }
+    in_snapshot = true;
     for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+        wasm_snapshot_site(r);
         wasm_var(s, W_GLOBAL_GET, r);
         wasm_var(s, W_LOCAL_SET, LREG(r));
     }
+    in_snapshot = false;
     wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm8(s, W_END);
@@ -3442,13 +3480,31 @@ static int tcg_out_tb_end(TCGContext *s)
     body = mod_uleb5_placeholder(&w);
     /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
-    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
+    QEMU_BUILD_BUG_ON(sizeof("\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e") - 1 !=
+                      WASM_TB_LOCALS_LEN);
+    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e",
+              WASM_TB_LOCALS_LEN);
     h->body_off = w.p - h->wasm_ptr;
     h->body_len = code_len - 1;     /* without the function's "end" */
     {
         uint8_t *code = w.p;
         if (w.p + code_len <= w.end) {
             linked_buf_write(code_buf_root, code);
+            /* snapshot pairs of registers this TB never uses: nops */
+            static int snapnop = -1;
+            if (snapnop < 0) {
+                const char *e = getenv("XEMU_WASM_SNAPNOP");
+                snapnop = !(e && *e == '0');
+            }
+            if (snapnop) {
+                uint32_t keep = used_regs | (1u << TCG_AREG0) |
+                                (1u << TCG_REG_CALL_STACK);
+                for (SnapshotSite *p = snapshot_sites; p; p = p->next) {
+                    if (!(keep & (1u << p->reg))) {
+                        memset(code + p->pos, 0x01, 4);
+                    }
+                }
+            }
             for (BlockPlaceholder *p = block_placeholder; p; p = p->next) {
                 uint8_t *ph = code + p->pos;
                 uint32_t blk = get_block_of_label(p->label);
