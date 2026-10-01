@@ -1933,6 +1933,23 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data, MemOp memop,
         }
     } else if (access_type == MMU_DATA_LOAD) {
         XSTAT_INC(n_slow_ld);
+        {   /* report events: why loads take the slow path, sampled 1/64 */
+            static unsigned dn;
+            if ((++dn & 63) == 0) {
+                extern void xemu_wasm_count(const char *);
+                char k[48];
+                extern bool in_code_gen_buffer(const void *p);
+                snprintf(k, sizeof(k), "slowld:sz%d:%s:fl%x:ua%d:%s",
+                         data->size, st_miss ? "miss" : "hit", flags,
+                         (int)(addr & (data->size - 1)),
+                         ra == 0 ? "ra0" :
+                         !in_code_gen_buffer((void *)ra) ? "c" :
+                         (xemu_wasm_phase[XPHASE_VCPU] &&
+                          !strcmp(xemu_wasm_phase[XPHASE_VCPU], "tci"))
+                         ? "tci" : "jit");
+                xemu_wasm_count(g_intern_string(k));
+            }
+        }
         if (st_miss) {
             XSTAT_INC(n_slow_ld_miss);
         }
