@@ -256,7 +256,9 @@ static void se_frame(MCPXAPUState *d)
     extern void xemu_wasm_lowmem_check(const char *);
     xemu_wasm_lowmem_check("frame pre-vp");
 #endif
+    qemu_mutex_lock(&d->vp_lock);
     mcpx_apu_vp_frame(d, mixbins);
+    qemu_mutex_unlock(&d->vp_lock);
 #ifdef EMSCRIPTEN
     xemu_wasm_lowmem_check("frame post-vp");
 #endif
@@ -458,6 +460,7 @@ static void mcpx_apu_realize(PCIDevice *dev, Error **errp)
     d->is_idle = false;
     d->pause_requested = true;
     qemu_mutex_init(&d->lock);
+    qemu_mutex_init(&d->vp_lock);
     qemu_mutex_lock(&d->lock);
     qemu_cond_init(&d->cond);
     qemu_cond_init(&d->idle_cond);
