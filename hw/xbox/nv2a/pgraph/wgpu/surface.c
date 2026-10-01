@@ -396,9 +396,10 @@ static void unregister_cpu_access_callback(NV2AState *d,
                                            SurfaceBinding *surface);
 static void destroy_surface_image(PGRAPHWgpuState *r, SurfaceBinding *surface);
 
-static void copy_surface_prefix(PGRAPHState *pg, const SurfaceBinding *src,
-                                 const SurfaceBinding *dst,
-                                 unsigned int width, unsigned int height)
+static void copy_surface_rect(PGRAPHState *pg, const SurfaceBinding *src,
+                               const SurfaceBinding *dst,
+                               unsigned int width, unsigned int height,
+                               unsigned int dst_x, unsigned int dst_y)
 {
     assert(src->texture != dst->texture);
     WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
@@ -407,6 +408,7 @@ static void copy_surface_prefix(PGRAPHState *pg, const SurfaceBinding *src,
     };
     WGPUTexelCopyTextureInfo to = {
         .texture = dst->texture, .aspect = WGPUTextureAspect_All,
+        .origin = { dst_x, dst_y, 0 },
     };
     wgpuCommandEncoderCopyTextureToTexture(
         enc, &from, &to, &(WGPUExtent3D){ width, height, 1 });
@@ -418,8 +420,8 @@ void pgraph_wgpu_merge_surface_backing(PGRAPHState *pg,
 {
     if (surface->backing) {
         assert(!surface->backing->backing && surface->draw_dirty);
-        copy_surface_prefix(pg, surface, surface->backing,
-                            surface->width, surface->height);
+        copy_surface_rect(pg, surface, surface->backing,
+                          surface->width, surface->height, 0, 0);
     }
 }
 
@@ -750,6 +752,34 @@ static bool check_surfaces_overlap(const SurfaceBinding *surface,
         pgraph_wgpu_surface_memory_size(other_surface));
 }
 
+static const char *surface_stitch_reject_reason(NV2AState *d,
+                                                const SurfaceBinding *src,
+                                                const SurfaceBinding *dst);
+
+static void log_surface_overlap(NV2AState *d, const SurfaceBinding *src,
+                                 const SurfaceBinding *dst, bool gpu,
+                                 const char *reason)
+{
+#ifdef EMSCRIPTEN
+    /* Decisions, not readback counts. Deltas identify guest byte subranges. */
+    char key[320];
+    snprintf(key, sizeof(key),
+             "dl:overlap-%s:%s old:%c/f%u/%ux%u/p%u/%s/a%u "
+             "new:%c/f%u/%ux%u/p%u/%s/a%u delta:%+" PRId64 " own:%zu clr%d",
+             gpu ? "gpu" : "fallback", reason,
+             src->color ? 'C' : 'Z',
+             src->color ? src->shape.color_format : src->shape.zeta_format,
+             src->width, src->height, src->pitch, src->swizzle ? "sz" : "lin",
+             src->shape.anti_aliasing, dst->color ? 'C' : 'Z',
+             dst->color ? dst->shape.color_format : dst->shape.zeta_format,
+             dst->width, dst->height, dst->pitch, dst->swizzle ? "sz" : "lin",
+             dst->shape.anti_aliasing,
+             (int64_t)src->vram_addr - (int64_t)dst->vram_addr,
+             pgraph_wgpu_surface_memory_size(src), d->pgraph.clearing);
+    xemu_wasm_count(g_intern_string(key));
+#endif
+}
+
 static void invalidate_overlapping_surfaces(NV2AState *d,
                                             SurfaceBinding const *surface)
 {
@@ -759,6 +789,12 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
     QTAILQ_FOREACH_SAFE (other_surface, &r->surf.surfaces, entry,
                          next_surface) {
         if (check_surfaces_overlap(surface, other_surface)) {
+            if (other_surface->draw_dirty) {
+                const char *reason = surface_stitch_reject_reason(
+                    d, other_surface, surface);
+                log_surface_overlap(d, other_surface, surface, false,
+                                    reason ? reason : "owner-set-or-context");
+            }
             trace_nv2a_pgraph_surface_evict_overlapping(
                 other_surface->vram_addr, other_surface->width,
                 other_surface->height, other_surface->pitch);
@@ -983,8 +1019,9 @@ static bool check_surface_compatibility(SurfaceBinding const *s1,
         return false;
     }
     if (s1->backing) {
-        /* Do not silently reinterpret the retained Morton address mapping. */
-        if (!s2->swizzle || s1->shape.color_format != s2->shape.color_format ||
+        /* Do not silently reinterpret the retained byte address mapping. */
+        if (s1->swizzle != s2->swizzle ||
+            s1->shape.color_format != s2->shape.color_format ||
             s1->shape.anti_aliasing != s2->shape.anti_aliasing) {
             return false;
         }
@@ -1364,6 +1401,215 @@ static bool overlaps_active_pushbuffer(NV2AState *d, const SurfaceBinding *s)
                                          (hwaddr)dma.limit + 1 - get));
 }
 
+static bool is_linear_native_color(const SurfaceBinding *s)
+{
+    return s->color && !s->swizzle && s->width && s->height &&
+           s->fmt.bytes_per_pixel &&
+           s->host_fmt.conv == WGPU_SURFACE_CONV_NONE &&
+           s->fmt.bytes_per_pixel == s->host_fmt.host_bytes_per_pixel &&
+           s->pitch % s->fmt.bytes_per_pixel == 0 &&
+           (uint64_t)s->width * s->fmt.bytes_per_pixel <= s->pitch &&
+           s->size == (uint64_t)s->pitch * s->height;
+}
+
+static bool surface_stitch_enabled(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_OVERLAP_STITCH");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static const char *surface_stitch_reject_reason(NV2AState *d,
+                                                const SurfaceBinding *src,
+                                                const SurfaceBinding *dst)
+{
+    if (!surface_stitch_enabled()) {
+        return "disabled";
+    }
+    if (!tcg_enabled()) {
+        return "cpu-owner";
+    }
+    if (d->pgraph.clearing) {
+        return "clear";
+    }
+    if (!src->color || !dst->color) {
+        return "zeta";
+    }
+    if (src->backing || dst->backing) {
+        return "retained-owner";
+    }
+    if (!src->initialized || !src->texture || !src->size || !dst->size) {
+        return "uninitialized";
+    }
+    if (src->upload_pending || src->download_pending) {
+        return "cpu-pending";
+    }
+    if (!src->draw_dirty) {
+        return "clean";
+    }
+    if (!src->access_cb || src->access_cb_write_only) {
+        return "untrapped";
+    }
+    bool morton = is_morton_square(src) && is_morton_square(dst);
+    bool linear = is_linear_native_color(src) && is_linear_native_color(dst);
+    if (d->pgraph.surface_scale_factor != 1 || (!morton && !linear)) {
+        return "layout";
+    }
+    if (src->shape.anti_aliasing != dst->shape.anti_aliasing) {
+        return "aa";
+    }
+    if (src->shape.color_format != dst->shape.color_format ||
+        src->host_fmt.format != dst->host_fmt.format ||
+        src->fmt.bytes_per_pixel != dst->fmt.bytes_per_pixel) {
+        return "format";
+    }
+    if (linear && src->pitch != dst->pitch) {
+        return "pitch";
+    }
+    /* Every old guest byte must fit, not just the intersection. */
+    if (src->vram_addr < dst->vram_addr || src->size > dst->size ||
+        src->vram_addr - dst->vram_addr > dst->size - src->size) {
+        return "partial-owner";
+    }
+    hwaddr delta = src->vram_addr - dst->vram_addr;
+    if (morton) {
+        if (delta % src->size) {
+            return "morton-alignment";
+        }
+    } else if (delta % src->fmt.bytes_per_pixel ||
+               (delta % dst->pitch) / src->fmt.bytes_per_pixel + src->width >
+                   dst->width ||
+               delta / dst->pitch + src->height > dst->height) {
+        /* Padding is CPU-current, but every GPU pixel must fit in the image. */
+        return "pixel-range";
+    }
+    return NULL;
+}
+
+/* A Morton block or a same-pitch linear rectangle, never a pitch reshape. */
+static void surface_stitch_origin(const SurfaceBinding *src,
+                                  const SurfaceBinding *dst,
+                                  unsigned int *x, unsigned int *y)
+{
+    hwaddr delta = src->vram_addr - dst->vram_addr;
+    if (!src->swizzle) {
+        *x = (delta % dst->pitch) / src->fmt.bytes_per_pixel;
+        *y = delta / dst->pitch;
+        return;
+    }
+    uint64_t offset = delta / src->fmt.bytes_per_pixel;
+    *x = *y = 0;
+    for (unsigned int bit = 1; bit < dst->width; bit <<= 1) {
+        if (offset & 1) {
+            *x |= bit;
+        }
+        offset >>= 1;
+        if (offset & 1) {
+            *y |= bit;
+        }
+        offset >>= 1;
+    }
+    assert(!offset && *x % src->width == 0 && *y % src->height == 0);
+    assert(*x + src->width <= dst->width && *y + src->height <= dst->height);
+}
+
+/*
+ * Stitch complete old owners into a containing color target. Keep the
+ * canonical image private, using the existing retained-owner protocol for
+ * interior CPU/engine accesses, reports, texture fallbacks and Morton shrinks.
+ * This intentionally pays for a second image and one full-target GPU copy;
+ * dropping the backing would bypass those raw-VRAM coherency barriers.
+ */
+static SurfaceBinding *try_stitch_surfaces_gpu(NV2AState *d,
+                                              const SurfaceBinding *target,
+                                              bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding *src, *next;
+    unsigned int owners = 0;
+
+    if (!upload || !surface_stitch_enabled() || !tcg_enabled() ||
+        pg->clearing || pg->surface_scale_factor != 1 || !target->size ||
+        (!is_morton_square(target) && !is_linear_native_color(target))) {
+        return NULL;
+    }
+    QTAILQ_FOREACH(src, &r->surf.surfaces, entry) {
+        if (!check_surfaces_overlap(target, src)) {
+            continue;
+        }
+        /* All-or-nothing: leave mixed or partially covered owners alone. */
+        if (surface_stitch_reject_reason(d, src, target)) {
+            return NULL;
+        }
+        /* No byte may have two candidate owners, regardless of list order. */
+        SurfaceBinding *prior;
+        QTAILQ_FOREACH(prior, &r->surf.surfaces, entry) {
+            if (prior == src) {
+                break;
+            }
+            if (check_surfaces_overlap(src, prior)) {
+                return NULL;
+            }
+        }
+        owners++;
+    }
+    if (!owners) {
+        return NULL;
+    }
+    WgpuQueryReport *report;
+    QSIMPLEQ_FOREACH(report, &r->draw.report_queue, entry) {
+        if (!report->clear) {
+            return NULL;
+        }
+    }
+    if (overlaps_active_pushbuffer(d, target)) {
+        return NULL;
+    }
+
+    /* Neither the sources nor the canonical image may be recycled yet. */
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    SurfaceBinding *backing = allocate_surface_binding(d, target);
+    assert(dst->texture != backing->texture);
+    register_cpu_access_callback(d, dst);
+    /* Prefill uncovered bytes. Each stale source block is replaced below. */
+    pgraph_wgpu_upload_surface_data(d, backing, false);
+    QTAILQ_FOREACH(src, &r->surf.surfaces, entry) {
+        if (!check_surfaces_overlap(target, src)) {
+            continue;
+        }
+        unsigned int x, y;
+        surface_stitch_origin(src, target, &x, &y);
+        copy_surface_rect(pg, src, backing, src->width, src->height, x, y);
+        log_surface_overlap(d, src, target, true, "whole-owner");
+    }
+    copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
+    dst->backing = backing;
+    dst->initialized = true;
+    dst->upload_pending = false;
+    dst->draw_dirty = true;
+    r->surf.num_retained++;
+
+    /* Copies are recorded; later queue writes submit before reusing images. */
+    QTAILQ_FOREACH_SAFE(src, &r->surf.surfaces, entry, next) {
+        if (check_surfaces_overlap(target, src)) {
+            assert(!src->backing);
+            src->draw_dirty = false;
+            detach_surface(d, src);
+            QTAILQ_INSERT_HEAD(&r->surf.invalid_surfaces, src, entry);
+        }
+    }
+    surface_put(d, dst);
+    return dst;
+}
+
 static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
                                                SurfaceBinding *src,
                                                const SurfaceBinding *target,
@@ -1420,7 +1666,7 @@ static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
     SurfaceBinding *dst = allocate_surface_binding(d, target);
     assert(dst->texture != src->texture && dst->texture != backing->texture);
     pgraph_wgpu_merge_surface_backing(pg, src);
-    copy_surface_prefix(pg, backing, dst, dst->width, dst->height);
+    copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
 
     dst->backing = backing;
     dst->initialized = true;
@@ -1707,6 +1953,9 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 compare_surfaces(surface, &target);
                 SurfaceBinding *replacement = try_transfer_surface_gpu(
                     d, surface, &target, upload);
+                if (!replacement) {
+                    replacement = try_stitch_surfaces_gpu(d, &target, upload);
+                }
                 if (replacement) {
                     surface = replacement;
                     transferred = true;
@@ -1720,8 +1969,11 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
 
         if (should_create) {
             if (!transferred) {
-                surface = allocate_surface_binding(d, &target);
-                surface_put(d, surface);
+                surface = try_stitch_surfaces_gpu(d, &target, upload);
+                if (!surface) {
+                    surface = allocate_surface_binding(d, &target);
+                    surface_put(d, surface);
+                }
             }
 
             // FIXME: Refactor
