@@ -761,13 +761,14 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_threads)
             tb_size = (size_t)atoi(e) * MiB;
         } else if (tb_size == 0) {
             /*
-             * ~4 KB per TB here (TCI bytecode + wasm module bytes): the
-             * 32 MiB 32-bit default holds only ~8k TBs and games fill it in
-             * ~100 s; the flush then drops every TB and JIT module at once
-             * (multi-second 0-8 fps stalls). 160 MiB holds ~38k TBs, about
-             * the JIT instance cap.
+             * 4-6 KB per TB here (TCI bytecode + wasm module bytes). A
+             * flush drops every TB and JIT module at once (multi-second
+             * 0-8 fps stalls), and when a game's working set exceeds the
+             * buffer it refills and flushes again within seconds: R6 at
+             * 160 MiB flushed every ~10-30 s (re-translating ~1700 TBs/s of
+             * code it already had). 512 MiB of the fixed 2 GiB heap.
              */
-            tb_size = 160 * MiB;
+            tb_size = 512 * MiB;
         }
     }
 #endif
