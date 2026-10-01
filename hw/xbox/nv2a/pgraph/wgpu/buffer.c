@@ -195,6 +195,8 @@ void pgraph_wgpu_flush_staged(PGRAPHState *pg)
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     static const int idx[] = { WGPU_BUFFER_INDEX, WGPU_BUFFER_VERTEX_INLINE };
 
+    pgraph_wgpu_flush_uniforms(r);
+
     for (int i = 0; i < ARRAY_SIZE(idx); i++) {
         WgpuStorageBuffer *b = &r->draw.storage_buffers[idx[i]];
         if (b->staging && b->staged_hi > b->staged_lo) {
