@@ -223,6 +223,7 @@ static int get_instance(WasmTBHeader *h)
     }
     if (e->tb != h) {
         /* dropped (or its slot reused): recompile at the next chance */
+        XSTAT_INC(n_tci_dropped);
         h->instance = NULL;
         h->counter = INT32_MAX / 2;
         return 0;
@@ -911,6 +912,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             XPHASE_SET(XPHASE_VCPU, "dispatch");
         } else if (h->counter < wasm32_jit_threshold) {
             h->counter++;
+            XSTAT_INC(n_tci_exec);
             XPHASE_SET(XPHASE_VCPU, "tci");
             res = tci_exec_tb(env, h->tci_ptr);
             XPHASE_SET(XPHASE_VCPU, "dispatch");
