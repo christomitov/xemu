@@ -156,7 +156,10 @@ typedef struct PGRAPHWgpuShaderState {
     size_t uniform_offset;
     uint32_t uniform_alignment;
     size_t uniform_block_offsets[2]; /* vsh, psh of the last upload */
-    uint64_t uniform_hashes[2];
+    uint64_t uniform_hashes[2];     /* unused (see uniform_last) */
+    /* copies of the last uploaded blocks, compared instead of hashed */
+    uint8_t *uniform_last[2];
+    size_t uniform_last_size[2];
     bool uniforms_uploaded; /* last upload is valid for the current ring */
 
     /*
