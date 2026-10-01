@@ -813,6 +813,81 @@ static void log_surface_overlap(NV2AState *d, const SurfaceBinding *src,
  * Rainbow Six 3 evicts a chain of six bloom targets per frame.
  * XEMU_WASM_BATCH_DOWNLOAD=0 disables.
  */
+uint32_t pgraph_wgpu_clear_param;
+
+/*
+ * True when the clear that is binding @target overwrites every byte of
+ * @old: the clear rect spans full rows of @target and covers @old's range,
+ * with every channel of @target's format written. @old's contents are then
+ * dead in VRAM, so evicting it needs no download.
+ */
+static bool clear_overwrites(NV2AState *d, const SurfaceBinding *target,
+                             const SurfaceBinding *old)
+{
+    PGRAPHState *pg = &d->pgraph;
+    uint32_t param = pgraph_wgpu_clear_param;
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_CLEAR_DISCARD");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled || !pg->clearing || !param || !target->pitch ||
+        old->backing) {
+        return false;
+    }
+    if (target->color) {
+        uint32_t all = NV097_CLEAR_SURFACE_R | NV097_CLEAR_SURFACE_G |
+                       NV097_CLEAR_SURFACE_B | NV097_CLEAR_SURFACE_A;
+        if ((param & all) != all) {
+            return false;
+        }
+    } else {
+        if (!(param & NV097_CLEAR_SURFACE_Z) ||
+            (target->host_fmt.stencil &&
+             !(param & NV097_CLEAR_SURFACE_STENCIL))) {
+            return false;
+        }
+    }
+    if (target->swizzle || target->shape.anti_aliasing) {
+        return false;
+    }
+
+    uint32_t rx = pgraph_reg_r(pg, NV_PGRAPH_CLEARRECTX);
+    uint32_t ry = pgraph_reg_r(pg, NV_PGRAPH_CLEARRECTY);
+    unsigned xmin = GET_MASK(rx, NV_PGRAPH_CLEARRECTX_XMIN);
+    unsigned xmax = MIN(GET_MASK(rx, NV_PGRAPH_CLEARRECTX_XMAX),
+                        target->width - 1);
+    unsigned ymin = GET_MASK(ry, NV_PGRAPH_CLEARRECTY_YMIN);
+    unsigned ymax = MIN(GET_MASK(ry, NV_PGRAPH_CLEARRECTY_YMAX),
+                        target->height - 1);
+
+    if (xmin != 0 || ymin > ymax ||
+        (uint64_t)(xmax + 1) * target->fmt.bytes_per_pixel < target->pitch) {
+        return false;
+    }
+    if (old->vram_addr < target->vram_addr) {
+        return false;
+    }
+    uint64_t rel = old->vram_addr - target->vram_addr;
+    uint64_t len = pgraph_wgpu_surface_memory_size(old);
+    return rel >= (uint64_t)ymin * target->pitch &&
+           rel + len <= (uint64_t)(ymax + 1) * target->pitch;
+}
+
+static void discard_cleared(NV2AState *d, const SurfaceBinding *target,
+                            SurfaceBinding *old)
+{
+#ifdef EMSCRIPTEN
+    char key[96];
+    snprintf(key, sizeof(key), "dl:clear-discard %s %ux%u",
+             old->color ? "color" : "zeta", old->width, old->height);
+    xemu_wasm_count(g_intern_string(key));
+#endif
+    old->draw_dirty = false;
+    old->download_pending = false;
+}
+
 static void download_overlapping_batched(NV2AState *d,
                                          SurfaceBinding const *surface)
 {
@@ -837,7 +912,7 @@ static void download_overlapping_batched(NV2AState *d,
             break;
         }
         if (!check_surfaces_overlap(surface, o) || !o->draw_dirty ||
-            o->backing || !o->width || !o->height ||
+            o->backing || clear_overwrites(d, surface, o) || !o->width || !o->height ||
             o->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8) {
             continue;
         }
@@ -900,6 +975,10 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
     QTAILQ_FOREACH_SAFE (other_surface, &r->surf.surfaces, entry,
                          next_surface) {
         if (check_surfaces_overlap(surface, other_surface)) {
+            if (other_surface->draw_dirty &&
+                clear_overwrites(d, surface, other_surface)) {
+                discard_cleared(d, surface, other_surface);
+            }
             if (other_surface->draw_dirty) {
                 const char *reason = surface_stitch_reject_reason(
                     d, other_surface, surface);
@@ -2102,6 +2181,10 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                     surface = replacement;
                     transferred = true;
                 } else {
+                    if (surface->draw_dirty &&
+                        clear_overwrites(d, &target, surface)) {
+                        discard_cleared(d, &target, surface);
+                    }
                     pgraph_wgpu_dl_reason = "incompatible-rebind";
                     pgraph_wgpu_surface_download_if_dirty(d, surface);
                     invalidate_surface(d, surface);

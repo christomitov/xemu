@@ -1374,7 +1374,9 @@ void pgraph_wgpu_clear_surface(NV2AState *d, uint32_t parameter)
 
     // FIXME: If doing a full surface clear, mark the surface for full clear
     // and we can just do the clear as part of the surface load.
+    pgraph_wgpu_clear_param = parameter;
     pgraph_wgpu_surface_update(d, true, write_color, write_zeta);
+    pgraph_wgpu_clear_param = 0;
 
     SurfaceBinding *binding = r->color_binding ?: r->zeta_binding;
     if (!binding) {
