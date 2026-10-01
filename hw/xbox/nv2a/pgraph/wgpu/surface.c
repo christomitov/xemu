@@ -774,6 +774,20 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
             if (!write) {
                 surface->cpu_read_hot = true;
                 eager_mark_hot(surface);
+#ifdef EMSCRIPTEN
+                if ((size_t)surface->width * surface->height <= 128 * 128) {
+                    /* was an early copy in flight for this read? */
+                    char key[96];
+                    snprintf(key, sizeof(key),
+                             "eager:read %ux%u bound%d copy%d current%d",
+                             surface->width, surface->height,
+                             surface == r->color_binding,
+                             surface->eager_buf != NULL,
+                             surface->eager_buf &&
+                             surface->eager_epoch == surface->gpu_epoch);
+                    xemu_wasm_count(g_intern_string(key));
+                }
+#endif
             }
         }
 
