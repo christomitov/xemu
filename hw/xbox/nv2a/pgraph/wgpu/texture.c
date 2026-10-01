@@ -915,6 +915,7 @@ static void create_texture_image(PGRAPHWgpuState *r, TextureBinding *binding,
     binding->view_dimension = view_dimension;
     binding->sample_type = sample_type_for_format(r, format);
     binding->from_surface = extra_usage != WGPUTextureUsage_None;
+    binding->linear_snapshot = false;
     binding->width = width;
     binding->height = height;
     binding->depth = is_3d ? depth : 1;
@@ -985,6 +986,8 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
  * that rendered the surface and before later draws sampling the texture):
  *  - S2T_COLOR: render pass sampling the color surface (textureLoad) into a
  *    BGRA8/RGBA8 texture, optionally forcing alpha to 1 (X formats).
+ *  - S2T_LINEAR_RESHAPE: a tight BGRA/BGRX snapshot addressed by guest bytes,
+ *    including changed pitch and interior ranges of a retained owner.
  *  - S2T_DEPTH16: render pass reading a Z16 surface's depth into the
  *    RGBA32Float (depth, 0, is_float, 0) layout of the Y16 depth formats.
  *  - S2T_Z24S8: the surface module packs depth+stencil into Z24S8 words
@@ -1000,6 +1003,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
 typedef enum SurfaceToTextureMode {
     S2T_NONE,
     S2T_COLOR,
+    S2T_LINEAR_RESHAPE,
     S2T_DEPTH16,
     S2T_Z24S8,
     S2T_Z24S8_PACKED_COLOR,
@@ -1382,11 +1386,12 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
     if (retained_owner) {
         pgraph_wgpu_merge_surface_backing(pg, retained_owner);
 #ifdef EMSCRIPTEN
-        char key[128];
-        snprintf(key, sizeof(key), "dl:gpu-retained-s2t %ux%u backing%ux%u",
-                 surface->width, surface->height,
-                 retained_owner->backing->width,
-                 retained_owner->backing->height);
+        const SurfaceBinding *image = retained_owner->backing ?
+            retained_owner->backing : retained_owner;
+        char key[160];
+        snprintf(key, sizeof(key), "dl:gpu-%s-s2t %ux%u backing%ux%u",
+                 mode == S2T_LINEAR_RESHAPE ? "linear" : "retained",
+                 surface->width, surface->height, image->width, image->height);
         xemu_wasm_count(g_intern_string(key));
 #endif
     }
@@ -1409,6 +1414,18 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         texture->height != scaled_height || texture->mip_levels != 1) {
         create_texture_image(r, texture, wf->format, scaled_width,
                              scaled_height, 1, 1, usage);
+    }
+
+    if (mode == S2T_LINEAR_RESHAPE) {
+        assert(retained_owner && wf->format == WGPUTextureFormat_BGRA8Unorm);
+        const SurfaceBinding *image = retained_owner->backing ?
+            retained_owner->backing : retained_owner;
+        pgraph_wgpu_reshape_surface(pg, image, texture->view,
+                                    surface->vram_addr, surface->width,
+                                    surface->height, wf->from_surface_opaque);
+        texture->draw_time = surface->draw_time;
+        texture->linear_snapshot = true;
+        return;
     }
 
     WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
@@ -1507,6 +1524,7 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
     pgraph_wgpu_end_nondraw_commands(pg, enc);
 
     texture->draw_time = surface->draw_time;
+    texture->linear_snapshot = false;
 }
 
 static WGPUSampler create_sampler(PGRAPHWgpuState *r, const TextureKey *key,
@@ -1728,8 +1746,19 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     // Check active surfaces to see if this texture was a render target
     SurfaceBinding *surface = pgraph_wgpu_surface_get(d, texture_vram_offset);
+    if (!surface && r->surf.num_retained &&
+        pgraph_wgpu_linear_reshape_enabled()) {
+        /* A stitched bloom owner can now live inside a larger target. */
+        SurfaceBinding *owner =
+            pgraph_wgpu_surface_get_within(d, texture_vram_offset);
+        if (owner && owner->backing) {
+            surface = owner;
+        }
+    }
     if (surface && state.levels == 1) {
-        s2t_mode = check_surface_to_texture_compatiblity(surface, &state);
+        if (surface->vram_addr == texture_vram_offset) {
+            s2t_mode = check_surface_to_texture_compatiblity(surface, &state);
+        }
 
         /*
          * Sampling the former larger target must not force the readback we
@@ -1740,6 +1769,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
          * Other reinterpretations still materialize the complete owner.
          */
         if (s2t_mode == S2T_NONE && surface->backing &&
+            surface->vram_addr == texture_vram_offset &&
             surface->backing->swizzle &&
             !surface->upload_pending && !surface->download_pending &&
             pg->surface_scale_factor == 1 && state.dimensionality == 2 &&
@@ -1760,6 +1790,45 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             retained_owner = surface;
             surface = &retained_source;
             s2t_mode = S2T_COLOR;
+        }
+
+        /*
+         * Preserve linear byte addressing for larger/interior snapshots too;
+         * otherwise the texture fallback would simply move the readback.
+         * Only tight native BGRA/BGRX, one 2D level and a wholly owned range.
+         */
+        if (s2t_mode == S2T_NONE && surface->backing &&
+            pgraph_wgpu_linear_reshape_enabled() &&
+            pg->surface_scale_factor == 1 && surface->initialized &&
+            surface->access_cb && !surface->upload_pending &&
+            !surface->download_pending && state.dimensionality == 2 &&
+            state.depth == 1 && !state.cubemap && !state.border &&
+            state.width && state.height &&
+            state.pitch == (uint64_t)state.width * 4 &&
+            (state.color_format ==
+                 NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 ||
+             state.color_format ==
+                 NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8)) {
+            const SurfaceBinding *image = surface->backing ?
+                surface->backing : surface;
+            uint64_t size = (uint64_t)state.pitch * state.height;
+            if (pgraph_wgpu_is_linear_bgra(image) &&
+                texture_vram_offset >= image->vram_addr &&
+                texture_vram_offset - image->vram_addr <= image->size &&
+                size <= image->size -
+                            (texture_vram_offset - image->vram_addr) &&
+                (texture_vram_offset - image->vram_addr) % 4 == 0) {
+                retained_source = *image;
+                retained_source.vram_addr = texture_vram_offset;
+                retained_source.width = state.width;
+                retained_source.height = state.height;
+                retained_source.pitch = state.pitch;
+                retained_source.size = size;
+                retained_source.draw_time = surface->draw_time;
+                retained_owner = surface;
+                surface = &retained_source;
+                s2t_mode = S2T_LINEAR_RESHAPE;
+            }
         }
 
         if (s2t_mode == S2T_NONE && surface->color) {
@@ -1889,6 +1958,32 @@ static bool check_textures_dirty(PGRAPHState *pg)
             return true;
         }
     }
+    if (!pgraph_wgpu_linear_reshape_enabled()) {
+        return false;
+    }
+    for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
+        if (!pgraph_is_texture_enabled(pg, i)) {
+            continue;
+        }
+        TextureBinding *t = r->tex.texture_bindings[i];
+        if (t->linear_snapshot) {
+            return true;
+        }
+        if (!r->surf.num_retained || !t->key.texture_length) {
+            continue;
+        }
+        SurfaceBinding *s;
+        QTAILQ_FOREACH(s, &r->surf.surfaces, entry) {
+            if (s->backing && pgraph_wgpu_is_linear_bgra(s->backing) &&
+                s->vram_addr < t->key.texture_vram_offset +
+                                   t->key.texture_length &&
+                t->key.texture_vram_offset < s->vram_addr +
+                                                s->backing->size) {
+                /* Ownership can change without texture register writes. */
+                return true;
+            }
+        }
+    }
     return false;
 }
 
@@ -1928,6 +2023,7 @@ static void texture_cache_entry_init(Lru *lru, LruNode *node, const void *state)
     snode->view = NULL;
     snode->sampler = NULL;
     snode->from_surface = false;
+    snode->linear_snapshot = false;
 }
 
 static void texture_cache_release_node_resources(TextureBinding *snode)

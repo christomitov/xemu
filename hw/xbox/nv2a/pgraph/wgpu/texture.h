@@ -59,6 +59,8 @@ struct TextureBinding {
     /* contents were produced from a render surface on the GPU (texture has
      * RenderAttachment/StorageBinding usage and the scaled surface size) */
     bool from_surface;
+    /* Recheck ownership even after a linear backing has been materialized. */
+    bool linear_snapshot;
     unsigned int width, height, depth;
     unsigned int mip_levels, array_layers;
 

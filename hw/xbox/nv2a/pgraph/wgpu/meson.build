@@ -19,6 +19,7 @@ specific_ss.add([webgpu, files(
 	'reports.c',
 	'shaders.c',
 	'surface-compute.c',
+	'surface-reshape.c',
 	'surface.c',
 	'texture.c',
 	'vertex.c',
