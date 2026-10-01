@@ -110,6 +110,7 @@
     X(n_rep_movs_bail)   /* ... calls that left a remainder to the loop */ \
     X(n_eager_readback)  /* small surfaces copied back early */ \
     X(n_eager_readback_hit) /* ... whose early copy served a CPU read */ \
+    X(n_wgsl_cache_hit)  /* shaders whose WGSL came from the persistent cache */ \
     /* guest-visible */                                                      \
     X(n_flip)            /* guest buffer flips (frames) */
 
