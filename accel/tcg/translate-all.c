@@ -337,6 +337,19 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
     tb->cs_base = s.cs_base;
     tb->flags = s.flags;
     tb->cflags = s.cflags;
+#ifdef EMSCRIPTEN
+    {
+        /* why fresh code keeps being generated (variants? same pages?) */
+        extern void xemu_wasm_count(const char *);
+        char k[40];
+        snprintf(k, sizeof(k), "tbgen:cf=%x", (unsigned)s.cflags);
+        xemu_wasm_count(g_intern_string(k));
+        snprintf(k, sizeof(k), "tbgen:fl=%x", (unsigned)s.flags);
+        xemu_wasm_count(g_intern_string(k));
+        snprintf(k, sizeof(k), "tbgenpage:%x", (unsigned)(phys_pc >> 12));
+        xemu_wasm_count(g_intern_string(k));
+    }
+#endif
     tb_set_page_addr0(tb, phys_pc);
     tb_set_page_addr1(tb, -1);
     if (phys_pc != -1) {
