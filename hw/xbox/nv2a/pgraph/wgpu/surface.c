@@ -1132,6 +1132,170 @@ static void populate_surface_binding_target(NV2AState *d, bool color,
     populate_surface_binding_target_sized(d, color, width, height, target);
 }
 
+/* Allocate before retiring a transfer source so its image cannot be reused. */
+static SurfaceBinding *allocate_surface_binding(NV2AState *d,
+                                                const SurfaceBinding *target)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding new_binding = *target;
+    SurfaceBinding *surface =
+        get_any_compatible_invalid_surface(r, &new_binding);
+
+    if (surface) {
+        migrate_surface_image(&new_binding, surface);
+    } else {
+        surface = g_new(SurfaceBinding, 1);
+        create_surface_image(pg, &new_binding);
+    }
+    *surface = new_binding;
+    set_surface_label(pg, surface);
+    return surface;
+}
+
+/* NULL means every dirty source texel has the same address in the target. */
+static const char *surface_transfer_reject_reason(NV2AState *d,
+                                                 const SurfaceBinding *src,
+                                                 const SurfaceBinding *dst,
+                                                 bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding *other;
+
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_REBIND_TRANSFER");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled) {
+        return "disabled";
+    }
+#endif
+    if (!upload || !tcg_enabled()) {
+        return "cpu-owner";
+    }
+    if (!src->color || !dst->color) {
+        return "zeta";
+    }
+    if (!src->initialized || !src->texture || !src->width || !src->height) {
+        return "uninitialized";
+    }
+    if (src->upload_pending || src->download_pending) {
+        return "cpu-pending";
+    }
+    if (!src->draw_dirty) {
+        return "clean";
+    }
+    if (!src->access_cb) {
+        return "untrapped";
+    }
+    if (src->swizzle || dst->swizzle || pg->surface_scale_factor != 1 ||
+        src->shape.anti_aliasing != dst->shape.anti_aliasing) {
+        return "layout";
+    }
+    /* Packed 16bpp host images require quantization, not a raw image copy. */
+    if (src->shape.color_format != dst->shape.color_format ||
+        src->host_fmt.format != dst->host_fmt.format ||
+        src->host_fmt.conv != WGPU_SURFACE_CONV_NONE ||
+        dst->host_fmt.conv != WGPU_SURFACE_CONV_NONE ||
+        src->fmt.bytes_per_pixel != dst->fmt.bytes_per_pixel ||
+        src->host_fmt.host_bytes_per_pixel != src->fmt.bytes_per_pixel ||
+        dst->host_fmt.host_bytes_per_pixel != dst->fmt.bytes_per_pixel) {
+        return "format";
+    }
+    if (src->vram_addr != dst->vram_addr || src->pitch != dst->pitch ||
+        dst->pitch < (uint64_t)dst->width * dst->fmt.bytes_per_pixel) {
+        return "pitch";
+    }
+    if (dst->width < src->width || dst->height < src->height ||
+        dst->size < src->size) {
+        return "partial-owner";
+    }
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (other != src && check_surfaces_overlap(dst, other)) {
+            return "other-owner";
+        }
+    }
+    return NULL;
+}
+
+static void log_surface_transfer(const SurfaceBinding *src,
+                                  const SurfaceBinding *dst,
+                                  const char *reason)
+{
+#ifdef EMSCRIPTEN
+    /* Decision counts; the existing download counters still count readbacks. */
+    char key[256];
+    snprintf(key, sizeof(key),
+             "dl:rebind-%s:%s old:%c/f%u/%ux%u/p%u/%s/a%u "
+             "new:%c/f%u/%ux%u/p%u/%s/a%u",
+             reason ? "fallback" : "gpu", reason ? reason : "whole-owner",
+             src->color ? 'C' : 'Z',
+             src->color ? src->shape.color_format : src->shape.zeta_format,
+             src->width, src->height, src->pitch, src->swizzle ? "sz" : "lin",
+             src->shape.anti_aliasing, dst->color ? 'C' : 'Z',
+             dst->color ? dst->shape.color_format : dst->shape.zeta_format,
+             dst->width, dst->height, dst->pitch, dst->swizzle ? "sz" : "lin",
+             dst->shape.anti_aliasing);
+    xemu_wasm_count(g_intern_string(key));
+#endif
+}
+
+static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
+                                                SurfaceBinding *src,
+                                                const SurfaceBinding *target,
+                                                bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    const char *reason = surface_transfer_reject_reason(d, src, target, upload);
+
+    if (reason) {
+        log_surface_transfer(src, target, reason);
+        return NULL;
+    }
+
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    assert(dst->texture != src->texture);
+
+    /*
+     * Arm the enlarged interval before reading VRAM, as surface_put/upload
+     * normally does. Callbacks take pgraph.lock, held throughout this handoff,
+     * so they cannot observe the not-yet-published destination. Keep the source
+     * live (and out of the recyclable pool) until its copy has been recorded.
+     */
+    register_cpu_access_callback(d, dst);
+    /*
+     * This submits prior work before the queue write. VRAM may be stale in
+     * the source rectangle; the following ordered GPU copy replaces it.
+     * The uncovered margins are current VRAM (there are no other owners).
+     */
+    pgraph_wgpu_upload_surface_data(d, dst, false);
+    assert(dst->initialized && !dst->upload_pending && !dst->download_pending);
+
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    WGPUTexelCopyTextureInfo from = {
+        .texture = src->texture, .aspect = WGPUTextureAspect_All,
+    };
+    WGPUTexelCopyTextureInfo to = {
+        .texture = dst->texture, .aspect = WGPUTextureAspect_All,
+    };
+    WGPUExtent3D extent = { src->width, src->height, 1 };
+    wgpuCommandEncoderCopyTextureToTexture(enc, &from, &to, &extent);
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+
+    /* VRAM is still stale: transfer, rather than clear, dirty ownership. */
+    dst->draw_dirty = src->draw_dirty;
+    src->draw_dirty = false;
+    log_surface_transfer(src, dst, NULL);
+    /* Also submits the copy before the source can enter the reusable pool. */
+    invalidate_surface(d, src);
+    surface_put(d, dst);
+    /* surface_update(upload=true) advances draw_time before texture binding. */
+    return dst;
+}
+
 static void update_surface_part(NV2AState *d, bool upload, bool color)
 {
     PGRAPHState *pg = &d->pgraph;
@@ -1179,6 +1343,7 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
             pg->surface_shape.clip_height);
 
         bool should_create = true;
+        bool transferred = false;
 
         if (surface != NULL) {
             bool is_compatible =
@@ -1231,24 +1396,24 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
-                pgraph_wgpu_dl_reason = "incompatible-rebind";
-                pgraph_wgpu_surface_download_if_dirty(d, surface);
-                invalidate_surface(d, surface);
+                SurfaceBinding *replacement = try_transfer_surface_gpu(
+                    d, surface, &target, upload);
+                if (replacement) {
+                    surface = replacement;
+                    transferred = true;
+                } else {
+                    pgraph_wgpu_dl_reason = "incompatible-rebind";
+                    pgraph_wgpu_surface_download_if_dirty(d, surface);
+                    invalidate_surface(d, surface);
+                }
             }
         }
 
         if (should_create) {
-            surface = get_any_compatible_invalid_surface(r, &target);
-            if (surface) {
-                migrate_surface_image(&target, surface);
-            } else {
-                surface = g_malloc(sizeof(SurfaceBinding));
-                create_surface_image(pg, &target);
+            if (!transferred) {
+                surface = allocate_surface_binding(d, &target);
+                surface_put(d, surface);
             }
-
-            *surface = target;
-            set_surface_label(pg, surface);
-            surface_put(d, surface);
 
             // FIXME: Refactor
             pg->surface_binding_dim.width = target.width;
