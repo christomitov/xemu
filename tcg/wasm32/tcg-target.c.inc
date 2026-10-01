@@ -235,6 +235,7 @@ static WasmTBHeader *cur_hdr;   /* header of the TB being generated */
 #define W_I32_REM_S     0x6f
 #define W_I32_REM_U     0x70
 #define W_I32_AND       0x71
+#define W_I32_XOR       0x73
 #define W_I32_OR        0x72
 #define W_I32_SHL       0x74
 #define W_I32_SHR_U     0x76
@@ -1423,6 +1424,13 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     /* L32_2 = addr; L32_0 = entry */
     wasm_get_r32(s, addr);
     wasm_var(s, W_LOCAL_TEE, L32_2);
+    /* addr ^ ((addr >> 12) & 0xff000): the index hash of tlb_index() */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, 12);
+    wasm8(s, W_I32_SHR_U);
+    wasm_i32_const(s, 0xff000);
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_I32_XOR);
     wasm_i32_const(s, TARGET_PAGE_BITS - CPU_TLB_ENTRY_BITS);
     wasm8(s, W_I32_SHR_U);
     wasm_get_r32(s, TCG_AREG0);

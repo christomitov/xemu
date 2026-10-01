@@ -36,6 +36,16 @@
     X(n_guest_insn)      /* guest insns in dispatched JIT TBs (not loops) */  \
     X(n_tb_invalidate)   /* TBs invalidated (SMC, page writes) */            \
     X(n_bind_group_create) /* WebGPU bind groups created (cache misses) */  \
+    X(n_slow_st)         /* stores taking the softmmu slow path */          \
+    X(n_slow_st_miss)    /*  ... TLB miss (victim hit or fill) */          \
+    X(n_slow_st_notdirty) /* ... clean page (code / dirty tracking) */     \
+    X(n_slow_st_mmio)    /*  ... MMIO */                                    \
+    X(n_slow_st_watch)   /*  ... watchpoint / access callback */            \
+    X(n_slow_ld)         /* loads taking the softmmu slow path */           \
+    X(n_slow_ld_miss)                                                        \
+    X(n_slow_ld_mmio)                                                        \
+    X(n_slow_ld_watch)                                                       \
+    X(n_tlb_alias)       /* misses where the slot held the same low page bits */ \
     X(n_tb_flush)        /* whole translation cache flushed (buffer full) */ \
     X(n_test_unwind)     /* XEMU_WASM_TEST_UNWIND forced sleeps */            \
     X(n_jit_rewind)      /* Asyncify rewinds into JIT code (rewind fns) */   \
