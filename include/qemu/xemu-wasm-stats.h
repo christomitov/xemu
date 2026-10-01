@@ -35,6 +35,7 @@
     X(n_tb_linkmiss)     /* chained goto_tb whose link was missing/stale */  \
     X(n_guest_insn)      /* guest insns in dispatched JIT TBs (not loops) */  \
     X(n_tb_invalidate)   /* TBs invalidated (SMC, page writes) */            \
+    X(n_tb_flush)        /* whole translation cache flushed (buffer full) */ \
     X(n_test_unwind)     /* XEMU_WASM_TEST_UNWIND forced sleeps */            \
     X(n_jit_rewind)      /* Asyncify rewinds into JIT code (rewind fns) */   \
     X(n_region_compile)  /* region modules built */                          \
