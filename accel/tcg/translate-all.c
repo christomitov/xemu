@@ -308,6 +308,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
             }
         }
         recycled = true;
+        XSTAT_INC(n_tb_recycle);
         goto recycle_tb;
     }
 
