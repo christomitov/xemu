@@ -2907,6 +2907,7 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
     TCGv_i32 pc = tcg_temp_new_i32();
     TCGv_i32 t = tcg_temp_new_i32();
     TCGv_i32 h = tcg_temp_new_i32();
+    TCGv_i32 gen = tcg_temp_new_i32();
     TCGv_ptr jc = tcg_temp_new_ptr();
     TCGv_ptr tb = tcg_temp_new_ptr();
     TCGv_ptr p = tcg_temp_new_ptr();
@@ -2936,6 +2937,7 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
     /* entry = &cpu->tb_jmp_cache->array[h] */
     tcg_gen_ld_ptr(jc, tcg_env, (intptr_t)offsetof(CPUState, tb_jmp_cache) -
                                 (intptr_t)offsetof(X86CPU, env));
+    tcg_gen_ld_i32(gen, jc, offsetof(CPUJumpCache, gen));
     tcg_gen_muli_i32(h, h, elem);
     tcg_gen_ext_i32_ptr(p, h);
     tcg_gen_add_ptr(jc, jc, p);
@@ -2944,6 +2946,9 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
     tcg_gen_brcondi_ptr(TCG_COND_EQ, tb, 0, miss);
     tcg_gen_ld_i32(t, jc, offsetof(CPUJumpCache, array[0].pc));
     tcg_gen_brcond_i32(TCG_COND_NE, t, pc, miss);
+    /* the entry's generation (see tb_jmp_cache_match) */
+    tcg_gen_ld_i32(t, jc, offsetof(CPUJumpCache, array[0].gen));
+    tcg_gen_brcond_i32(TCG_COND_NE, t, gen, miss);
 
     /* cs_base, flags (as x86_get_tb_cpu_state), cflags */
     tcg_gen_ld_i32(t, tb, offsetof(TranslationBlock, cs_base));

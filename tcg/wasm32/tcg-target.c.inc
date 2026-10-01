@@ -1334,6 +1334,8 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
                                const TCGHelperInfo *info);
 static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
                               const TCGHelperInfo *info);
+static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
+                                    const TCGHelperInfo *info);
 #endif
 
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
@@ -1347,6 +1349,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         return;
     }
     if (wasm_call_cc_fast(s, func, info)) {
+        return;
+    }
+    if (wasm_call_shufps_inline(s, func, info)) {
         return;
     }
 #endif
@@ -3213,6 +3218,98 @@ static void cc_logic_flags(TCGContext *s, bool byte)
     wasm_i32_const(s, 0x80);
     wasm8(s, W_I32_AND);
     wasm8(s, W_I32_OR);
+}
+
+/* push the address of 32-bit lane ((order >> sh) & 3) of argument @arg */
+static void shufps_lane(TCGContext *s, int arg, int sh)
+{
+    sse_arg(s, arg);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    if (sh) {
+        wasm_i32_const(s, sh);
+        wasm8(s, W_I32_SHR_U);
+    }
+    wasm_i32_const(s, 3);
+    wasm8(s, W_I32_AND);
+    wasm_i32_const(s, 2);
+    wasm8(s, W_I32_SHL);
+    wasm8(s, W_I32_ADD);
+    wasm_mem(s, W_I32_LOAD, 0);
+}
+
+/*
+ * shufps_xmm(d, v, s, order) inline: a pure lane shuffle (SHUFFLE4 in
+ * target/i386/ops_sse.h). All four lanes are read before d is written,
+ * as d may be v or s. XEMU_WASM_SHUFPS_INLINE=0 disables.
+ */
+static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
+                                    const TCGHelperInfo *info)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        /* 0: off, 1: on, 2: verify against the helper (testing) */
+        const char *e = getenv("XEMU_WASM_SHUFPS_INLINE");
+        enabled = e ? atoi(e) : 1;
+    }
+    if (!enabled || !info->name || strcmp(info->name, "shufps_xmm") ||
+        helper_nargs(info->typemask) != 4 || (info->typemask & 7) !=
+        dh_typecode_void) {
+        return false;
+    }
+    sse_arg(s, 3);
+    wasm_var(s, W_LOCAL_SET, L32_0);
+    shufps_lane(s, 1, 0);
+    wasm_var(s, W_LOCAL_SET, L32_1);
+    shufps_lane(s, 1, 2);
+    wasm_var(s, W_LOCAL_SET, L32_2);
+    shufps_lane(s, 2, 4);
+    wasm_var(s, W_LOCAL_SET, L32_3);
+    shufps_lane(s, 2, 6);
+    wasm8(s, W_I64_EXTEND_I32_U);
+    wasm_var(s, W_LOCAL_SET, L64_0);
+    if (enabled == 2) {
+        int func_idx = get_helper_idx(func);
+        if (func_idx < 0) {
+            func_idx = register_helper(func);
+            gen_func_type(info);
+        }
+        wasm_push_call_args(s, info->typemask, 4);
+        wasm_call_idx(s, func_idx);
+        wasm_count(s, &xemu_wasm_stats.n_sse_checked);
+        for (int k = 0; k < 4; k++) {
+            sse_arg(s, 0);
+            wasm_mem(s, W_I32_LOAD, 4 * k);
+            if (k < 3) {
+                wasm_var(s, W_LOCAL_GET, L32_1 + k);
+            } else {
+                wasm_var(s, W_LOCAL_GET, L64_0);
+                wasm8(s, W_I32_WRAP_I64);
+            }
+            wasm8(s, W_I32_NE);
+            if (k) {
+                wasm8(s, W_I32_OR);
+            }
+        }
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+        wasm_count(s, &xemu_wasm_stats.n_sse_mismatch);
+        wasm8(s, W_END);
+        return true;
+    }
+    sse_arg(s, 0);
+    wasm_var(s, W_LOCAL_GET, L32_1);
+    wasm_mem(s, W_I32_STORE, 0);
+    sse_arg(s, 0);
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_mem(s, W_I32_STORE, 4);
+    sse_arg(s, 0);
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    wasm_mem(s, W_I32_STORE, 8);
+    sse_arg(s, 0);
+    wasm_var(s, W_LOCAL_GET, L64_0);
+    wasm8(s, W_I32_WRAP_I64);
+    wasm_mem(s, W_I32_STORE, 12);
+    return true;
 }
 
 static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
