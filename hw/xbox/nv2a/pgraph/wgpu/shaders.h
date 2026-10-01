@@ -146,6 +146,13 @@ typedef struct PGRAPHWgpuShaderState {
      */
     WGPUBuffer uniform_buffer;
     size_t uniform_buffer_size;
+    /*
+     * Uniform uploads are staged here (same offsets as the buffer) and the
+     * dirty range goes to the GPU with one writeBuffer before the submit
+     * (or before the buffer is replaced): see pgraph_wgpu_flush_uniforms.
+     */
+    uint8_t *uniform_staging;
+    size_t ustage_lo, ustage_hi;
     size_t uniform_offset;
     uint32_t uniform_alignment;
     size_t uniform_block_offsets[2]; /* vsh, psh of the last upload */

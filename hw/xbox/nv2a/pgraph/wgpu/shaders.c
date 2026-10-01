@@ -512,10 +512,26 @@ static void update_shader_uniforms(PGRAPHState *pg)
     uniform_block_store(&binding->psh.module_info->uniforms, &psh_values);
 }
 
+void pgraph_wgpu_flush_uniforms(PGRAPHWgpuState *r)
+{
+    PGRAPHWgpuShaderState *s = &r->shaders;
+
+    if (s->uniform_staging && s->ustage_hi > s->ustage_lo) {
+        wgpuQueueWriteBuffer(r->queue, s->uniform_buffer, s->ustage_lo,
+                             s->uniform_staging + s->ustage_lo,
+                             ROUND_UP(s->ustage_hi - s->ustage_lo, 4));
+    }
+    s->ustage_lo = s->ustage_hi = 0;
+}
+
 static void create_uniform_buffer(PGRAPHWgpuState *r)
 {
     PGRAPHWgpuShaderState *s = &r->shaders;
 
+    if (s->uniform_buffer) {
+        /* staged uniforms belong to the old buffer */
+        pgraph_wgpu_flush_uniforms(r);
+    }
     if (s->uniform_buffer) {
         /* bind groups recorded in the open encoder keep it alive */
         wgpuBufferRelease(s->uniform_buffer);
@@ -574,8 +590,17 @@ static void upload_uniforms(PGRAPHWgpuState *r, ShaderBinding *binding)
             continue;
         }
         s->uniform_block_offsets[i] = s->uniform_offset;
-        wgpuQueueWriteBuffer(r->queue, s->uniform_buffer, s->uniform_offset,
-                             blocks[i]->allocation, blocks[i]->total_size);
+        if (!s->uniform_staging) {
+            s->uniform_staging = g_malloc0(s->uniform_buffer_size + 4);
+        }
+        memcpy(s->uniform_staging + s->uniform_offset, blocks[i]->allocation,
+               blocks[i]->total_size);
+        if (s->ustage_hi == s->ustage_lo) {
+            s->ustage_lo = s->uniform_offset;
+        }
+        s->ustage_lo = MIN(s->ustage_lo, s->uniform_offset);
+        s->ustage_hi = MAX(s->ustage_hi,
+                           s->uniform_offset + blocks[i]->total_size);
         s->uniform_offset += ROUND_UP(blocks[i]->total_size,
                                       s->uniform_alignment);
         s->uniform_hashes[i] = hashes[i];
@@ -881,6 +906,8 @@ void pgraph_wgpu_finalize_shaders(PGRAPHState *pg)
 
     if (s->uniform_buffer) {
         wgpuBufferRelease(s->uniform_buffer);
+        g_free(s->uniform_staging);
+        s->uniform_staging = NULL;
         s->uniform_buffer = NULL;
     }
 }
