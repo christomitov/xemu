@@ -104,6 +104,32 @@ static const char unpack_wgsl[] =
     "    return o;\n"
     "}\n";
 
+/*
+ * GPU-sourced unpack: stencil bytes of the packed words (header + data, as
+ * for unpack) into rows of @stride_words u32s, 4 bytes per word, for a
+ * buffer-to-texture copy into the stencil aspect.
+ */
+static const char stencil_extract_wgsl[] =
+    "struct DepthStencilIn {\n"
+    "    width: u32, height: u32, stride_words: u32, pad1: u32,\n"
+    "    data: array<u32>,\n"
+    "}\n"
+    "@group(0) @binding(0) var<storage, read> inp: DepthStencilIn;\n"
+    "@group(0) @binding(1) var<storage, read_write> outp: array<u32>;\n"
+    "@compute @workgroup_size(64)\n"
+    "fn extract(@builtin(global_invocation_id) id: vec3u) {\n"
+    "    let w = inp.width;\n"
+    "    if (id.x >= (w + 3u) / 4u || id.y >= inp.height) { return; }\n"
+    "    var v = 0u;\n"
+    "    for (var k = 0u; k < 4u; k++) {\n"
+    "        let x = id.x * 4u + k;\n"
+    "        if (x < w) {\n"
+    "            v |= (inp.data[id.y * w + x] & 0xffu) << (8u * k);\n"
+    "        }\n"
+    "    }\n"
+    "    outp[id.y * inp.stride_words + id.x] = v;\n"
+    "}\n";
+
 #define UNPACK_HEADER_SIZE 16
 
 static WGPUTextureFormat z24s8_host_format(PGRAPHWgpuState *r)
@@ -212,6 +238,38 @@ static void create_unpack_pipeline(PGRAPHWgpuState *r)
     wgpuPipelineLayoutRelease(layout);
 }
 
+static void create_stencil_extract_pipeline(PGRAPHWgpuState *r)
+{
+    WGPUBindGroupLayoutEntry entries[2] = {
+        { .binding = 0, .visibility = WGPUShaderStage_Compute,
+          .buffer = { .type = WGPUBufferBindingType_ReadOnlyStorage } },
+        { .binding = 1, .visibility = WGPUShaderStage_Compute,
+          .buffer = { .type = WGPUBufferBindingType_Storage } },
+    };
+    r->surf.compute.stencil_bgl = wgpuDeviceCreateBindGroupLayout(
+        r->device, &(WGPUBindGroupLayoutDescriptor){
+                       .label = { "zeta stencil extract", WGPU_STRLEN },
+                       .entryCount = ARRAY_SIZE(entries),
+                       .entries = entries });
+    WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(
+        r->device, &(WGPUPipelineLayoutDescriptor){
+                       .bindGroupLayoutCount = 1,
+                       .bindGroupLayouts = &r->surf.compute.stencil_bgl });
+    WGPUShaderModule module = pgraph_wgpu_create_wgsl_module(
+        r, "zeta stencil extract", stencil_extract_wgsl);
+
+    WGPUComputePipelineDescriptor desc = WGPU_COMPUTE_PIPELINE_DESCRIPTOR_INIT;
+    desc.label = (WGPUStringView){ "zeta stencil extract", WGPU_STRLEN };
+    desc.layout = layout;
+    desc.compute.module = module;
+    desc.compute.entryPoint = (WGPUStringView){ "extract", WGPU_STRLEN };
+    r->surf.compute.stencil_pipeline =
+        wgpuDeviceCreateComputePipeline(r->device, &desc);
+
+    wgpuShaderModuleRelease(module);
+    wgpuPipelineLayoutRelease(layout);
+}
+
 static void ensure_buffer(PGRAPHWgpuState *r, WGPUBuffer *buffer,
                           size_t *buffer_size, size_t size,
                           WGPUBufferUsage usage, const char *label)
@@ -237,6 +295,7 @@ void pgraph_wgpu_init_surface_compute(PGRAPHState *pg)
 
     create_pack_pipeline(r);
     create_unpack_pipeline(r);
+    create_stencil_extract_pipeline(r);
 }
 
 void pgraph_wgpu_finalize_surface_compute(PGRAPHState *pg)
@@ -268,6 +327,19 @@ void pgraph_wgpu_finalize_surface_compute(PGRAPHState *pg)
         wgpuBufferRelease(r->surf.compute.unpack_src);
         r->surf.compute.unpack_src = NULL;
         r->surf.compute.unpack_src_size = 0;
+    }
+    if (r->surf.compute.stencil_pipeline) {
+        wgpuComputePipelineRelease(r->surf.compute.stencil_pipeline);
+        r->surf.compute.stencil_pipeline = NULL;
+    }
+    if (r->surf.compute.stencil_bgl) {
+        wgpuBindGroupLayoutRelease(r->surf.compute.stencil_bgl);
+        r->surf.compute.stencil_bgl = NULL;
+    }
+    if (r->surf.compute.stencil_dst) {
+        wgpuBufferRelease(r->surf.compute.stencil_dst);
+        r->surf.compute.stencil_dst = NULL;
+        r->surf.compute.stencil_dst_size = 0;
     }
 }
 
@@ -317,6 +389,116 @@ void pgraph_wgpu_pack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
     wgpuBindGroupRelease(bg);
 }
 
+/* Depth from the header + Z24S8 words in unpack_src: full-screen pass. */
+static void unpack_depth_pass(PGRAPHWgpuState *r, SurfaceBinding *surface,
+                              WGPUCommandEncoder enc, size_t data_size)
+{
+    unsigned int width = surface->width, height = surface->height;
+
+    WGPUBindGroupEntry entry = {
+        .binding = 0,
+        .buffer = r->surf.compute.unpack_src,
+        .offset = 0,
+        .size = data_size,
+    };
+    WGPUBindGroup bg = wgpuDeviceCreateBindGroup(
+        r->device, &(WGPUBindGroupDescriptor){
+                       .layout = r->surf.compute.unpack_bgl,
+                       .entryCount = 1,
+                       .entries = &entry });
+
+    WGPURenderPassDepthStencilAttachment dsa = {
+        .view = surface->view,
+        .depthLoadOp = WGPULoadOp_Load,
+        .depthStoreOp = WGPUStoreOp_Store,
+        .stencilLoadOp = WGPULoadOp_Load,
+        .stencilStoreOp = WGPUStoreOp_Store,
+    };
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(
+        enc, &(WGPURenderPassDescriptor){
+                 .label = { "zeta unpack", WGPU_STRLEN },
+                 .depthStencilAttachment = &dsa });
+    wgpuRenderPassEncoderSetViewport(pass, 0, 0, width, height, 0.0f, 1.0f);
+    wgpuRenderPassEncoderSetScissorRect(pass, 0, 0, width, height);
+    wgpuRenderPassEncoderSetPipeline(pass, r->surf.compute.unpack_pipeline);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
+    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(pass);
+    wgpuRenderPassEncoderRelease(pass);
+    wgpuBindGroupRelease(bg);
+}
+
+/*
+ * As pgraph_wgpu_unpack_depth_stencil, but the width x height packed Z24S8
+ * words (tight rows) are already in GPU buffer @src at @src_offset (needs
+ * CopySrc usage): no CPU round trip.
+ */
+void pgraph_wgpu_unpack_depth_stencil_gpu(PGRAPHState *pg,
+                                          SurfaceBinding *surface,
+                                          WGPUCommandEncoder enc,
+                                          WGPUBuffer src, size_t src_offset)
+{
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    assert(surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8);
+
+    unsigned int width = surface->width, height = surface->height;
+    size_t num_pixels = (size_t)width * height;
+    size_t data_size = UNPACK_HEADER_SIZE + num_pixels * 4;
+    size_t stride = ROUND_UP(width, 256);   /* stencil bytes per row */
+
+    ensure_buffer(r, &r->surf.compute.unpack_src,
+                  &r->surf.compute.unpack_src_size, data_size,
+                  WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst,
+                  "zeta unpack src");
+    ensure_buffer(r, &r->surf.compute.stencil_dst,
+                  &r->surf.compute.stencil_dst_size, stride * height,
+                  WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc,
+                  "zeta stencil dst");
+    uint32_t header[UNPACK_HEADER_SIZE / 4] = { width, height, stride / 4, 0 };
+    wgpuQueueWriteBuffer(r->queue, r->surf.compute.unpack_src, 0, header,
+                         sizeof(header));
+    wgpuCommandEncoderCopyBufferToBuffer(enc, src, src_offset,
+                                         r->surf.compute.unpack_src,
+                                         UNPACK_HEADER_SIZE, num_pixels * 4);
+
+    /* stencil: bits 7-0 of each word into padded rows, then a copy */
+    WGPUBindGroupEntry entries[2] = {
+        { .binding = 0, .buffer = r->surf.compute.unpack_src, .offset = 0,
+          .size = data_size },
+        { .binding = 1, .buffer = r->surf.compute.stencil_dst, .offset = 0,
+          .size = stride * height },
+    };
+    WGPUBindGroup bg = wgpuDeviceCreateBindGroup(
+        r->device, &(WGPUBindGroupDescriptor){
+                       .layout = r->surf.compute.stencil_bgl,
+                       .entryCount = ARRAY_SIZE(entries),
+                       .entries = entries });
+    WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(
+        enc, &(WGPUComputePassDescriptor){
+                 .label = { "zeta stencil extract", WGPU_STRLEN } });
+    wgpuComputePassEncoderSetPipeline(pass, r->surf.compute.stencil_pipeline);
+    wgpuComputePassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
+    wgpuComputePassEncoderDispatchWorkgroups(
+        pass, DIV_ROUND_UP(DIV_ROUND_UP(width, 4), 64), height, 1);
+    wgpuComputePassEncoderEnd(pass);
+    wgpuComputePassEncoderRelease(pass);
+    wgpuBindGroupRelease(bg);
+
+    WGPUTexelCopyBufferInfo from = {
+        .layout = { .offset = 0, .bytesPerRow = stride, .rowsPerImage = height },
+        .buffer = r->surf.compute.stencil_dst,
+    };
+    WGPUTexelCopyTextureInfo to = {
+        .texture = surface->texture,
+        .aspect = WGPUTextureAspect_StencilOnly,
+    };
+    wgpuCommandEncoderCopyBufferToTexture(enc, &from, &to,
+                                          &(WGPUExtent3D){ width, height, 1 });
+
+    unpack_depth_pass(r, surface, enc, data_size);
+}
+
 void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
                                       WGPUCommandEncoder enc,
                                       const uint32_t *z24s8)
@@ -363,35 +545,5 @@ void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
     wgpuQueueWriteBuffer(r->queue, r->surf.compute.unpack_src,
                          UNPACK_HEADER_SIZE, z24s8, num_pixels * 4);
 
-    WGPUBindGroupEntry entry = {
-        .binding = 0,
-        .buffer = r->surf.compute.unpack_src,
-        .offset = 0,
-        .size = data_size,
-    };
-    WGPUBindGroup bg = wgpuDeviceCreateBindGroup(
-        r->device, &(WGPUBindGroupDescriptor){
-                       .layout = r->surf.compute.unpack_bgl,
-                       .entryCount = 1,
-                       .entries = &entry });
-
-    WGPURenderPassDepthStencilAttachment dsa = {
-        .view = surface->view,
-        .depthLoadOp = WGPULoadOp_Load,
-        .depthStoreOp = WGPUStoreOp_Store,
-        .stencilLoadOp = WGPULoadOp_Load,
-        .stencilStoreOp = WGPUStoreOp_Store,
-    };
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(
-        enc, &(WGPURenderPassDescriptor){
-                 .label = { "zeta unpack", WGPU_STRLEN },
-                 .depthStencilAttachment = &dsa });
-    wgpuRenderPassEncoderSetViewport(pass, 0, 0, width, height, 0.0f, 1.0f);
-    wgpuRenderPassEncoderSetScissorRect(pass, 0, 0, width, height);
-    wgpuRenderPassEncoderSetPipeline(pass, r->surf.compute.unpack_pipeline);
-    wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
-    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
-    wgpuRenderPassEncoderEnd(pass);
-    wgpuRenderPassEncoderRelease(pass);
-    wgpuBindGroupRelease(bg);
+    unpack_depth_pass(r, surface, enc, data_size);
 }

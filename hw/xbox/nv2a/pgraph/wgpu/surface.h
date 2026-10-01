@@ -124,6 +124,11 @@ typedef struct PGRAPHWgpuSurfaceState {
         size_t pack_dst_size;
         WGPUBuffer unpack_src;  /* Storage|CopyDst: header + Z24S8 input */
         size_t unpack_src_size;
+        /* GPU-sourced unpack: stencil bytes extracted on the GPU */
+        WGPUBindGroupLayout stencil_bgl;
+        WGPUComputePipeline stencil_pipeline;
+        WGPUBuffer stencil_dst; /* Storage|CopySrc: padded stencil rows */
+        size_t stencil_dst_size;
     } compute;
 } PGRAPHWgpuSurfaceState;
 
@@ -163,6 +168,10 @@ void pgraph_wgpu_pack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
  * surface: stencil via a queue write, depth via a render pass recorded into
  * enc. Caller must have finished (no pending commands reading the surface
  * that must precede the queue writes). */
+void pgraph_wgpu_unpack_depth_stencil_gpu(PGRAPHState *pg,
+                                          SurfaceBinding *surface,
+                                          WGPUCommandEncoder enc,
+                                          WGPUBuffer src, size_t src_offset);
 void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
                                       WGPUCommandEncoder enc,
                                       const uint32_t *z24s8);
