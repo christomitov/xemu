@@ -1899,8 +1899,15 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data, MemOp memop,
         if (!victim_tlb_hit(cpu, mmu_idx, index, access_type,
                             addr & TARGET_PAGE_MASK)) {
 #endif
+#ifdef EMSCRIPTEN
+            const char *ph_old = xemu_wasm_phase[XPHASE_VCPU];
+            XPHASE_SET(XPHASE_VCPU, "tlb_fill");
+#endif
             tlb_fill_align(cpu, addr, access_type, mmu_idx,
                            memop, data->size, false, ra);
+#ifdef EMSCRIPTEN
+            XPHASE_SET(XPHASE_VCPU, ph_old);
+#endif
             maybe_resized = true;
             index = tlb_index(cpu, mmu_idx, addr);
             entry = tlb_entry(cpu, mmu_idx, addr);

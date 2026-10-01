@@ -382,7 +382,10 @@ static void page_code_bitmap_build(PageDesc *p)
     }
 }
 
-/* XEMU_WASM_SMC_PAGE: 0 exact, 1 whole page, unset adaptive (2). */
+/*
+ * XEMU_WASM_SMC_PAGE: 0 exact (default; cheap with the code bitmap), 1 whole
+ * page, 2 adaptive. R6: exact ~100 TB/s re-translated vs ~2000 with page.
+ */
 static void smc_config(int *mode, int *thresh)
 {
     static int smc_mode = -1, smc_thresh;
@@ -391,7 +394,7 @@ static void smc_config(int *mode, int *thresh)
         const char *e = getenv("XEMU_WASM_SMC_PAGE");
         const char *m = getenv("XEMU_WASM_SMC_MISS");
         smc_thresh = m ? atoi(m) : 64;
-        smc_mode = !e ? 2 : *e == '0' ? 0 : 1;
+        smc_mode = !e ? 0 : *e == '0' ? 0 : *e == '2' ? 2 : 1;
     }
     *mode = smc_mode;
     *thresh = smc_thresh;
