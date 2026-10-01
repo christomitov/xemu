@@ -315,6 +315,13 @@ static void pfifo_run_pusher(NV2AState *d)
         assert(num_words_available % 4 == 0);
         num_words_available /= 4;
 
+        /* A render rebind may retain dirty bytes outside its new image. */
+        if (d->pgraph.renderer &&
+            d->pgraph.renderer->ops.pre_read_command) {
+            d->pgraph.renderer->ops.pre_read_command(
+                d, dma + dma_get_v - d->vram_ptr,
+                MIN((hwaddr)num_words_available * 4, dma_len + 1 - dma_get_v));
+        }
         uint32_t *word_ptr = (uint32_t*)(dma + dma_get_v);
         uint32_t word = ldl_le_p(word_ptr);
         dma_get_v += 4;
