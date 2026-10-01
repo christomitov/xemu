@@ -129,6 +129,8 @@ typedef struct PGRAPHWgpuSurfaceState {
         WGPUComputePipeline stencil_pipeline;
         WGPUBuffer stencil_dst; /* Storage|CopySrc: padded stencil rows */
         size_t stencil_dst_size;
+        WGPUBuffer xfer;        /* CopySrc|CopyDst: color->zeta bytes */
+        size_t xfer_size;
     } compute;
 } PGRAPHWgpuSurfaceState;
 
@@ -172,6 +174,9 @@ void pgraph_wgpu_unpack_depth_stencil_gpu(PGRAPHState *pg,
                                           SurfaceBinding *surface,
                                           WGPUCommandEncoder enc,
                                           WGPUBuffer src, size_t src_offset);
+void pgraph_wgpu_zeta_from_color(PGRAPHState *pg, SurfaceBinding *zeta,
+                                 SurfaceBinding *color,
+                                 WGPUCommandEncoder enc, const uint8_t *tail);
 void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
                                       WGPUCommandEncoder enc,
                                       const uint32_t *z24s8);

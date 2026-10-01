@@ -2013,6 +2013,143 @@ static void log_surface_transfer(const SurfaceBinding *src,
 #endif
 }
 
+/*
+ * A linear 32bpp surface whose bytes are reinterpreted at the same address
+ * and pitch as the other kind: Z24S8 <-> 32bpp color (BGRA8 host format, so
+ * the host bytes are the guest's little-endian words).
+ */
+static bool zeta_color_compatible(const SurfaceBinding *s)
+{
+    if (s->swizzle || s->shape.anti_aliasing || s->backing ||
+        s->fmt.bytes_per_pixel != 4 ||
+        s->pitch != (uint64_t)s->width * 4 || s->pitch % 256) {
+        return false;
+    }
+    return s->color ? s->host_fmt.format == WGPUTextureFormat_BGRA8Unorm &&
+                      s->host_fmt.conv == WGPU_SURFACE_CONV_NONE &&
+                      s->host_fmt.host_bytes_per_pixel == 4
+                    : s->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8;
+}
+
+/*
+ * The game reuses one buffer as a depth surface and then as a color surface
+ * (or back) at the same address while the old one is GPU-dirty. Convert on
+ * the GPU instead of a VRAM round trip: zeta -> color packs the depth/stencil
+ * words and copies the rows the color surface covers (only rows beyond it
+ * are read back to VRAM); color -> zeta unpacks the color bytes plus the
+ * VRAM rows below them into the depth/stencil texture with no readback.
+ * XEMU_WASM_ZETA_COLOR_GPU=0 disables.
+ */
+static SurfaceBinding *try_transfer_zeta_color_gpu(NV2AState *d,
+                                                   SurfaceBinding *src,
+                                                   const SurfaceBinding *target,
+                                                   bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_ZETA_COLOR_GPU");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled || !upload || !tcg_enabled() ||
+        pg->surface_scale_factor != 1 || src->color == target->color ||
+        !zeta_color_compatible(src) || !zeta_color_compatible(target) ||
+        src->vram_addr != target->vram_addr || src->pitch != target->pitch ||
+        src->width != target->width || !src->initialized || !src->texture ||
+        !src->draw_dirty || src->upload_pending || src->download_pending) {
+        return NULL;
+    }
+    /* zeta -> color must fit inside the zeta; color -> zeta may extend it */
+    if (target->color && target->height > src->height) {
+        return NULL;
+    }
+    WgpuQueryReport *report;
+    QSIMPLEQ_FOREACH(report, &r->draw.report_queue, entry) {
+        if (!report->clear) {
+            return NULL;
+        }
+    }
+    if (overlaps_active_pushbuffer(d, src) ||
+        overlaps_active_pushbuffer(d, target)) {
+        return NULL;
+    }
+    SurfaceBinding *other;
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (other != src && (check_surfaces_overlap(target, other) ||
+                             check_surfaces_overlap(src, other))) {
+            return NULL;
+        }
+    }
+
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    assert(dst->texture != src->texture);
+    size_t row = dst->pitch;
+
+    if (dst->color) {
+        WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+        pgraph_wgpu_pack_depth_stencil(pg, src, enc);
+        WGPUTexelCopyBufferInfo from = {
+            .layout = { .offset = 0, .bytesPerRow = row,
+                        .rowsPerImage = dst->height },
+            .buffer = r->surf.compute.pack_dst,
+        };
+        WGPUTexelCopyTextureInfo to = {
+            .texture = dst->texture, .aspect = WGPUTextureAspect_All,
+        };
+        wgpuCommandEncoderCopyBufferToTexture(
+            enc, &from, &to, &(WGPUExtent3D){ dst->width, dst->height, 1 });
+        size_t tail = row * (src->height - dst->height);
+        WGPUBuffer staging = NULL;
+        if (tail) {
+            staging = ensure_staging_dst(r, tail);
+            wgpuCommandEncoderCopyBufferToBuffer(enc, r->surf.compute.pack_dst,
+                                                 row * dst->height, staging, 0,
+                                                 tail);
+        }
+        pgraph_wgpu_end_nondraw_commands(pg, enc);
+        if (tail) {
+            /* the zeta rows the color surface does not cover go to VRAM */
+            hwaddr at = src->vram_addr + row * dst->height;
+            pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+            XSTAT_INC(n_surf_download);
+            XSTAT_ADD(b_surf_download, tail);
+            pgraph_wgpu_read_buffer_sync(r, staging, 0, tail,
+                                         d->vram_ptr + at);
+            memory_region_set_client_dirty(d->vram, at, tail,
+                                           DIRTY_MEMORY_VGA);
+            memory_region_set_client_dirty(d->vram, at, tail,
+                                           DIRTY_MEMORY_NV2A_TEX);
+        }
+    } else {
+        WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+        pgraph_wgpu_zeta_from_color(pg, dst, src, enc,
+                                    d->vram_ptr + src->vram_addr +
+                                    row * src->height);
+        pgraph_wgpu_end_nondraw_commands(pg, enc);
+    }
+
+    dst->initialized = true;
+    dst->upload_pending = false;
+    dst->download_pending = false;
+    /* VRAM is stale where @src was drawn: @dst now owns those bytes */
+    dst->draw_dirty = true;
+    src->draw_dirty = false;
+#ifdef EMSCRIPTEN
+    {
+        char key[96];
+        snprintf(key, sizeof(key), "dl:gpu-zeta-color %c%ux%u->%c%ux%u",
+                 src->color ? 'C' : 'Z', src->width, src->height,
+                 dst->color ? 'C' : 'Z', dst->width, dst->height);
+        xemu_wasm_count(g_intern_string(key));
+    }
+#endif
+    invalidate_surface(d, src);
+    surface_put(d, dst);
+    return dst;
+}
+
 static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
                                                 SurfaceBinding *src,
                                                 const SurfaceBinding *target,
@@ -2022,6 +2159,10 @@ static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
     SurfaceBinding *prefix = try_rebind_surface_prefix(d, src, target, upload);
     const char *reason;
 
+    if (prefix) {
+        return prefix;
+    }
+    prefix = try_transfer_zeta_color_gpu(d, src, target, upload);
     if (prefix) {
         return prefix;
     }

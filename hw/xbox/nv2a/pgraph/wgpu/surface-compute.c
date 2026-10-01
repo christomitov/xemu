@@ -336,6 +336,11 @@ void pgraph_wgpu_finalize_surface_compute(PGRAPHState *pg)
         wgpuBindGroupLayoutRelease(r->surf.compute.stencil_bgl);
         r->surf.compute.stencil_bgl = NULL;
     }
+    if (r->surf.compute.xfer) {
+        wgpuBufferRelease(r->surf.compute.xfer);
+        r->surf.compute.xfer = NULL;
+        r->surf.compute.xfer_size = 0;
+    }
     if (r->surf.compute.stencil_dst) {
         wgpuBufferRelease(r->surf.compute.stencil_dst);
         r->surf.compute.stencil_dst = NULL;
@@ -428,6 +433,20 @@ static void unpack_depth_pass(PGRAPHWgpuState *r, SurfaceBinding *surface,
     wgpuBindGroupRelease(bg);
 }
 
+/* A CopySrc buffer holding @size bytes of @data (released by the caller). */
+static WGPUBuffer upload_temp_buffer(PGRAPHWgpuState *r, const void *data,
+                                     size_t size)
+{
+    WGPUBuffer b = wgpuDeviceCreateBuffer(
+        r->device, &(WGPUBufferDescriptor){
+                       .label = { "zeta xfer temp", WGPU_STRLEN },
+                       .usage = WGPUBufferUsage_CopySrc |
+                                WGPUBufferUsage_CopyDst,
+                       .size = ROUND_UP(size, 4) });
+    wgpuQueueWriteBuffer(r->queue, b, 0, data, ROUND_UP(size, 4));
+    return b;
+}
+
 /*
  * As pgraph_wgpu_unpack_depth_stencil, but the width x height packed Z24S8
  * words (tight rows) are already in GPU buffer @src at @src_offset (needs
@@ -455,9 +474,17 @@ void pgraph_wgpu_unpack_depth_stencil_gpu(PGRAPHState *pg,
                   &r->surf.compute.stencil_dst_size, stride * height,
                   WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc,
                   "zeta stencil dst");
+    /*
+     * The header goes through a copy recorded in @enc, not a queue write: a
+     * queue write would land before earlier unpacks recorded in the same,
+     * not yet submitted, encoder.
+     */
     uint32_t header[UNPACK_HEADER_SIZE / 4] = { width, height, stride / 4, 0 };
-    wgpuQueueWriteBuffer(r->queue, r->surf.compute.unpack_src, 0, header,
-                         sizeof(header));
+    WGPUBuffer hdr = upload_temp_buffer(r, header, sizeof(header));
+    wgpuCommandEncoderCopyBufferToBuffer(enc, hdr, 0,
+                                         r->surf.compute.unpack_src, 0,
+                                         sizeof(header));
+    wgpuBufferRelease(hdr);
     wgpuCommandEncoderCopyBufferToBuffer(enc, src, src_offset,
                                          r->surf.compute.unpack_src,
                                          UNPACK_HEADER_SIZE, num_pixels * 4);
@@ -546,4 +573,43 @@ void pgraph_wgpu_unpack_depth_stencil(PGRAPHState *pg, SurfaceBinding *surface,
                          UNPACK_HEADER_SIZE, z24s8, num_pixels * 4);
 
     unpack_depth_pass(r, surface, enc, data_size);
+}
+
+/*
+ * Build Z24S8 surface @zeta from the bytes of linear 32bpp color surface
+ * @color at the same address and pitch (pitch == width * 4, a multiple of
+ * 256): its first color->height rows come from the color texture on the GPU,
+ * the remaining rows from @tail (guest layout, pitch-strided VRAM).
+ */
+void pgraph_wgpu_zeta_from_color(PGRAPHState *pg, SurfaceBinding *zeta,
+                                 SurfaceBinding *color,
+                                 WGPUCommandEncoder enc, const uint8_t *tail)
+{
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    size_t row = (size_t)zeta->width * 4;
+    unsigned int head_rows = MIN(color->height, zeta->height);
+    size_t total = row * zeta->height;
+
+    assert(row == zeta->pitch && row % 256 == 0 && color->width == zeta->width);
+    ensure_buffer(r, &r->surf.compute.xfer, &r->surf.compute.xfer_size, total,
+                  WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst,
+                  "zeta xfer");
+    WGPUTexelCopyTextureInfo from = {
+        .texture = color->texture, .aspect = WGPUTextureAspect_All,
+    };
+    WGPUTexelCopyBufferInfo to = {
+        .layout = { .offset = 0, .bytesPerRow = row,
+                    .rowsPerImage = head_rows },
+        .buffer = r->surf.compute.xfer,
+    };
+    wgpuCommandEncoderCopyTextureToBuffer(
+        enc, &from, &to, &(WGPUExtent3D){ zeta->width, head_rows, 1 });
+    if (zeta->height > head_rows) {
+        size_t tail_size = row * (zeta->height - head_rows);
+        WGPUBuffer t = upload_temp_buffer(r, tail, tail_size);
+        wgpuCommandEncoderCopyBufferToBuffer(enc, t, 0, r->surf.compute.xfer,
+                                             row * head_rows, tail_size);
+        wgpuBufferRelease(t);
+    }
+    pgraph_wgpu_unpack_depth_stencil_gpu(pg, zeta, enc, r->surf.compute.xfer, 0);
 }
