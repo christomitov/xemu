@@ -159,7 +159,24 @@ typedef struct PGRAPHWgpuShaderState {
     uint64_t uniform_hashes[2];
     bool uniforms_uploaded; /* last upload is valid for the current ring */
 
-    /* last bind group and its inputs */
+    /*
+     * Recently created bind groups and their inputs, so that draws
+     * alternating between a few texture sets reuse them. Entries hold a
+     * reference on every handle in their key, so a released handle cannot
+     * be reused for another object while an entry still matches it.
+     */
+#define WGPU_BIND_GROUP_CACHE 32
+    struct WgpuBindGroupEntry {
+        WGPUBindGroup bind_group;
+        WGPUBindGroupLayout layout;
+        WGPUBuffer buffer;
+        size_t sizes[2];
+        WGPUTextureView views[NV2A_MAX_TEXTURES];
+        WGPUSampler samplers[NV2A_MAX_TEXTURES];
+    } bg_cache[WGPU_BIND_GROUP_CACHE];
+    unsigned int bg_cache_next;
+
+    /* last bind group and its inputs (bind_group is owned by bg_cache) */
     WGPUBindGroup bind_group;
     ShaderLayout *bind_group_layout;
     WGPUBuffer bind_group_buffer;

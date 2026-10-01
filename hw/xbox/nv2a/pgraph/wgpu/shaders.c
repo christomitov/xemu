@@ -675,6 +675,25 @@ static void get_texture_for_stage(PGRAPHWgpuState *r, const ShaderLayout *l,
     }
 }
 
+static void bg_cache_entry_release(struct WgpuBindGroupEntry *e)
+{
+    if (!e->bind_group) {
+        return;
+    }
+    wgpuBindGroupRelease(e->bind_group);
+    wgpuBindGroupLayoutRelease(e->layout);
+    wgpuBufferRelease(e->buffer);
+    for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
+        if (e->views[i]) {
+            wgpuTextureViewRelease(e->views[i]);
+        }
+        if (e->samplers[i]) {
+            wgpuSamplerRelease(e->samplers[i]);
+        }
+    }
+    memset(e, 0, sizeof(*e));
+}
+
 WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
 {
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
@@ -713,43 +732,75 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
         return s->bind_group;
     }
 
-    WGPUBindGroupEntry entries[2 + 2 * NV2A_MAX_TEXTURES];
-    int n = 0;
-
-    for (int i = 0; i < 2; i++) {
-        entries[n++] = (WGPUBindGroupEntry){
-            .binding = i == 0 ? WGPU_SHADER_VSH_UBO_BINDING :
-                                WGPU_SHADER_PSH_UBO_BINDING,
-            .buffer = s->uniform_buffer,
-            .offset = 0,
-            .size = sizes[i],
-        };
-    }
-    for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
-        if (!views[i]) {
-            continue;
+    struct WgpuBindGroupEntry *e = NULL;
+    for (int k = 0; k < WGPU_BIND_GROUP_CACHE; k++) {
+        struct WgpuBindGroupEntry *c = &s->bg_cache[k];
+        if (c->bind_group && c->layout == l->bind_group_layout &&
+            c->buffer == s->uniform_buffer &&
+            !memcmp(c->sizes, sizes, sizeof(sizes)) &&
+            !memcmp(c->views, views, sizeof(views)) &&
+            !memcmp(c->samplers, samplers, sizeof(samplers))) {
+            e = c;
+            break;
         }
-        entries[n++] = (WGPUBindGroupEntry){
-            .binding = WGPU_SHADER_TEX_BINDING + i,
-            .textureView = views[i],
-        };
-        entries[n++] = (WGPUBindGroupEntry){
-            .binding = WGPU_SHADER_TEX_BINDING + i +
-                       WGPU_SHADER_SAMPLER_BINDING_OFFSET,
-            .sampler = samplers[i],
-        };
     }
 
-    if (s->bind_group) {
+    if (!e) {
+        WGPUBindGroupEntry entries[2 + 2 * NV2A_MAX_TEXTURES];
+        int n = 0;
+
+        for (int i = 0; i < 2; i++) {
+            entries[n++] = (WGPUBindGroupEntry){
+                .binding = i == 0 ? WGPU_SHADER_VSH_UBO_BINDING :
+                                    WGPU_SHADER_PSH_UBO_BINDING,
+                .buffer = s->uniform_buffer,
+                .offset = 0,
+                .size = sizes[i],
+            };
+        }
+        for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
+            if (!views[i]) {
+                continue;
+            }
+            entries[n++] = (WGPUBindGroupEntry){
+                .binding = WGPU_SHADER_TEX_BINDING + i,
+                .textureView = views[i],
+            };
+            entries[n++] = (WGPUBindGroupEntry){
+                .binding = WGPU_SHADER_TEX_BINDING + i +
+                           WGPU_SHADER_SAMPLER_BINDING_OFFSET,
+                .sampler = samplers[i],
+            };
+        }
+
+        e = &s->bg_cache[s->bg_cache_next++ % WGPU_BIND_GROUP_CACHE];
         /* command encoders keep a reference while it is in use */
-        wgpuBindGroupRelease(s->bind_group);
+        bg_cache_entry_release(e);
+        XSTAT_INC(n_bind_group_create);
+        e->bind_group = wgpuDeviceCreateBindGroup(
+            r->device, &(WGPUBindGroupDescriptor){
+                           .layout = l->bind_group_layout,
+                           .entryCount = n,
+                           .entries = entries });
+        e->layout = l->bind_group_layout;
+        wgpuBindGroupLayoutAddRef(e->layout);
+        e->buffer = s->uniform_buffer;
+        wgpuBufferAddRef(e->buffer);
+        memcpy(e->sizes, sizes, sizeof(sizes));
+        memcpy(e->views, views, sizeof(views));
+        memcpy(e->samplers, samplers, sizeof(samplers));
+        for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
+            if (views[i]) {
+                wgpuTextureViewAddRef(views[i]);
+            }
+            if (samplers[i]) {
+                wgpuSamplerAddRef(samplers[i]);
+            }
+        }
     }
+
     s->bind_group_gen++;
-    s->bind_group = wgpuDeviceCreateBindGroup(
-        r->device, &(WGPUBindGroupDescriptor){
-                       .layout = l->bind_group_layout,
-                       .entryCount = n,
-                       .entries = entries });
+    s->bind_group = e->bind_group;
     s->bind_group_layout = binding->layout;
     s->bind_group_buffer = s->uniform_buffer;
     memcpy(s->bind_group_offsets, s->uniform_block_offsets,
@@ -888,7 +939,9 @@ void pgraph_wgpu_finalize_shaders(PGRAPHState *pg)
     PGRAPHWgpuShaderState *s = &r->shaders;
 
     if (s->bind_group) {
-        wgpuBindGroupRelease(s->bind_group);
+        for (int k = 0; k < WGPU_BIND_GROUP_CACHE; k++) {
+            bg_cache_entry_release(&s->bg_cache[k]);
+        }
         s->bind_group = NULL;
     }
     shader_cache_finalize(s);
