@@ -764,7 +764,14 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
                 other_surface->height, other_surface->pitch);
             pgraph_wgpu_dl_reason = "overlap-evict";
             pgraph_wgpu_surface_download_if_dirty(d, other_surface);
-            invalidate_surface(d, other_surface);
+            /*
+             * Materializing a retained owner releases its tail. A target in
+             * that tail no longer conflicts with the surviving render image,
+             * which may still be bound as the other framebuffer attachment.
+             */
+            if (check_surfaces_overlap(surface, other_surface)) {
+                invalidate_surface(d, other_surface);
+            }
         }
     }
 }
