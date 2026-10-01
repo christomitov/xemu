@@ -1432,7 +1432,39 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
 
     if (!physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
 #ifdef EMSCRIPTEN
-        { extern void xemu_wasm_count(const char *); xemu_wasm_count("invsrc:cpu"); }
+        {
+            extern void xemu_wasm_count(const char *);
+            char k[32];
+            xemu_wasm_count("invsrc:cpu");
+            /* which pages mix hot stores with translated code */
+            snprintf(k, sizeof(k), "smcpage:%x", (unsigned)(ram_addr >> 12));
+            xemu_wasm_count(g_intern_string(k));
+            {
+                /* XEMU_WASM_SMC_DUMP=<ram page hex>: log stores to it */
+                static int dump_page = -2, ndump;
+                if (dump_page == -2) {
+                    const char *e = getenv("XEMU_WASM_SMC_DUMP");
+                    dump_page = e ? (int)strtol(e, NULL, 16) : -1;
+                }
+                if ((int)(ram_addr >> 12) == dump_page && ndump < 40) {
+                    uint8_t *h = qemu_map_ram_ptr(NULL, ram_addr & ~0x3f);
+                    ndump++;
+                    fprintf(stderr, "[smc] vaddr=%" VADDR_PRIx " ram=%x "
+                            "size=%u\n", mem_vaddr,
+                            (unsigned)ram_addr, size);
+                    if (ndump == 1 || ndump == 40) {
+                        uint8_t *pg = qemu_map_ram_ptr(NULL,
+                                                       ram_addr & ~0xfff);
+                        FILE *f = fopen("/hostwww/smcpage.bin", "wb");
+                        if (f) {
+                            fwrite(pg, 1, 4096, f);
+                            fclose(f);
+                        }
+                    }
+                    (void)h;
+                }
+            }
+        }
 #endif
         tb_invalidate_phys_range_fast(cpu, ram_addr, size, retaddr);
     }

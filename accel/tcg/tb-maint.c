@@ -980,6 +980,19 @@ static void do_tb_phys_invalidate(TranslationBlock *tb, bool rm_from_page_list)
 static void tb_phys_invalidate__locked(TranslationBlock *tb)
 {
     XSTAT_INC(n_tb_invalidate);
+#ifdef EMSCRIPTEN
+    {
+        static int dump_page = -2, n;
+        if (dump_page == -2) {
+            const char *e = getenv("XEMU_WASM_SMC_DUMP");
+            dump_page = e ? (int)strtol(e, NULL, 16) : -1;
+        }
+        if ((int)(tb_page_addr0(tb) >> 12) == dump_page && n++ < 40) {
+            fprintf(stderr, "[smc] inval tb phys=%x size=%u icount=%u\n",
+                    (unsigned)tb_page_addr0(tb), tb->size, tb->icount);
+        }
+    }
+#endif
 
     qemu_thread_jit_write();
     do_tb_phys_invalidate(tb, true);
@@ -1152,8 +1165,35 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
      * We remove all the TBs in the range [start, last].
      * XXX: see if in some cases it could be faster to invalidate all the code
      */
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    /*
+     * xemu invalidates every TB on a written page, even TBs the write does
+     * not touch: the page then becomes writable, so later stores to data
+     * sharing it (the kernel's inline data at 0x8004ce24 is written
+     * constantly) stay on the fast path, and unchanged TBs are revived
+     * cheaply from inv_htable. QEMU's exact overlap check
+     * (XEMU_WASM_SMC_PAGE=0) measured 19.4 -> 35 ms/frame on the intro.
+     */
+    static int smc_page = -1;
+    if (smc_page < 0) {
+        const char *e = getenv("XEMU_WASM_SMC_PAGE");
+        smc_page = !(e && *e == '0');
+    }
+#endif
     PAGE_FOR_EACH_TB(start, last, p, tb, n) {
-#ifndef XBOX
+#if defined(XBOX) && defined(EMSCRIPTEN)
+        tb_page_addr_t tb_start, tb_last;
+
+        tb_start = tb_page_addr0(tb);
+        tb_last = tb_start + tb->size - 1;
+        if (n == 0) {
+            tb_last = MIN(tb_last, tb_start | ~TARGET_PAGE_MASK);
+        } else {
+            tb_start = tb_page_addr1(tb);
+            tb_last = tb_start + (tb_last & ~TARGET_PAGE_MASK);
+        }
+        if (smc_page || !(tb_last < start || tb_start > last)) {
+#elif !defined(XBOX)
         tb_page_addr_t tb_start, tb_last;
 
         /* NOTE: this is subtle as a TB may span two physical pages */
