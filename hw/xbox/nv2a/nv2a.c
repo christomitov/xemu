@@ -346,9 +346,9 @@ static void nv2a_reset(NV2AState *d)
 
 #ifdef EMSCRIPTEN
 /*
- * Blocks whose reads need no BQL: plain register reads (PMC, PFB), or
- * protected by their own locks (PGRAPH: pgraph.lock; USER: lock-free
- * DMA_GET/PUT/REF polling, pfifo.lock otherwise). The guest polls them
+ * Blocks whose reads need no BQL: plain register reads (PFB), or
+ * protected by their own locks (USER: lock-free DMA_GET/PUT/REF polling,
+ * pfifo.lock otherwise). The guest polls them
  * thousands of times a second, and every read used to take the BQL: the
  * vCPU spun ~4% of its time on it while the main loop held it. Their
  * writes (which may raise IRQs) still run under the BQL, via these
@@ -371,9 +371,7 @@ static const MemoryRegionOps lname##_ops_lockless_read = {                  \
     .read = lname##_read,                                                   \
     .write = lname##_write_bql,                                             \
 };
-NV2A_BQL_WRITE(pmc)
 NV2A_BQL_WRITE(pfb)
-NV2A_BQL_WRITE(pgraph)
 NV2A_BQL_WRITE(user)
 
 static const MemoryRegionOps *nv2a_lockless_read_ops(int block)
@@ -388,12 +386,14 @@ static const MemoryRegionOps *nv2a_lockless_read_ops(int block)
         return NULL;
     }
     switch (block) {
-    case NV_PMC:
-        return &pmc_ops_lockless_read;
+    /*
+     * Not PMC or PGRAPH: their pending_interrupts words are updated by
+     * multi-step read-modify-writes under the BQL (nv2a_update_irq,
+     * pgraph_context_switch), which a BQL-free reader could observe
+     * half done (Astra's review).
+     */
     case NV_PFB:
         return &pfb_ops_lockless_read;
-    case NV_PGRAPH:
-        return &pgraph_ops_lockless_read;
     case NV_USER:
         return &user_ops_lockless_read;
     default:

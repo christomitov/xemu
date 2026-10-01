@@ -3570,6 +3570,8 @@ void helper_emms(CPUX86State *env)
 int xemu_wasm_sse_status_ofs(int which)
 {
     QEMU_BUILD_BUG_ON(sizeof(FloatRoundMode) != 1);
+    QEMU_BUILD_BUG_ON(float_round_nearest_even != 0);  /* JIT tests == 0 */
+    QEMU_BUILD_BUG_ON(float_flag_inexact != 0x10);     /* JIT sets 0x10 */
     QEMU_BUILD_BUG_ON(sizeof(((float_status *)0)->float_exception_flags) != 2);
     if (!ffp_enabled()) {
         return -1;

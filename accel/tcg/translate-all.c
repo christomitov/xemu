@@ -682,8 +682,21 @@ void tcg_flush_jmp_cache(CPUState *cpu)
     }
     XSTAT_INC(n_jc_flush);
 #ifdef EMSCRIPTEN
-    /* entries of older generations can no longer match */
-    if (++jc->gen != 0) {
+    /*
+     * Entries of older generations can no longer match. Other threads
+     * flush too (CF_PCREL TB invalidation from DMA), hence atomics. On
+     * wrap-around, clear the entries before publishing generation 0 again.
+     */
+    {
+        uint32_t next = qatomic_read(&jc->gen) + 1;
+        if (next != 0) {
+            qatomic_set(&jc->gen, next);
+            return;
+        }
+        for (int i = 0; i < TB_JMP_CACHE_SIZE; i++) {
+            qatomic_set(&jc->array[i].tb, NULL);
+        }
+        qatomic_set(&jc->gen, 0);
         return;
     }
 #endif

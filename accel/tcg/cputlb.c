@@ -291,6 +291,7 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
 static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
 {
     desc->n_used_entries = 0;
+    desc->filled = false;
     desc->large_page_addr = -1;
     desc->large_page_mask = -1;
     desc->vindex = 0;
@@ -939,8 +940,13 @@ void tlb_reset_dirty(CPUState *cpu, uintptr_t start, uintptr_t length)
         unsigned int i;
 
 #ifdef EMSCRIPTEN
-        /* nothing filled in this mode since its last flush (x86 uses few) */
-        if (desc->n_used_entries == 0) {
+        /*
+         * Nothing filled in this mode since its last full flush (x86 uses
+         * few modes). Not n_used_entries: that can reach 0 while entries
+         * remain (flush of a victim-moved page, victim swap-back). The
+         * victim TLB is always scanned below.
+         */
+        if (!desc->filled) {
             n = 0;
         }
 #endif
@@ -1268,6 +1274,7 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
 
     copy_tlb_helper_locked(te, &tn);
     tlb_n_used_entries_inc(cpu, mmu_idx);
+    desc->filled = true;
     qemu_spin_unlock(&tlb->c.lock);
 }
 

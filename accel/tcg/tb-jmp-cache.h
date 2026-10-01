@@ -45,7 +45,8 @@ static inline bool tb_jmp_cache_match(const CPUJumpCache *jc, uint32_t h,
                                       vaddr pc)
 {
 #ifdef EMSCRIPTEN
-    return jc->array[h].pc == pc && jc->array[h].gen == jc->gen;
+    return jc->array[h].pc == pc &&
+           jc->array[h].gen == qatomic_read(&jc->gen);
 #else
     return jc->array[h].pc == pc;
 #endif
@@ -56,7 +57,7 @@ static inline void tb_jmp_cache_set_pc(CPUJumpCache *jc, uint32_t h,
 {
     jc->array[h].pc = pc;
 #ifdef EMSCRIPTEN
-    jc->array[h].gen = jc->gen;
+    jc->array[h].gen = qatomic_read(&jc->gen);
 #endif
 }
 
