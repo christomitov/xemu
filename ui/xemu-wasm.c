@@ -656,15 +656,15 @@ void xemu_wasm_count(const char *key)
     }
 }
 
-/* "key=n;..." top 16, cumulative */
+/* "key=n;..." top 60, cumulative */
 EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
 {
-    static char buf[4096];
+    static char buf[8192];
     bool used[COUNT_SLOTS] = { false };
     int len = 0;
 
     buf[0] = 0;
-    for (int k = 0; k < 28; k++) {
+    for (int k = 0; k < 60; k++) {
         int best = -1;
         for (int i = 0; i < COUNT_SLOTS; i++) {
             if (!used[i] && count_tab[i].key &&
