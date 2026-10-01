@@ -2185,6 +2185,25 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                         clear_overwrites(d, &target, surface)) {
                         discard_cleared(d, &target, surface);
                     }
+#ifdef EMSCRIPTEN
+                    if (surface->draw_dirty) {
+                        /* why a clear did not make this download moot */
+                        char key[128];
+                        uint32_t rx = pgraph_reg_r(pg, NV_PGRAPH_CLEARRECTX);
+                        uint32_t ry = pgraph_reg_r(pg, NV_PGRAPH_CLEARRECTY);
+                        snprintf(key, sizeof(key),
+                                 "dl:rebind-why %c->%c clr%d p%02x "
+                                 "x%u-%u y%u-%u",
+                                 surface->color ? 'C' : 'Z',
+                                 target.color ? 'C' : 'Z', pg->clearing,
+                                 pgraph_wgpu_clear_param & 0xff,
+                                 GET_MASK(rx, NV_PGRAPH_CLEARRECTX_XMIN),
+                                 GET_MASK(rx, NV_PGRAPH_CLEARRECTX_XMAX),
+                                 GET_MASK(ry, NV_PGRAPH_CLEARRECTY_YMIN),
+                                 GET_MASK(ry, NV_PGRAPH_CLEARRECTY_YMAX));
+                        xemu_wasm_count(g_intern_string(key));
+                    }
+#endif
                     pgraph_wgpu_dl_reason = "incompatible-rebind";
                     pgraph_wgpu_surface_download_if_dirty(d, surface);
                     invalidate_surface(d, surface);
