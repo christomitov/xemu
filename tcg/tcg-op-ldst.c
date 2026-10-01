@@ -475,6 +475,24 @@ void tcg_gen_qemu_st_i64_chk(TCGv_i64 val, TCGTemp *addr, TCGArg idx,
  */
 static bool use_two_i64_for_i128(MemOp mop)
 {
+#ifdef EMSCRIPTEN
+    /*
+     * wasm: the helper call is far more expensive than two inline TLB
+     * lookups (it is a resumable Asyncify call site in JIT code). With a
+     * single vCPU (no CF_PARALLEL) no other CPU can observe the two halves
+     * separately, so any requested atomicity is preserved.
+     */
+    {
+        static int split = -1;
+        if (split < 0) {
+            const char *e = getenv("XEMU_WASM_SPLIT_I128");
+            split = !(e && *e == '0');
+        }
+        if (split && !(tcg_ctx->gen_tb->cflags & CF_PARALLEL)) {
+            return true;
+        }
+    }
+#endif
     /* Two softmmu tlb lookups is larger than one function call. */
     if (tcg_use_softmmu) {
         return false;
