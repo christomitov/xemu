@@ -786,6 +786,13 @@ void tb_flush__exclusive_or_serial(void)
            (current_cpu && cpu_in_serial_context(current_cpu)));
 
 #ifdef EMSCRIPTEN
+    {
+        /* shows up in the page report's events, with the TB count */
+        extern void xemu_wasm_count(const char *);
+        char k[48];
+        snprintf(k, sizeof(k), "tbflush:%zuTBs", (size_t)tcg_nb_tbs());
+        xemu_wasm_count(g_intern_string(k));
+    }
     fprintf(stderr, "[tb] flush #%u: %zu of %zu code bytes used, %zu TBs\n",
             qatomic_read(&tb_ctx.tb_flush_count) + 1, tcg_code_size(),
             tcg_code_capacity(), (size_t)tcg_nb_tbs());

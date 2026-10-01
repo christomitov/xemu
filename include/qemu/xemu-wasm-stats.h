@@ -46,6 +46,7 @@
     X(n_slow_ld_mmio)                                                        \
     X(n_slow_ld_watch)                                                       \
     X(n_tlb_alias)       /* misses where the slot held the same low page bits */ \
+    X(n_tb_recycle)      /* tb_gen served by reviving an invalidated TB */   \
     X(n_tb_flush)        /* whole translation cache flushed (buffer full) */ \
     X(n_test_unwind)     /* XEMU_WASM_TEST_UNWIND forced sleeps */            \
     X(n_jit_rewind)      /* Asyncify rewinds into JIT code (rewind fns) */   \
