@@ -23,6 +23,10 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
+#ifdef EMSCRIPTEN
+void xemu_wasm_count(const char *key);
+#endif
 #include "qemu/main-loop.h"
 #ifdef EMSCRIPTEN
 extern void xemu_wasm_lowmem_check(const char *);
@@ -714,9 +718,30 @@ bool timerlist_run_timers(QEMUTimerList *timer_list)
         xemu_wasm_lowmem_check("pre timer cb");
         xemu_wasm_dbg_ring_put("[timercb] %p\n", (void*)(uintptr_t)cb);
 #endif
+#ifdef EMSCRIPTEN
+        int64_t cb_t0 = xemu_wasm_stats_now_ns();
+#endif
         cb(opaque);
 #ifdef EMSCRIPTEN
         xemu_wasm_lowmem_check("post timer cb");
+        if (bql_locked()) {
+            /* "tmr:<cb>": one count per started 20 us spent in the callback */
+            static void *kcb[32];
+            static const char *ktime[32];
+            int64_t spent = xemu_wasm_stats_now_ns() - cb_t0;
+            for (int i = 0; i < 32; i++) {
+                if (!kcb[i]) {
+                    kcb[i] = (void *)(uintptr_t)cb;
+                    ktime[i] = g_strdup_printf("tmr:%p", kcb[i]);
+                }
+                if (kcb[i] == (void *)(uintptr_t)cb) {
+                    for (int64_t w = 0; w <= spent; w += 20000) {
+                        xemu_wasm_count(ktime[i]);
+                    }
+                    break;
+                }
+            }
+        }
 #endif
         qemu_mutex_lock(&timer_list->active_timers_lock);
 

@@ -21,6 +21,9 @@
 
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "qemu/main-loop.h"
+#ifdef EMSCRIPTEN
+#include "ui/xemu-settings.h"
+#endif
 
 void nv2a_update_irq(NV2AState *d)
 {
@@ -203,7 +206,24 @@ int nv2a_get_screen_off(void)
 static void nv2a_vga_gfx_update(void *opaque)
 {
     VGACommonState *vga = opaque;
+#ifdef EMSCRIPTEN
+    /*
+     * WebGPU presents the CRTC framebuffer itself; rendering it again into
+     * the (listener-less) VGA console surface cost ~0.2 ms per vblank with
+     * the BQL held. XEMU_WASM_VGA_UPDATE=1 restores it.
+     */
+    static int vga_update = -1;
+    if (vga_update < 0) {
+        const char *e = getenv("XEMU_WASM_VGA_UPDATE");
+        vga_update = e ? *e != '0' :
+            g_config.display.renderer != CONFIG_DISPLAY_RENDERER_WEBGPU;
+    }
+    if (vga_update) {
+        vga->hw_ops->gfx_update(vga);
+    }
+#else
     vga->hw_ops->gfx_update(vga);
+#endif
 
     NV2AState *d = container_of(vga, NV2AState, vga);
     d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;

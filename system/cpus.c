@@ -571,6 +571,12 @@ void rust_bql_mock_lock(void)
  * The BQL is taken from so many places that it is worth profiling the
  * callers directly, instead of funneling them all through a single function.
  */
+#ifdef EMSCRIPTEN
+/* Last BQL acquirer, to attribute vCPU waits to the holder ("bqlhold:"). */
+static const char *volatile bql_holder_file;
+static volatile int bql_holder_line;
+#endif
+
 void bql_lock_impl(const char *file, int line)
 {
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
@@ -600,6 +606,9 @@ void bql_lock_impl(const char *file, int line)
             if (vcpu) {
                 XPHASE_SET(XPHASE_VCPU, "bql_wait");
             }
+            const char *hold_file = bql_holder_file;
+            int hold_line = bql_holder_line;
+            int64_t wait_t0 = xemu_wasm_stats_now_ns();
             XSTAT_T0();
             while (qemu_mutex_trylock(&bql) != 0) {
                 if (++bql_spin_count == 100000000UL) {
@@ -607,6 +616,33 @@ void bql_lock_impl(const char *file, int line)
                 }
             }
             if (vcpu) {
+                /* one count per started 20 us waited, by holder */
+                int64_t waited = xemu_wasm_stats_now_ns() - wait_t0;
+                static const char *keys[64];
+                static const char *kfile[64];
+                static int kline[64];
+                const char *key = NULL;
+                const char *f = hold_file ? hold_file : "?";
+                const char *b = strrchr(f, '/');
+                f = b ? b + 1 : f;
+                for (int i = 0; i < 64; i++) {
+                    if (!keys[i]) {
+                        char buf[96];
+                        snprintf(buf, sizeof(buf), "bqlhold:%s:%d", f,
+                                 hold_line);
+                        keys[i] = g_strdup(buf);
+                        kfile[i] = hold_file;
+                        kline[i] = hold_line;
+                    }
+                    if (kfile[i] == hold_file && kline[i] == hold_line) {
+                        key = keys[i];
+                        break;
+                    }
+                }
+                extern void xemu_wasm_count(const char *);
+                for (int64_t w = 0; key && w <= waited; w += 20000) {
+                    xemu_wasm_count(key);
+                }
                 XPHASE_SET(XPHASE_VCPU, xphase_old_);
                 XSTAT_INC(n_vcpu_bql_wait);
                 XSTAT_T1(ns_vcpu_bql_wait);
@@ -616,6 +652,8 @@ void bql_lock_impl(const char *file, int line)
             }
         }
         bql_spin_count = 0;
+        bql_holder_file = file;
+        bql_holder_line = line;
     }
 #else
     bql_lock_fn(&bql, file, line);
