@@ -294,6 +294,9 @@ static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
     desc->filled = false;
     desc->large_page_addr = -1;
     desc->large_page_mask = -1;
+#ifdef EMSCRIPTEN
+    desc->n_victim_hits = 0;
+#endif
     desc->vindex = 0;
     memset(fast->table, -1, sizeof_tlb(fast));
     memset(desc->vtable, -1, sizeof(desc->vtable));
@@ -1873,14 +1876,40 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data, MemOp memop,
 #endif
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
+#ifdef EMSCRIPTEN
+        /*
+         * The table only resizes when it is flushed, so a mode that shrank
+         * while idle stays small if it is not flushed again: the Xbox intro
+         * spent ~100k victim swaps/s on pages fighting over 64 slots.
+         * Grow it (flush + double) once the swaps show it is too small.
+         */
+        CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+        size_t n_entries = tlb_n_entries(cpu_tlb_fast(cpu, mmu_idx));
+        bool grow = n_entries < (1 << (CPU_TLB_DYN_DEFAULT_BITS + 2)) &&
+                    desc->n_victim_hits > 4 * n_entries;
+        if (grow) {
+            qemu_spin_lock(&cpu->neg.tlb.c.lock);
+            desc->window_max_entries = n_entries;   /* 100% use: double */
+            tlb_flush_one_mmuidx_locked(cpu, mmu_idx, get_clock_realtime());
+            qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+        }
+        if (grow || !victim_tlb_hit(cpu, mmu_idx, index, access_type,
+                                    addr & TARGET_PAGE_MASK)) {
+#else
         if (!victim_tlb_hit(cpu, mmu_idx, index, access_type,
                             addr & TARGET_PAGE_MASK)) {
+#endif
             tlb_fill_align(cpu, addr, access_type, mmu_idx,
                            memop, data->size, false, ra);
             maybe_resized = true;
             index = tlb_index(cpu, mmu_idx, addr);
             entry = tlb_entry(cpu, mmu_idx, addr);
         }
+#ifdef EMSCRIPTEN
+        else {
+            desc->n_victim_hits++;
+        }
+#endif
         tlb_addr = tlb_read_idx(entry, access_type) & ~TLB_INVALID_MASK;
     }
 
