@@ -321,11 +321,13 @@ static __thread LinkedBuf *code_buf_root, *code_buf_cur;
 typedef struct RelocNode {
     struct RelocNode *next;
     WasmReloc r;
+    int region;     /* GOTO: region of the site; r.depth is local until end */
 } RelocNode;
 static __thread RelocNode *relocs, *relocs_last;
 static __thread int relocs_num;
 
 static int wasm_code_len(void);
+static int block_idx_cur(void);
 static void wasm_add_reloc(uint8_t kind, uint8_t arg, uint16_t depth)
 {
     RelocNode *e = tcg_malloc(sizeof(RelocNode));
@@ -333,6 +335,7 @@ static void wasm_add_reloc(uint8_t kind, uint8_t arg, uint16_t depth)
     e->r.kind = kind;
     e->r.arg = arg;
     e->r.depth = depth;
+    e->region = block_idx_cur();
     e->next = NULL;
     if (relocs_last) {
         relocs_last->next = e;
@@ -895,14 +898,65 @@ static void add_block_placeholder(int label, int pos)
     block_placeholder = e;
 }
 
-/* Close the current region and open region number ++block_idx. */
+static int block_idx_cur(void)
+{
+    return block_idx;
+}
+
+/*
+ * Code layout of a TB function (straight-line regions):
+ *
+ *   prologue (fresh entry / Asyncify rewind arm, sets LBLOCK)
+ *   loop $top
+ *     block B[n-1] ... block B[1]              (inserted at the TB end,
+ *       block D                                 when n is known)
+ *         br_if D (LBLOCK == 0)        likely: region 0
+ *         br_table D B[1] .. B[n-1] (LBLOCK)   rewind / backward branch
+ *       end
+ *       region 0
+ *     end B[1]
+ *     region 1 ...
+ *   end $top
+ *
+ * Regions follow each other without any test, so V8 sees straight-line
+ * code (the old "if (LBLOCK <= k)" chain merged all locals at every
+ * region). Forward branches "br" to the block ending at the target region;
+ * backward branches and self loops set LBLOCK and continue $top. Their br
+ * depths are patched at the TB end (BrPatch).
+ */
+typedef struct BrPatch {
+    struct BrPatch *next;
+    uint32_t pos;       /* of the 5-byte br depth LEB */
+    int region, d;      /* site region, constructs between site and region */
+    int label;          /* target label id, or -1 for $top */
+} BrPatch;
+static __thread BrPatch *br_patches;
+static __thread uint32_t region_ins_pos;
+/* prologue: positions of its "else" and closing "end" (entry function) */
+static __thread uint32_t pro_else_pos, pro_end_pos;
+static __thread bool has_backward_label;
+
+static void wasm_br_patch(TCGContext *s, int d, int label)
+{
+    BrPatch *e = tcg_malloc(sizeof(*e));
+
+    wasm8(s, W_BR);
+    e->pos = wasm_code_len();
+    e->region = block_idx;
+    e->d = d;
+    e->label = label;
+    e->next = br_patches;
+    br_patches = e;
+    for (int i = 0; i < 5; i++) {
+        wasm8(s, i < 4 ? 0x80 : 0);
+    }
+}
+
+/* Close the current region (block B[block_idx + 1]) and start the next. */
 static void wasm_new_block(TCGContext *s)
 {
     wasm8(s, W_END);
-    wasm_var(s, W_LOCAL_GET, LBLOCK);
-    wasm_i64_const(s, ++block_idx);
-    wasm8(s, W_I64_LE_U);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    ++block_idx;
 }
 
 /*
@@ -935,21 +989,16 @@ static void wasm_br_to_label(TCGContext *s, TCGLabel *l, bool br_if)
         wasm_if(s, W_BLOCKTYPE_VOID);
         depth++;
     }
-    wasm8(s, W_I64_CONST);
-    add_block_placeholder(l->id, wasm_code_len());
-    /* 5-byte signed LEB placeholder, filled in by write_mod_code */
-    wasm8(s, 0x80);
-    wasm8(s, 0x80);
-    wasm8(s, 0x80);
-    wasm8(s, 0x80);
-    wasm8(s, 0x00);
-    wasm_var(s, W_LOCAL_SET, LBLOCK);
-    if (get_block_of_label(l->id) != -1) {
-        /* backward: continue the loop */
-        wasm_br(s, depth + 1);
+    int target = get_block_of_label(l->id);
+    if (target != -1) {
+        /* backward: continue $top at the label's region */
+        has_backward_label |= target > 0;
+        wasm_i64_const(s, target);
+        wasm_var(s, W_LOCAL_SET, LBLOCK);
+        wasm_br_patch(s, depth, -1);
     } else {
-        /* forward: leave this region, later ones are skipped */
-        wasm_br(s, depth);
+        /* forward: to the end of the block preceding the label's region */
+        wasm_br_patch(s, depth, l->id);
     }
     if (br_if) {
         wasm8(s, W_END);
@@ -1477,11 +1526,12 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
 #endif
     wasm_i64_const(s, 0);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
-    wasm_br(s, depth + 2);     /* the loop */
+    wasm_br_patch(s, depth + 1, -1);     /* $top, region 0 */
     wasm8(s, W_END);
 
-    /* a region module may branch to a member TB here (tcg/wasm32.c) */
-    wasm_add_reloc(WASM_RELOC_GOTO, slot < 0 ? 0xff : slot, depth + 1);
+    /* a region module may branch to a member TB here (tcg/wasm32.c);
+     * the depth to $top is completed at the TB end */
+    wasm_add_reloc(WASM_RELOC_GOTO, slot < 0 ? 0xff : slot, depth);
 
     wasm_var(s, W_LOCAL_GET, CTX_IDX);
     wasm_var(s, W_LOCAL_GET, L32_0);
@@ -3216,6 +3266,8 @@ static void tcg_out_tb_start(TCGContext *s)
     block_placeholder = NULL;
     relocs = relocs_last = NULL;
     relocs_num = 0;
+    br_patches = NULL;
+    has_backward_label = false;
     used_regs = 0;
     snapshot_sites = NULL;
     block_idx = 0;
@@ -3252,7 +3304,11 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_var(s, W_LOCAL_SET, LBLOCK);
 
     /* Asyncify rewind: the registers saved before the unwinding call */
+    pro_else_pos = wasm_code_len();
     wasm8(s, W_ELSE);
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_jit_rewind);
+#endif
     if (wasm_link_enabled()) {
         /*
          * The dispatcher re-calls the first TB of a chain; if a TB it linked
@@ -3279,17 +3335,16 @@ static void tcg_out_tb_start(TCGContext *s)
     in_snapshot = false;
     wasm_var(s, W_GLOBAL_GET, BLOCK_PTR_IDX);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
+    pro_end_pos = wasm_code_len();
     wasm8(s, W_END);
 
     /* entering a TB: profile as "jit" (a self loop marks itself "spin") */
     wasm_phase(s, NULL);
 
-    /* loop { if (BLOCK_PTR <= 0) { region 0 ... */
+    /* loop $top; the region blocks and dispatch go here at the TB end */
     wasm8(s, W_LOOP);
     wasm8(s, W_BLOCKTYPE_VOID);
-    wasm_var(s, W_LOCAL_GET, LBLOCK);
-    wasm8(s, W_I64_EQZ);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    region_ins_pos = wasm_code_len();
 }
 
 /* Byte writer for the module, with overflow detection. */
@@ -3372,11 +3427,82 @@ static int tcg_out_tb_end(TCGContext *s)
     uint8_t *sec, *body;
     int code_len;
 
-    wasm8(s, W_END);            /* end if */
-    wasm8(s, W_END);            /* end loop */
+    wasm8(s, W_END);            /* end $top */
     wasm8(s, W_UNREACHABLE);
     wasm8(s, W_END);            /* end func */
     code_len = wasm_code_len();
+
+    /*
+     * Region blocks and dispatch, inserted after "loop $top" (see the
+     * layout comment at wasm_new_block); every recorded position after
+     * the insertion point moves by its length.
+     */
+    int nregions = block_idx + 1;
+    uint8_t op[64 + 8 * 1024];
+    int L = 0, brif_at = -1;
+    if (nregions > 1) {
+        if (nregions > 1000) {
+            return -1;
+        }
+        for (int k = nregions - 1; k >= 1; k--) {
+            op[L++] = 0x02;
+            op[L++] = 0x40;
+        }
+        op[L++] = 0x02;                 /* block D */
+        op[L++] = 0x40;
+        op[L++] = 0x20;                 /* local.get LBLOCK */
+        op[L++] = LBLOCK;
+        op[L++] = 0x50;                 /* i64.eqz */
+        brif_at = L;
+        op[L++] = 0x0d;                 /* br_if D */
+        op[L++] = 0x00;
+        op[L++] = 0x20;
+        op[L++] = LBLOCK;
+        op[L++] = 0xa7;                 /* i32.wrap_i64 */
+        op[L++] = 0x0e;                 /* br_table D B[1] .. B[n-1] */
+        for (uint32_t v = nregions, more = 1; more;) {
+            op[L++] = (v & 0x7f) | (v > 0x7f ? 0x80 : 0);
+            more = v > 0x7f;
+            v >>= 7;
+        }
+        for (int k = 0; k <= nregions; k++) {
+            uint32_t v = k < nregions ? k : 0;      /* default: D */
+            do {
+                op[L++] = (v & 0x7f) | (v > 0x7f ? 0x80 : 0);
+                v >>= 7;
+            } while (v);
+        }
+        op[L++] = 0x0b;                 /* end D */
+    }
+    QEMU_BUILD_BUG_ON(LBLOCK > 0x7f);
+    for (RelocNode *p = relocs; p; p = p->next) {
+        if (p->r.off >= region_ins_pos) {
+            p->r.off += L;
+        }
+        if (p->r.kind == WASM_RELOC_GOTO) {
+            p->r.depth += nregions - 1 - p->region;
+        }
+    }
+    if (brif_at >= 0) {
+        /* hint the dispatch: falling into region 0 is the normal case */
+        RelocNode *e = tcg_malloc(sizeof(*e)), **pp = &relocs;
+        e->r.off = region_ins_pos + brif_at;
+        e->r.kind = WASM_RELOC_HINT;
+        e->r.arg = 1;
+        e->r.depth = 0;
+        e->region = 0;
+        while (*pp && (*pp)->r.off < e->r.off) {
+            pp = &(*pp)->next;
+        }
+        e->next = *pp;
+        *pp = e;
+        relocs_num++;
+    }
+    for (SnapshotSite *p = snapshot_sites; p; p = p->next) {
+        if (p->pos >= region_ins_pos) {
+            p->pos += L;
+        }
+    }
 
     h->wasm_ptr = w.p;
 
@@ -3429,9 +3555,128 @@ static int tcg_out_tb_end(TCGContext *s)
     }
     mod_section_end(&w, sec);
 
-    /* function section */
+    /*
+     * Function B (rewind-capable): the code as emitted, with the region
+     * blocks/dispatch inserted and all patches applied.
+     */
+    uint32_t lenB = code_len + L;
+    uint8_t *cb = g_malloc(lenB);
+    linked_buf_write(code_buf_root, cb);
+    memmove(cb + region_ins_pos + L, cb + region_ins_pos,
+            code_len - region_ins_pos);
+    memcpy(cb + region_ins_pos, op, L);
+    for (BrPatch *p = br_patches; p; p = p->next) {
+        uint32_t v;
+        if (p->label < 0) {
+            v = p->d + (nregions - 1 - p->region);
+        } else {
+            int j = get_block_of_label(p->label);
+            tcg_debug_assert(j > p->region);
+            v = p->d + (j - p->region - 1);
+        }
+        uint8_t *ph = cb + p->pos + L;
+        for (int i = 0; i < 5; i++) {
+            ph[i] = (v & 0x7f) | (i < 4 ? 0x80 : 0);
+            v >>= 7;
+        }
+    }
+    {
+        /* snapshot pairs of registers this TB never uses: nops */
+        static int snapnop = -1;
+        if (snapnop < 0) {
+            const char *e = getenv("XEMU_WASM_SNAPNOP");
+            snapnop = !(e && *e == '0');
+        }
+        if (snapnop) {
+            uint32_t keep = used_regs | (1u << TCG_AREG0) |
+                            (1u << TCG_REG_CALL_STACK);
+            for (SnapshotSite *p = snapshot_sites; p; p = p->next) {
+                if (!(keep & (1u << p->reg))) {
+                    memset(cb + p->pos, 0x01, 4);
+                }
+            }
+        }
+    }
+
+    /*
+     * Function A (entry): B without the Asyncify rewind arm (it tail-calls
+     * B instead) and, unless a branch goes back to a later region, without
+     * the region dispatch. Then nothing reaches the loop head except fresh
+     * entry and self loops to region 0, and V8 needs no phis for the TCG
+     * register locals (B's merges cost ~40 spill/shuffle instructions per
+     * TB entry).
+     */
+    const uint32_t func_a = HELPER_IDX_START + helpers_num;
+    const uint32_t func_b = func_a + 1;
+    uint8_t new_else[10];
+    int ne = 0;
+    new_else[ne++] = W_ELSE;
+    new_else[ne++] = 0x20;              /* local.get ctx */
+    new_else[ne++] = CTX_IDX;
+    new_else[ne++] = W_RETURN_CALL;
+    uint32_t retcall_at = pro_else_pos + ne;
+    for (uint32_t v = func_b, i = 0; i < 5; i++) {
+        new_else[ne++] = (v & 0x7f) | (i < 4 ? 0x80 : 0);
+        v >>= 7;
+    }
+    new_else[ne++] = W_END;
+    const uint32_t LA = nregions > 1 ?
+                        (has_backward_label ? L : 2 * (nregions - 1)) : 0;
+    const uint32_t dP = (pro_end_pos + 1 - pro_else_pos) - ne;
+    const uint32_t lenA = lenB - dP - (L - LA);
+    uint8_t *ca = g_malloc(lenA);
+    {
+        uint8_t *q = ca;
+        memcpy(q, cb, pro_else_pos);
+        q += pro_else_pos;
+        memcpy(q, new_else, ne);
+        q += ne;
+        memcpy(q, cb + pro_end_pos + 1, region_ins_pos - (pro_end_pos + 1));
+        q += region_ins_pos - (pro_end_pos + 1);
+        memcpy(q, cb + region_ins_pos, LA);
+        q += LA;
+        memcpy(q, cb + region_ins_pos + L, lenB - (region_ins_pos + L));
+        q += lenB - (region_ins_pos + L);
+        tcg_debug_assert(q == ca + lenA);
+    }
+    /* relocations of A: B's, moved; plus the tail call */
+    int nrel_a = 0;
+    WasmReloc *rel_a = g_new(WasmReloc, relocs_num + 1);
+    bool retcall_done = false;
+    for (RelocNode *p = relocs; p; p = p->next) {
+        uint32_t o = p->r.off;
+        if (!retcall_done && o > retcall_at) {
+            rel_a[nrel_a++] = (WasmReloc){ .off = retcall_at,
+                                           .kind = WASM_RELOC_RETCALL };
+            retcall_done = true;
+        }
+        if (o < pro_else_pos) {
+            /* before the rewind arm: unchanged */
+        } else if (o <= pro_end_pos) {
+            continue;                   /* inside the rewind arm */
+        } else if (o < region_ins_pos) {
+            o -= dP;
+        } else if (o < region_ins_pos + L) {
+            if (o - region_ins_pos >= LA) {
+                continue;               /* in the dropped dispatch */
+            }
+            o -= dP;
+        } else {
+            o -= dP + (L - LA);
+        }
+        rel_a[nrel_a] = p->r;
+        rel_a[nrel_a].off = o;
+        nrel_a++;
+    }
+    if (!retcall_done) {
+        rel_a[nrel_a++] = (WasmReloc){ .off = retcall_at,
+                                       .kind = WASM_RELOC_RETCALL };
+    }
+
+    /* function section: A, B */
     sec = mod_section_begin(&w, 3);
-    mod_uleb(&w, 1);
+    mod_uleb(&w, 2);
+    mod_uleb(&w, 0);
     mod_uleb(&w, 0);
     mod_section_end(&w, sec);
 
@@ -3448,79 +3693,70 @@ static int tcg_out_tb_end(TCGContext *s)
     mod_uleb(&w, 1);
     mod_name(&w, "start");
     mod8(&w, 0x00);
-    mod_uleb(&w, HELPER_IDX_START + helpers_num);
+    mod_uleb(&w, func_a);
     mod_section_end(&w, sec);
 
     /* branch hints (custom section, before the code section) */
     if (wasm_hints_enabled()) {
-        int nhints = 0;
-        for (RelocNode *p = relocs; p; p = p->next) {
-            nhints += p->r.kind == WASM_RELOC_HINT;
+        int nha = 0, nhb = 0;
+        for (int i = 0; i < nrel_a; i++) {
+            nha += rel_a[i].kind == WASM_RELOC_HINT;
         }
-        if (nhints) {
+        for (RelocNode *p = relocs; p; p = p->next) {
+            nhb += p->r.kind == WASM_RELOC_HINT;
+        }
+        if (nha || nhb) {
             sec = mod_section_begin(&w, 0);
             mod_name(&w, "metadata.code.branch_hint");
-            mod_uleb(&w, 1);
-            mod_uleb(&w, HELPER_IDX_START + helpers_num);
-            mod_uleb(&w, nhints);
-            for (RelocNode *p = relocs; p; p = p->next) {
-                if (p->r.kind == WASM_RELOC_HINT) {
-                    mod_uleb(&w, WASM_TB_LOCALS_LEN + p->r.off);
-                    mod_uleb(&w, 1);
-                    mod8(&w, p->r.arg);
+            mod_uleb(&w, (nha > 0) + (nhb > 0));
+            if (nha) {
+                mod_uleb(&w, func_a);
+                mod_uleb(&w, nha);
+                for (int i = 0; i < nrel_a; i++) {
+                    if (rel_a[i].kind == WASM_RELOC_HINT) {
+                        mod_uleb(&w, WASM_TB_LOCALS_LEN + rel_a[i].off);
+                        mod_uleb(&w, 1);
+                        mod8(&w, rel_a[i].arg);
+                    }
+                }
+            }
+            if (nhb) {
+                mod_uleb(&w, func_b);
+                mod_uleb(&w, nhb);
+                for (RelocNode *p = relocs; p; p = p->next) {
+                    if (p->r.kind == WASM_RELOC_HINT) {
+                        mod_uleb(&w, WASM_TB_LOCALS_LEN + p->r.off);
+                        mod_uleb(&w, 1);
+                        mod8(&w, p->r.arg);
+                    }
                 }
             }
             mod_section_end(&w, sec);
         }
     }
 
-    /* code section */
+    /* code section: A, B */
     sec = mod_section_begin(&w, 10);
-    mod_uleb(&w, 1);
-    body = mod_uleb5_placeholder(&w);
+    mod_uleb(&w, 2);
     /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
     QEMU_BUILD_BUG_ON(sizeof("\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e") - 1 !=
                       WASM_TB_LOCALS_LEN);
-    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e",
-              WASM_TB_LOCALS_LEN);
+    body = mod_uleb5_placeholder(&w);
+    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", WASM_TB_LOCALS_LEN);
     h->body_off = w.p - h->wasm_ptr;
-    h->body_len = code_len - 1;     /* without the function's "end" */
-    {
-        uint8_t *code = w.p;
-        if (w.p + code_len <= w.end) {
-            linked_buf_write(code_buf_root, code);
-            /* snapshot pairs of registers this TB never uses: nops */
-            static int snapnop = -1;
-            if (snapnop < 0) {
-                const char *e = getenv("XEMU_WASM_SNAPNOP");
-                snapnop = !(e && *e == '0');
-            }
-            if (snapnop) {
-                uint32_t keep = used_regs | (1u << TCG_AREG0) |
-                                (1u << TCG_REG_CALL_STACK);
-                for (SnapshotSite *p = snapshot_sites; p; p = p->next) {
-                    if (!(keep & (1u << p->reg))) {
-                        memset(code + p->pos, 0x01, 4);
-                    }
-                }
-            }
-            for (BlockPlaceholder *p = block_placeholder; p; p = p->next) {
-                uint8_t *ph = code + p->pos;
-                uint32_t blk = get_block_of_label(p->label);
-
-                tcg_debug_assert((int)blk >= 0);
-                /* 5-byte signed LEB of a small positive value */
-                for (int i = 0; i < 5; i++) {
-                    ph[i] = (blk & 0x7f) | (i < 4 ? 0x80 : 0);
-                    blk >>= 7;
-                }
-            }
-        }
-        w.p += code_len;
-    }
+    h->body_len = lenA - 1;             /* without the function's "end" */
+    mod_bytes(&w, ca, lenA);
+    mod_uleb5_patch(&w, body, w.p - (body + 5));
+    body = mod_uleb5_placeholder(&w);
+    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", WASM_TB_LOCALS_LEN);
+    h->body_b_off = w.p - h->wasm_ptr;
+    h->body_b_len = lenB - 1;
+    mod_bytes(&w, cb, lenB);
     mod_uleb5_patch(&w, body, w.p - (body + 5));
     mod_section_end(&w, sec);
+    g_free(ca);
+    g_free(cb);
 
     h->wasm_size = w.p - h->wasm_ptr;
 
@@ -3533,7 +3769,11 @@ static int tcg_out_tb_end(TCGContext *s)
     h->import_size = w.p - (uint8_t *)h->import_ptr;
 
     h->reloc_ptr = (const WasmReloc *)w.p;
-    h->reloc_count = relocs_num;
+    h->reloc_count = nrel_a;
+    mod_bytes(&w, rel_a, nrel_a * sizeof(WasmReloc));
+    g_free(rel_a);
+    h->reloc_b_ptr = (const WasmReloc *)w.p;
+    h->reloc_b_count = relocs_num;
     for (RelocNode *p = relocs; p; p = p->next) {
         mod_bytes(&w, &p->r, sizeof(p->r));
     }

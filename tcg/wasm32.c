@@ -552,7 +552,7 @@ static WasmTBHeader *tb_link_target(TranslationBlock *tb, int n)
 
 static bool region_member_ok(WasmTBHeader *c)
 {
-    return c->wasm_ptr && c->body_len && c->reloc_ptr &&
+    return c->wasm_ptr && c->body_len && c->reloc_ptr && c->reloc_b_ptr &&
            c->counter != INT32_MIN &&
            (c->counter >= wasm32_jit_threshold / 4 || c->instance);
 }
@@ -678,7 +678,11 @@ static int compile_region(WasmTBHeader *h)
         bb_u8(&sec, 0); bb_uleb(&sec, 3 + u);
     }
     bb_section(&mod, 2, &sec);
-    bb_uleb(&sec, 1); bb_uleb(&sec, 0);
+    /* functions: the region, then each member's rewind function (B) */
+    bb_uleb(&sec, 1 + n);
+    for (int i = 0; i <= n; i++) {
+        bb_uleb(&sec, 0);
+    }
     bb_section(&mod, 3, &sec);
     bb_uleb(&sec, REGION_NUM_GLOBALS);
     for (int i = 0; i < REGION_NUM_GLOBALS; i++) {
@@ -729,6 +733,13 @@ static int compile_region(WasmTBHeader *h)
                     idx >>= 7;
                 }
                 pos += 5;
+            } else if (rl->kind == WASM_RELOC_RETCALL) {
+                uint32_t idx = REGION_HELPER_START + nh + 1 + i;
+                for (int k = 0; k < 5; k++) {
+                    bb_u8(&code, (idx & 0x7f) | (k < 4 ? 0x80 : 0));
+                    idx >>= 7;
+                }
+                pos += 5;
             } else if (rl->kind == WASM_RELOC_HINT) {
                 if (!region_hints) {
                     continue;
@@ -760,17 +771,64 @@ static int compile_region(WasmTBHeader *h)
     bb_u8(&code, 0x0b);                             /* end loop */
     bb_u8(&code, 0x00);                             /* unreachable */
     bb_u8(&code, 0x0b);                             /* end func */
-    if (nhints) {
+    /* members' rewind functions: B bodies with their helper calls remapped */
+    ByteBuf bcode[REGION_MAX] = { 0 }, bhints[REGION_MAX] = { 0 };
+    int nbh[REGION_MAX] = { 0 };
+    for (int i = 0; i < n; i++) {
+        const uint8_t *body = m[i]->wasm_ptr + m[i]->body_b_off;
+        uint32_t pos = 0;
+        bb_bytes(&bcode[i], "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
+        for (uint32_t r = 0; r < m[i]->reloc_b_count; r++) {
+            const WasmReloc *rl = &m[i]->reloc_b_ptr[r];
+            bb_bytes(&bcode[i], body + pos, rl->off - pos);
+            pos = rl->off;
+            if (rl->kind == WASM_RELOC_CALL) {
+                uint32_t idx = REGION_HELPER_START + map[i][rl->arg];
+                for (int k = 0; k < 5; k++) {
+                    bb_u8(&bcode[i], (idx & 0x7f) | (k < 4 ? 0x80 : 0));
+                    idx >>= 7;
+                }
+                pos += 5;
+            } else if (rl->kind == WASM_RELOC_HINT && region_hints) {
+                bb_uleb(&bhints[i], bcode[i].len);
+                bb_uleb(&bhints[i], 1);
+                bb_u8(&bhints[i], rl->arg);
+                nbh[i]++;
+            }
+        }
+        bb_bytes(&bcode[i], body + pos, m[i]->body_b_len - pos);
+        bb_u8(&bcode[i], 0x0b);                     /* end func */
+    }
+    int nfh = (nhints > 0);
+    for (int i = 0; i < n; i++) {
+        nfh += nbh[i] > 0;
+    }
+    if (nfh) {
         bb_name(&sec, "metadata.code.branch_hint");
-        bb_uleb(&sec, 1);
-        bb_uleb(&sec, REGION_HELPER_START + nh);
-        bb_uleb(&sec, nhints);
-        bb_bytes(&sec, hints.p, hints.len);
+        bb_uleb(&sec, nfh);
+        if (nhints) {
+            bb_uleb(&sec, REGION_HELPER_START + nh);
+            bb_uleb(&sec, nhints);
+            bb_bytes(&sec, hints.p, hints.len);
+        }
+        for (int i = 0; i < n; i++) {
+            if (nbh[i]) {
+                bb_uleb(&sec, REGION_HELPER_START + nh + 1 + i);
+                bb_uleb(&sec, nbh[i]);
+                bb_bytes(&sec, bhints[i].p, bhints[i].len);
+            }
+        }
         bb_section(&mod, 0, &sec);
     }
-    bb_uleb(&sec, 1);
+    bb_uleb(&sec, 1 + n);
     bb_uleb(&sec, code.len);
     bb_bytes(&sec, code.p, code.len);
+    for (int i = 0; i < n; i++) {
+        bb_uleb(&sec, bcode[i].len);
+        bb_bytes(&sec, bcode[i].p, bcode[i].len);
+        g_free(bcode[i].p);
+        g_free(bhints[i].p);
+    }
     bb_section(&mod, 10, &sec);
 
     XPHASE_SET(XPHASE_VCPU, "jit_compile");

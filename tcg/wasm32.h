@@ -64,6 +64,16 @@ typedef struct WasmTBHeader {
     uint32_t body_len;
     const struct WasmReloc *reloc_ptr;
     uint32_t reloc_count;
+    /*
+     * The module has two functions: the entry function above (exported;
+     * no Asyncify rewind arm: on a rewind it tail-calls the second one)
+     * and the full rewind-capable function below, which V8 compiles only
+     * if a rewind ever happens.
+     */
+    uint32_t body_b_off;
+    uint32_t body_b_len;
+    const struct WasmReloc *reloc_b_ptr;
+    uint32_t reloc_b_count;
     uint32_t pad3;
 } WasmTBHeader;
 
@@ -78,7 +88,12 @@ typedef struct WasmTBHeader {
  * WASM_RELOC_HINT: an "if" at @off with a branch hint (@arg 1 = likely,
  * 0 = unlikely) for the metadata.code.branch_hint section.
  */
-enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3 };
+/*
+ * WASM_RELOC_RETCALL: 5-byte padded ULEB function index of the entry
+ * function's tail call to its rewind function (entry body only).
+ */
+enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3,
+       WASM_RELOC_RETCALL = 4 };
 #define WASM_TB_LOCALS_LEN 9    /* locals declaration of a TB function */
 typedef struct WasmReloc {
     uint32_t off;

@@ -34,6 +34,8 @@
     X(n_tb_gotoptr)      /* indirect: goto_ptr after lookup_tb_ptr */        \
     X(n_tb_linkmiss)     /* chained goto_tb whose link was missing/stale */  \
     X(n_guest_insn)      /* guest insns in dispatched JIT TBs (not loops) */  \
+    X(n_test_unwind)     /* XEMU_WASM_TEST_UNWIND forced sleeps */            \
+    X(n_jit_rewind)      /* Asyncify rewinds into JIT code (rewind fns) */   \
     X(n_region_compile)  /* region modules built */                          \
     X(n_region_members)  /* ... total member TBs in them */                  \
     X(n_tb_region)       /* TB transitions branched inside a region */       \
