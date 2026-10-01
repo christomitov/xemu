@@ -17,6 +17,7 @@
 #include "qapi/error.h"
 #include "qapi/qapi-commands-block.h"
 #include "qapi/qapi-commands-migration.h"
+#include "migration/snapshot.h"
 #include "qapi/qapi-commands-misc.h"
 #include "hw/xbox/smbus.h"
 #include "ui/xemu-settings.h"
@@ -440,6 +441,20 @@ static volatile int disc_req; /* 0 none, 1 load, 2 load+reset, 3 eject */
 static volatile int state_req;
 static volatile int state_status;   /* 0 idle, 1 saving, 2 saved, -1 failed */
 
+static void xemu_wasm_service_state(void);
+static QEMUTimer *s_state_timer;
+
+/*
+ * Realtime, not virtual: the virtual clock (and the gui tick on it) stops
+ * while the VM is paused for the save, which is when completion must be
+ * noticed and the VM resumed.
+ */
+static void state_timer_cb(void *opaque)
+{
+    xemu_wasm_service_state();
+    timer_mod(s_state_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 100);
+}
+
 EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
 {
     __atomic_store_n(&state_status, 1, __ATOMIC_SEQ_CST);
@@ -455,43 +470,25 @@ static void xemu_wasm_service_state(void)
 {
     Error *err = NULL;
 
-    if (__atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST)) {
-        qmp_migrate("file:/xemu/state.bin", false, NULL, false, false,
-                    false, false, &err);
-        if (err) {
-            fprintf(stderr, "XEMU-ERROR: save state: %s\n",
-                    error_get_pretty(err));
-            error_free(err);
-            __atomic_store_n(&state_status, -1, __ATOMIC_SEQ_CST);
-        }
+    if (!__atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST)) {
         return;
     }
-    if (__atomic_load_n(&state_status, __ATOMIC_SEQ_CST) != 1) {
-        return;
+    /*
+     * xemu's own snapshot path (main loop, BQL held): device save hooks
+     * that need their worker threads idle cannot deadlock against a
+     * migration thread holding the BQL. The snapshot is stored inside the
+     * HDD image (/xemu/xbox_hdd.qcow2) as "bench"; restore with
+     * XEMU_WASM_LOADVM=bench.
+     */
+    if (save_snapshot("bench", true, NULL, false, NULL, &err)) {
+        fprintf(stderr, "[state] saved snapshot 'bench' in the HDD image\n");
+        __atomic_store_n(&state_status, 2, __ATOMIC_SEQ_CST);
+    } else {
+        fprintf(stderr, "XEMU-ERROR: save state: %s\n",
+                err ? error_get_pretty(err) : "failed");
+        error_free(err);
+        __atomic_store_n(&state_status, -1, __ATOMIC_SEQ_CST);
     }
-    MigrationInfo *info = qmp_query_migrate(NULL);
-    if (info && info->has_status) {
-        static int last = -1;
-        if ((int)info->status != last) {
-            last = info->status;
-            fprintf(stderr, "[state] migration %s, ram %" PRIu64 "/%" PRIu64
-                    " bytes\n", MigrationStatus_str(info->status),
-                    info->ram ? info->ram->transferred : 0,
-                    info->ram ? info->ram->total : 0);
-        }
-        if (info->status == MIGRATION_STATUS_COMPLETED) {
-            fprintf(stderr, "[state] saved /xemu/state.bin\n");
-            __atomic_store_n(&state_status, 2, __ATOMIC_SEQ_CST);
-            qmp_cont(NULL);
-        } else if (info->status == MIGRATION_STATUS_FAILED ||
-                   info->status == MIGRATION_STATUS_CANCELLED) {
-            fprintf(stderr, "XEMU-ERROR: save state: %s\n",
-                    info->error_desc ? info->error_desc : "failed");
-            __atomic_store_n(&state_status, -1, __ATOMIC_SEQ_CST);
-            qmp_cont(NULL);
-        }
-    }
-    qapi_free_MigrationInfo(info);
 }
 
 EMSCRIPTEN_KEEPALIVE void xemu_wasm_request_disc(int mode)
@@ -832,7 +829,6 @@ static void xemu_wasm_gui_tick(void *opaque)
     }
     xemu_wasm_lowmem_check("gui tick post-getms");
     xemu_wasm_service_disc();
-    xemu_wasm_service_state();
     xemu_wasm_lowmem_check("gui tick pre-arm");
     gui_timer_arm();
 }
@@ -885,13 +881,19 @@ int main(int argc, char **argv)
         /* XEMU_WASM_DVD=<path>: boot with that disc in the drive */
         const char *in = getenv("XEMU_WASM_INCOMING");
         const char *dvd = getenv("XEMU_WASM_DVD");
-        char **nargv = g_new0(char *, argc + 5);
+        char **nargv = g_new0(char *, argc + 7);
         for (i = 0; i < argc; i++) {
             nargv[i] = argv[i];
         }
         if (in && *in) {
             nargv[argc++] = (char *)"-incoming";
             nargv[argc++] = g_strdup_printf("file:%s", in);
+        }
+        /* XEMU_WASM_LOADVM=<name>: start from a snapshot in the HDD image */
+        const char *lvm = getenv("XEMU_WASM_LOADVM");
+        if (lvm && *lvm) {
+            nargv[argc++] = (char *)"-loadvm";
+            nargv[argc++] = (char *)lvm;
         }
         if (dvd && *dvd) {
             nargv[argc++] = (char *)"-dvd_path";
@@ -917,6 +919,8 @@ int main(int argc, char **argv)
     }
     s_gui_timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_NS,
                             xemu_wasm_gui_tick, NULL);
+    s_state_timer = timer_new_ms(QEMU_CLOCK_REALTIME, state_timer_cb, NULL);
+    timer_mod(s_state_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 100);
     gui_timer_arm();
 
     bql_unlock();
