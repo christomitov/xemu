@@ -384,9 +384,13 @@ static void mcpx_apu_reset_hold(Object *obj, ResetType type)
 
     bql_unlock();
     qemu_mutex_lock(&d->lock);
+    bool was_paused = d->pause_requested;
     mcpx_apu_wait_for_idle(d);
     mcpx_apu_reset_locked(d);
-    mcpx_apu_resume(d);
+    /* A loadvm reset must not restart the worker before state is restored. */
+    if (!was_paused) {
+        mcpx_apu_resume(d);
+    }
     qemu_mutex_unlock(&d->lock);
     bql_lock();
 }
