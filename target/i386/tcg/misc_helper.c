@@ -23,6 +23,9 @@
 #include "exec/helper-proto.h"
 #include "exec/cputlb.h"
 #include "helper-tcg.h"
+#include "accel/tcg/cpu-ldst.h"
+#include "accel/tcg/probe.h"
+#include "exec/target_page.h"
 
 /*
  * NOTE: the translator must set DisasContext.cc_op to CC_OP_EFLAGS
@@ -152,3 +155,55 @@ EMSCRIPTEN_KEEPALIVE uint32_t *xemu_wasm_eip_ptr(int which)
     return which ? (uint32_t *)&env->segs[R_CS].base : (uint32_t *)&env->eip;
 }
 #endif
+
+/*
+ * REP MOVS{B,W,D} with DF=0 and 32-bit addressing: copy page-sized chunks
+ * with memmove instead of one guest load/store pair per element. Stops early
+ * (leaving ECX/ESI/EDI at the next element) for MMIO, an element straddling
+ * a page, or an overlap where a forward element copy differs from memmove;
+ * the translated loop then finishes the job. probe_access() raises faults
+ * and runs watchpoints, access callbacks and SMC invalidation for each chunk
+ * before it is copied, exactly as the element stores would.
+ */
+void helper_rep_movs_fast(CPUX86State *env, uint32_t ot, uint32_t src_seg)
+{
+    static int enabled = -1;
+    uintptr_t ra = GETPC();
+    unsigned size = 1u << ot;
+    int mmu_idx = cpu_mmu_index(env_cpu(env), false);
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_REP_MOVS");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled || env->df != 1) {
+        return;
+    }
+    while ((uint32_t)env->regs[R_ECX]) {
+        uint32_t esi = env->regs[R_ESI], edi = env->regs[R_EDI];
+        target_ulong src = env->segs[src_seg].base + esi;
+        target_ulong dst = env->segs[R_ES].base + edi;
+        uint64_t left = (uint64_t)(uint32_t)env->regs[R_ECX] * size;
+        uint32_t src_room = TARGET_PAGE_SIZE - (src & ~TARGET_PAGE_MASK);
+        uint32_t dst_room = TARGET_PAGE_SIZE - (dst & ~TARGET_PAGE_MASK);
+        uint32_t n = MIN(left, MIN(src_room, dst_room));
+
+        n &= ~(size - 1);
+        if (n == 0) {
+            return;     /* an element straddles a page: per-element path */
+        }
+        /* forward element copy == memmove unless dst lies just after src */
+        if (dst > src && dst < src + n) {
+            return;
+        }
+        void *hs = probe_access(env, src, n, MMU_DATA_LOAD, mmu_idx, ra);
+        void *hd = probe_access(env, dst, n, MMU_DATA_STORE, mmu_idx, ra);
+        if (!hs || !hd) {
+            return;     /* MMIO */
+        }
+        memmove(hd, hs, n);
+        env->regs[R_ESI] = (uint32_t)(esi + n);
+        env->regs[R_EDI] = (uint32_t)(edi + n);
+        env->regs[R_ECX] = (uint32_t)env->regs[R_ECX] - n / size;
+    }
+}
