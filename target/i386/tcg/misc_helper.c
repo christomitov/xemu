@@ -142,3 +142,13 @@ target_ulong HELPER(rdpid)(CPUX86State *env)
     return 0;
 #endif
 }
+
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+/* For the bench's guest-PC sampler: &env->eip and &env->segs[R_CS].base */
+EMSCRIPTEN_KEEPALIVE uint32_t *xemu_wasm_eip_ptr(int which)
+{
+    CPUX86State *env = &X86_CPU(first_cpu)->env;
+    return which ? (uint32_t *)&env->segs[R_CS].base : (uint32_t *)&env->eip;
+}
+#endif
