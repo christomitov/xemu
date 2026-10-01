@@ -1461,8 +1461,7 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
             char k[32];
             xemu_wasm_count("invsrc:cpu");
             /* which pages mix hot stores with translated code */
-            snprintf(k, sizeof(k), "smcpage:%x", (unsigned)(ram_addr >> 12));
-            xemu_wasm_count(g_intern_string(k));
+            (void)k;    /* smcpage:<page> events: see XEMU_WASM_SMC_DUMP */
             {
                 /* XEMU_WASM_SMC_DUMP=<ram page hex>: log stores to it */
                 static int dump_page = -2, ndump;
