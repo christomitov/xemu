@@ -16,6 +16,8 @@
 #include "system/runstate.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-block.h"
+#include "qapi/qapi-commands-migration.h"
+#include "qapi/qapi-commands-misc.h"
 #include "hw/xbox/smbus.h"
 #include "ui/xemu-settings.h"
 #include <emscripten.h>
@@ -429,6 +431,61 @@ void xemu_snapshots_mark_dirty(void) {}
  */
 static volatile int disc_req; /* 0 none, 1 load, 2 load+reset, 3 eject */
 
+/*
+ * Machine state snapshots for the headless benchmark: the page (or the
+ * bench) asks for one, the gui tick starts a migration to a file in MEMFS
+ * and resumes the VM when it completes. A run started with
+ * XEMU_WASM_INCOMING=<path> restores it (-incoming file:<path>).
+ */
+static volatile int state_req;
+static volatile int state_status;   /* 0 idle, 1 saving, 2 saved, -1 failed */
+
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
+{
+    __atomic_store_n(&state_status, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&state_req, 1, __ATOMIC_SEQ_CST);
+}
+
+EMSCRIPTEN_KEEPALIVE int xemu_wasm_save_state_status(void)
+{
+    return __atomic_load_n(&state_status, __ATOMIC_SEQ_CST);
+}
+
+static void xemu_wasm_service_state(void)
+{
+    Error *err = NULL;
+
+    if (__atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST)) {
+        qmp_migrate("file:/xemu/state.bin", false, NULL, false, false,
+                    false, false, &err);
+        if (err) {
+            fprintf(stderr, "XEMU-ERROR: save state: %s\n",
+                    error_get_pretty(err));
+            error_free(err);
+            __atomic_store_n(&state_status, -1, __ATOMIC_SEQ_CST);
+        }
+        return;
+    }
+    if (__atomic_load_n(&state_status, __ATOMIC_SEQ_CST) != 1) {
+        return;
+    }
+    MigrationInfo *info = qmp_query_migrate(NULL);
+    if (info && info->has_status) {
+        if (info->status == MIGRATION_STATUS_COMPLETED) {
+            fprintf(stderr, "[state] saved /xemu/state.bin\n");
+            __atomic_store_n(&state_status, 2, __ATOMIC_SEQ_CST);
+            qmp_cont(NULL);
+        } else if (info->status == MIGRATION_STATUS_FAILED ||
+                   info->status == MIGRATION_STATUS_CANCELLED) {
+            fprintf(stderr, "XEMU-ERROR: save state: %s\n",
+                    info->error_desc ? info->error_desc : "failed");
+            __atomic_store_n(&state_status, -1, __ATOMIC_SEQ_CST);
+            qmp_cont(NULL);
+        }
+    }
+    qapi_free_MigrationInfo(info);
+}
+
 EMSCRIPTEN_KEEPALIVE void xemu_wasm_request_disc(int mode)
 {
     __atomic_store_n(&disc_req, mode, __ATOMIC_SEQ_CST);
@@ -767,6 +824,7 @@ static void xemu_wasm_gui_tick(void *opaque)
     }
     xemu_wasm_lowmem_check("gui tick post-getms");
     xemu_wasm_service_disc();
+    xemu_wasm_service_state();
     xemu_wasm_lowmem_check("gui tick pre-arm");
     gui_timer_arm();
 }
@@ -814,6 +872,25 @@ int main(int argc, char **argv)
 
     fwrite("[MAIN] calling qemu_init\n", 25, 1, stderr);
     sk = getenv("XEMU_WASM_SKIP");
+    {
+        /* XEMU_WASM_INCOMING=<path>: restore a saved machine state */
+        /* XEMU_WASM_DVD=<path>: boot with that disc in the drive */
+        const char *in = getenv("XEMU_WASM_INCOMING");
+        const char *dvd = getenv("XEMU_WASM_DVD");
+        char **nargv = g_new0(char *, argc + 5);
+        for (i = 0; i < argc; i++) {
+            nargv[i] = argv[i];
+        }
+        if (in && *in) {
+            nargv[argc++] = (char *)"-incoming";
+            nargv[argc++] = g_strdup_printf("file:%s", in);
+        }
+        if (dvd && *dvd) {
+            nargv[argc++] = (char *)"-dvd_path";
+            nargv[argc++] = (char *)dvd;
+        }
+        argv = nargv;
+    }
     qemu_init(argc, argv);
     fwrite("[MAIN] qemu_init returned\n", 26, 1, stderr);
 
