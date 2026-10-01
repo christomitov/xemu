@@ -519,6 +519,16 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
          */
         if (write) {
             disarm_cpu_access_callback(d, surface);
+        } else if (surface->access_cb && !surface->access_cb_write_only) {
+            /*
+             * After this read the CPU copy is current (downloaded below if
+             * it was not), so further reads need no trap until the GPU
+             * draws again: they cost a callback and pgraph.lock each
+             * (~20k/s in Rainbow Six 3). Keep trapping writes.
+             */
+            mem_access_callback_set_flags(qemu_get_cpu(0), surface->access_cb,
+                                          BP_MEM_WRITE);
+            surface->access_cb_write_only = true;
         }
     }
 
@@ -542,6 +552,12 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
 {
     if (surface->access_cb) {
+        if (surface->access_cb_write_only) {
+            /* the GPU copy is ahead again: trap reads too */
+            mem_access_callback_set_flags(qemu_get_cpu(0), surface->access_cb,
+                                          BP_MEM_READ | BP_MEM_WRITE);
+            surface->access_cb_write_only = false;
+        }
         return; /* already armed */
     }
     if (tcg_enabled()) {
@@ -562,6 +578,7 @@ static void unregister_cpu_access_callback(NV2AState *d,
         mem_access_callback_remove_by_ref(qemu_get_cpu(0), surface->access_cb);
     }
     surface->access_cb = NULL;
+    surface->access_cb_write_only = false;
 }
 
 /* pgraph.lock held */

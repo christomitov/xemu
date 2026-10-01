@@ -367,6 +367,7 @@ typedef struct MemAccessCallback {
     hwaddr len;
     MemAccessCallbackFunc func;
     void *opaque;
+    int flags;          /* BP_MEM_READ and/or BP_MEM_WRITE accesses trapped */
     QTAILQ_ENTRY(MemAccessCallback) entry;
 } MemAccessCallback;
 #endif
@@ -1204,6 +1205,9 @@ MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
                                               MemAccessCallbackFunc func,
                                               void *opaque);
 void mem_access_callback_remove_by_ref(CPUState *cpu, MemAccessCallback *cb);
+/* Change which accesses @cb traps (BP_MEM_READ/BP_MEM_WRITE), asynchronously */
+void mem_access_callback_set_flags(CPUState *cpu, MemAccessCallback *cb,
+                                   int flags);
 int mem_access_callback_address_matches(CPUState *cpu, hwaddr addr, hwaddr len);
 void mem_check_access_callback_ramaddr(CPUState *cpu,
                                        hwaddr ram_addr, vaddr len, int flags);

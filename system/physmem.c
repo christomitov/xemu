@@ -861,7 +861,7 @@ int mem_access_callback_address_matches(CPUState *cpu, hwaddr addr, hwaddr len)
     MemAccessCallback *cb;
     QTAILQ_FOREACH(cb, &cpu->mem_access_callbacks, entry) {
         if (access_callback_address_matches(cb, addr, len)) {
-            ret |= BP_MEM_READ | BP_MEM_WRITE;
+            ret |= cb->flags;
         }
     }
 
@@ -901,6 +901,7 @@ MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr,
     cb->len = len;
     cb->func = func;
     cb->opaque = opaque;
+    cb->flags = BP_MEM_READ | BP_MEM_WRITE;
 
 #ifdef EMSCRIPTEN
     /* single vCPU: plain queued work on it, flushing only these pages */
@@ -946,6 +947,35 @@ void mem_access_callback_remove_by_ref(CPUState *cpu, MemAccessCallback *cb)
 #endif
 }
 
+static void do_mem_access_callback_set_flags(CPUState *cpu,
+                                             run_on_cpu_data data)
+{
+    MemAccessCallback *cb = (MemAccessCallback *)((uintptr_t)data.host_ptr
+                                                  & ~(uintptr_t)3);
+    int flags = (uintptr_t)data.host_ptr & 3;
+
+    QEMU_BUILD_BUG_ON((BP_MEM_READ | BP_MEM_WRITE) != 3);
+    cb->flags = flags;
+#ifdef EMSCRIPTEN
+    mem_access_callback_flush(cpu, cb);
+#else
+    tlb_flush(cpu);
+#endif
+}
+
+/*
+ * Queued like insert/remove, so it takes effect in order with them; a
+ * removal can only be queued after this (the owner drops its reference).
+ */
+void mem_access_callback_set_flags(CPUState *cpu, MemAccessCallback *cb,
+                                   int flags)
+{
+    assert(flags && !(flags & ~(BP_MEM_READ | BP_MEM_WRITE)));
+    assert(((uintptr_t)cb & 3) == 0);
+    async_run_on_cpu(cpu, do_mem_access_callback_set_flags,
+                     RUN_ON_CPU_HOST_PTR((void *)((uintptr_t)cb | flags)));
+}
+
 void mem_check_access_callback_vaddr(CPUState *cpu,
                                      vaddr addr, vaddr len, int flags,
                                      void *tlbentryfull)
@@ -961,6 +991,9 @@ void mem_check_access_callback_ramaddr(CPUState *cpu,
     XSTAT_INC(n_watch_access); /* CPU access to a GPU-surface page */
     MemAccessCallback *cb;
     QTAILQ_FOREACH(cb, &cpu->mem_access_callbacks, entry) {
+        if (!(cb->flags & flags)) {
+            continue;   /* e.g. a read of a write-only trap's page */
+        }
         if (access_callback_address_matches(cb, ram_addr, len)) {
             ram_addr_t ram_addr_base = memory_region_get_ram_addr(cb->mr);
             assert(ram_addr_base != RAM_ADDR_INVALID);

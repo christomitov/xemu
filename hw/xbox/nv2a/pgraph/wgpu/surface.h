@@ -39,6 +39,7 @@ typedef struct WgpuSurfaceFormatInfo {
 struct SurfaceBinding {
     QTAILQ_ENTRY(SurfaceBinding) entry;
     MemAccessCallback *access_cb;
+    bool access_cb_write_only;  /* CPU copy current: only writes trapped */
 
     hwaddr vram_addr;
 
