@@ -233,6 +233,14 @@ TranslationBlock *inv_tb_htable_lookup(CPUState *cpu, TCGTBCPUState s)
     return tb_htable_lookup_common(cpu, s, &tb_ctx.inv_htable, inv_tb_lookup_cmp);
 }
 
+#ifdef EMSCRIPTEN
+/* diagnostics: an invalidated TB with this key, whatever its code bytes */
+TranslationBlock *xemu_wasm_inv_tb_any(CPUState *cpu, TCGTBCPUState s)
+{
+    return tb_htable_lookup_common(cpu, s, &tb_ctx.inv_htable, tb_lookup_cmp);
+}
+#endif
+
 /**
  * tb_lookup:
  * @cpu: CPU that will execute the returned translation block

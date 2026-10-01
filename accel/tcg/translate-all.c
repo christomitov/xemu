@@ -348,6 +348,27 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
         xemu_wasm_count(g_intern_string(k));
         snprintf(k, sizeof(k), "tbgenpage:%x", (unsigned)(phys_pc >> 12));
         xemu_wasm_count(g_intern_string(k));
+        {
+            /* why fresh: changed code bytes, a re-translated pc, or new code */
+            extern TranslationBlock *xemu_wasm_inv_tb_any(CPUState *,
+                                                          TCGTBCPUState);
+            static uint8_t *seen;           /* 1 bit per 4 bytes of RAM */
+            const size_t nbits = (256u << 20) / 4;
+            if (!seen) {
+                seen = g_malloc0(nbits / 8);
+            }
+            if (xemu_wasm_inv_tb_any(cpu, s)) {
+                xemu_wasm_count("tbgen:hashmiss");
+            } else if (phys_pc != -1 && (size_t)(phys_pc / 4) < nbits &&
+                       (seen[phys_pc / 32] & (1 << ((phys_pc / 4) & 7)))) {
+                xemu_wasm_count("tbgen:seenpc");
+            } else {
+                xemu_wasm_count("tbgen:newpc");
+            }
+            if (phys_pc != -1 && (size_t)(phys_pc / 4) < nbits) {
+                seen[phys_pc / 32] |= 1 << ((phys_pc / 4) & 7);
+            }
+        }
     }
 #endif
     tb_set_page_addr0(tb, phys_pc);
