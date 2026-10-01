@@ -1740,6 +1740,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
          * Other reinterpretations still materialize the complete owner.
          */
         if (s2t_mode == S2T_NONE && surface->backing &&
+            surface->backing->swizzle &&
             !surface->upload_pending && !surface->download_pending &&
             pg->surface_scale_factor == 1 && state.dimensionality == 2 &&
             state.depth == 1 && !state.cubemap && !state.border &&
