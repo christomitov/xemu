@@ -198,6 +198,10 @@ struct PageDesc {
     QemuSpin lock;
     /* list of TBs intersecting this ram page */
     uintptr_t first_tb;
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    /* stores to this page that missed all of its TBs (adaptive SMC) */
+    uint32_t smc_miss;
+#endif
 };
 
 void page_table_config_init(void)
@@ -1195,18 +1199,25 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
      */
 #if defined(XBOX) && defined(EMSCRIPTEN)
     /*
-     * xemu invalidates every TB on a written page, even TBs the write does
-     * not touch: the page then becomes writable, so later stores to data
-     * sharing it (the kernel's inline data at 0x8004ce24 is written
-     * constantly) stay on the fast path, and unchanged TBs are revived
-     * cheaply from inv_htable. QEMU's exact overlap check
-     * (XEMU_WASM_SMC_PAGE=0) measured 19.4 -> 35 ms/frame on the intro.
+     * Stores to a page holding code: invalidating every TB on the page keeps
+     * later stores to data sharing it on the fast path (the kernel's inline
+     * data at 0x8004ce24 is written constantly; exact overlap measured 19.4 ->
+     * 35 ms/frame on the intro), but games that mix hot data with hot code
+     * then re-translate thousands of TBs/s. Adapt per page: invalidate only
+     * the TBs a store overlaps, and once XEMU_WASM_SMC_MISS stores have
+     * missed all of them, flush the whole page so stores become fast again.
+     * XEMU_WASM_SMC_PAGE=1 always flushes the page, =0 is always exact.
      */
-    static int smc_page = -1;
-    if (smc_page < 0) {
+    static int smc_mode = -1, smc_thresh;
+    if (smc_mode < 0) {
         const char *e = getenv("XEMU_WASM_SMC_PAGE");
-        smc_page = !(e && *e == '0');
+        const char *m = getenv("XEMU_WASM_SMC_MISS");
+        smc_mode = !e ? 2 : *e == '0' ? 0 : 1;
+        smc_thresh = m ? atoi(m) : 64;
     }
+    bool smc_page = smc_mode == 1 ||
+                    (smc_mode == 2 && p->smc_miss >= smc_thresh);
+    bool smc_hit = false;
 #endif
     PAGE_FOR_EACH_TB(start, last, p, tb, n) {
 #if defined(XBOX) && defined(EMSCRIPTEN)
@@ -1220,7 +1231,9 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
             tb_start = tb_page_addr1(tb);
             tb_last = tb_start + (tb_last & ~TARGET_PAGE_MASK);
         }
-        if (smc_page || !(tb_last < start || tb_start > last)) {
+        bool overlap = !(tb_last < start || tb_start > last);
+        smc_hit |= overlap;
+        if (smc_page || overlap) {
 #elif !defined(XBOX)
         tb_page_addr_t tb_start, tb_last;
 
@@ -1252,6 +1265,14 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
             tb_phys_invalidate__locked(tb);
         }
     }
+
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    if (smc_page) {
+        p->smc_miss = 0;
+    } else if (!smc_hit) {
+        p->smc_miss++;
+    }
+#endif
 
     /* if no code remaining, no need to continue to use slow writes */
     if (!p->first_tb) {

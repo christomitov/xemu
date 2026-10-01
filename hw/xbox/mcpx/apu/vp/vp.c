@@ -131,16 +131,46 @@ static void voice_off(MCPXAPUState *d, uint16_t v)
     set_notify_status(d, v, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 }
 
+#ifdef EMSCRIPTEN
+static bool apu_fast_unlock_enabled(void)
+{
+    static int on = -1;
+
+    if (on < 0) {
+        const char *e = getenv("XEMU_WASM_APU_FAST_UNLOCK");
+        on = !(e && *e == '0');
+    }
+    return on;
+}
+#endif
+
 static void voice_lock(MCPXAPUState *d, uint16_t v, bool lock)
 {
     assert(v < MCPX_HW_MAX_VOICES);
+#ifdef EMSCRIPTEN
+    /*
+     * The APU thread holds d->lock for a whole frame, including while the
+     * voice workers mix. Unlocking a voice only lets that thread proceed
+     * sooner, so don't block the vCPU for it: clear the bit atomically and
+     * wake the dispatcher if it is waiting. A missed wakeup costs at most the
+     * dispatcher's 1 ms timed wait.
+     */
+    if (!lock && apu_fast_unlock_enabled()) {
+        qatomic_and(&d->vp.voice_locked[v / 64], ~(1ULL << (v % 64)));
+        if (qemu_mutex_trylock(&d->lock) == 0) {
+            qemu_cond_signal(&d->cond);
+            qemu_mutex_unlock(&d->lock);
+        }
+        return;
+    }
+#endif
     qemu_mutex_lock(&d->lock);
 
     uint64_t mask = 1LL << (v % 64);
     if (lock) {
-        d->vp.voice_locked[v / 64] |= mask;
+        qatomic_or(&d->vp.voice_locked[v / 64], mask);
     } else {
-        d->vp.voice_locked[v / 64] &= ~mask;
+        qatomic_and(&d->vp.voice_locked[v / 64], ~mask);
     }
 
     qemu_cond_signal(&d->cond);
