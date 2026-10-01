@@ -11,7 +11,7 @@
  * calls go only through the prototypes declared here):
  *   core     renderer.c display.c            (this header)
  *   draw     draw.c vertex.c buffer.c command.c reports.c   draw.h
- *   surface  surface.c surface-compute.c blit.c             surface.h
+ *   surface  surface.c surface-{compute,reshape}.c blit.c   surface.h
  *   texture  texture.c                                      texture.h
  *   shaders  shaders.c glsl.c                               shaders.h
  *
