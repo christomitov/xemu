@@ -1495,6 +1495,15 @@ static void do_gen_rep(DisasContext *s, MemOp ot, TCGv dshift,
     gen_update_cc_op(s);
     tcg_set_insn_start_param(s->base.insn_start, 1, CC_OP_DYNAMIC);
 
+#ifdef EMSCRIPTEN
+    /* Bulk-copy what it can first; the loop below handles any remainder. */
+    if (fn == gen_movs && !is_repz_nz && s->aflag == MO_32 && ot <= MO_32) {
+        int seg = s->override >= 0 ? s->override : R_DS;
+        gen_helper_rep_movs_fast(tcg_env, tcg_constant_i32(ot),
+                                 tcg_constant_i32(seg));
+    }
+#endif
+
     /* Any iteration at all?  */
     tcg_gen_brcondi_tl(TCG_COND_TSTEQ, cpu_regs[R_ECX], cx_mask, done);
 
