@@ -2971,6 +2971,20 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
 }
 #endif
 
+#ifdef EMSCRIPTEN
+/* XEMU_WASM_EOB_CHAIN=0: always return to the main loop after STI/POPF/... */
+static bool eob_chain_enabled(void)
+{
+    static int on = -1;
+
+    if (on < 0) {
+        const char *e = getenv("XEMU_WASM_EOB_CHAIN");
+        on = !(e && *e == '0');
+    }
+    return on;
+}
+#endif
+
 /*
  * Generate an end of block, including common tasks such as generating
  * single step traps, resetting the RF flag, and handling the interrupt
@@ -3007,6 +3021,28 @@ gen_eob(DisasContext *s, int mode)
         gen_lookup_and_goto_ptr_inline(s);
 #else
         tcg_gen_lookup_and_goto_ptr();
+#endif
+#ifdef EMSCRIPTEN
+    } else if ((mode == DISAS_EOB_NEXT || mode == DISAS_EOB_INHIBIT_IRQ) &&
+               eob_chain_enabled()) {
+        /*
+         * The main loop only needs to run if an interrupt is pending (STI,
+         * POPF, the end of an interrupt shadow may let it in); one raised
+         * later stops the next TB through icount_decr as usual. Xbox kernel
+         * IRQL code does STI/POPF millions of times per second, and each
+         * exit_tb cost a full cpu_exec round trip. The flags changed by the
+         * instruction are rechecked by the lookup.
+         */
+        TCGLabel *irq = gen_new_label();
+        TCGv_i32 ir = tcg_temp_new_i32();
+
+        tcg_gen_ld_i32(ir, tcg_env,
+                       (intptr_t)offsetof(CPUState, interrupt_request) -
+                       (intptr_t)offsetof(X86CPU, env));
+        tcg_gen_brcondi_i32(TCG_COND_NE, ir, 0, irq);
+        gen_lookup_and_goto_ptr_inline(s);
+        gen_set_label(irq);
+        tcg_gen_exit_tb(NULL, 0);
 #endif
     } else {
         tcg_gen_exit_tb(NULL, 0);
