@@ -21,11 +21,18 @@
 #define XEMU_SNAPSHOTS_H
 
 #include "qemu/osdep.h"
+#include "qemu/typedefs.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* Stream hooks are also implemented by the headless WebAssembly UI. */
+void xemu_snapshots_save_extra_data(QEMUFile *f);
+bool xemu_snapshots_offset_extra_data(QEMUFile *f);
+void xemu_snapshots_mark_dirty(void);
+
+#ifndef XEMU_WASM_NO_SDL
 #include "block/snapshot.h"
 #include <epoxy/gl.h>
 
@@ -51,14 +58,11 @@ void xemu_snapshots_load(const char *vm_name, Error **err);
 void xemu_snapshots_save(const char *vm_name, Error **err);
 void xemu_snapshots_delete(const char *vm_name, Error **err);
 
-void xemu_snapshots_save_extra_data(QEMUFile *f);
-bool xemu_snapshots_offset_extra_data(QEMUFile *f);
-void xemu_snapshots_mark_dirty(void);
-
 // Implemented in xemu-thumbnail.cc
 void xemu_snapshots_set_framebuffer_texture(GLuint tex, bool flip);
 bool xemu_snapshots_load_png_to_texture(GLuint tex, void *buf, size_t size);
 void *xemu_snapshots_create_framebuffer_thumbnail_png(size_t *size);
+#endif /* !XEMU_WASM_NO_SDL */
 
 #ifdef __cplusplus
 }
