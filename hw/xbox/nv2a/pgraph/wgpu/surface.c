@@ -294,82 +294,56 @@ void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
     }
 }
 
-static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
-                                       uint8_t *pixels)
+/* Encode the copy of @surface into @staging at @offset; returns its stride. */
+static size_t encode_surface_download(PGRAPHState *pg, SurfaceBinding *surface,
+                                      WGPUCommandEncoder enc,
+                                      WGPUBuffer *staging, size_t offset)
 {
-    PGRAPHState *pg = &d->pgraph;
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
-
-    if (!surface->width || !surface->height) {
-        return;
-    }
-
-    nv2a_profile_inc_counter(NV2A_PROF_SURF_DOWNLOAD);
-
-    bool use_compute_to_convert_depth_stencil_format =
-        surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8;
-
-    trace_nv2a_pgraph_surface_download(
-        surface->color ? "COLOR" : "ZETA",
-        surface->swizzle ? "sz" : "lin", surface->vram_addr,
-        surface->width, surface->height, surface->pitch,
-        surface->fmt.bytes_per_pixel);
-
-    // Read surface into memory
-    uint8_t *gl_read_buf = pixels;
-
-    uint8_t *swizzle_buf = pixels;
-    if (surface->swizzle) {
-        // FIXME: Swizzle in shader
-        swizzle_buf = (uint8_t *)g_malloc(surface->size);
-        gl_read_buf = swizzle_buf;
-    }
-
     unsigned int width = surface->width, height = surface->height;
-
-    /*
-     * Record the copy after any pending draws into the open encoder, then
-     * submit everything and wait (pgraph_wgpu_finish) before mapping.
-     */
-    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
-    WGPUBuffer staging;
     size_t staging_stride;
 
-    if (use_compute_to_convert_depth_stencil_format) {
+    if (surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8) {
         size_t packed_size = (size_t)width * height * 4;
+        assert(offset == 0);
         staging_stride = width * 4;
         pgraph_wgpu_pack_depth_stencil(pg, surface, enc);
-        staging = ensure_staging_dst(r, packed_size);
+        *staging = ensure_staging_dst(r, packed_size);
         wgpuCommandEncoderCopyBufferToBuffer(enc, r->surf.compute.pack_dst, 0,
-                                             staging, 0, packed_size);
+                                             *staging, 0, packed_size);
     } else {
         staging_stride =
             ROUND_UP(width * surface->host_fmt.host_bytes_per_pixel, 256);
-        staging = ensure_staging_dst(r, staging_stride * height);
         WGPUTexelCopyTextureInfo src = {
             .texture = surface->texture,
             .aspect = surface->color ? WGPUTextureAspect_All :
                                        WGPUTextureAspect_DepthOnly,
         };
         WGPUTexelCopyBufferInfo dst = {
-            .layout = { .offset = 0,
+            .layout = { .offset = offset,
                         .bytesPerRow = staging_stride,
                         .rowsPerImage = height },
-            .buffer = staging,
+            .buffer = *staging,
         };
         wgpuCommandEncoderCopyTextureToBuffer(
             enc, &src, &dst, &(WGPUExtent3D){ width, height, 1 });
     }
-    pgraph_wgpu_end_nondraw_commands(pg, enc);
+    return staging_stride;
+}
 
-    nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_1);
-    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+/* Convert the read-back host image of @surface into guest layout. */
+static void store_surface_download(SurfaceBinding *surface, uint8_t *pixels,
+                                   const uint8_t *host, size_t staging_stride)
+{
+    unsigned int width = surface->width, height = surface->height;
+    uint8_t *gl_read_buf = pixels;
+    uint8_t *swizzle_buf = pixels;
 
-    size_t read_size = staging_stride * height;
-    g_autofree uint8_t *host = g_malloc(read_size);
-    XSTAT_INC(n_surf_download);
-    XSTAT_ADD(b_surf_download, read_size);
-    pgraph_wgpu_read_buffer_sync(r, staging, 0, read_size, host);
+    if (surface->swizzle) {
+        // FIXME: Swizzle in shader
+        swizzle_buf = (uint8_t *)g_malloc(surface->size);
+        gl_read_buf = swizzle_buf;
+    }
 
     size_t row_bytes = width * surface->fmt.bytes_per_pixel;
     if (surface->host_fmt.conv == WGPU_SURFACE_CONV_R5G6B5 ||
@@ -389,6 +363,51 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
         nv2a_profile_inc_counter(NV2A_PROF_SURF_SWIZZLE);
         g_free(swizzle_buf);
     }
+}
+
+static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
+                                       uint8_t *pixels)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    if (!surface->width || !surface->height) {
+        return;
+    }
+
+    nv2a_profile_inc_counter(NV2A_PROF_SURF_DOWNLOAD);
+
+    trace_nv2a_pgraph_surface_download(
+        surface->color ? "COLOR" : "ZETA",
+        surface->swizzle ? "sz" : "lin", surface->vram_addr,
+        surface->width, surface->height, surface->pitch,
+        surface->fmt.bytes_per_pixel);
+
+    /*
+     * Record the copy after any pending draws into the open encoder, then
+     * submit everything and wait (pgraph_wgpu_finish) before mapping.
+     */
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    WGPUBuffer staging = NULL;
+    if (surface->host_fmt.conv != WGPU_SURFACE_CONV_Z24S8) {
+        staging = ensure_staging_dst(r,
+            ROUND_UP(surface->width * surface->host_fmt.host_bytes_per_pixel,
+                     256) * surface->height);
+    }
+    size_t staging_stride = encode_surface_download(pg, surface, enc,
+                                                    &staging, 0);
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+
+    nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_1);
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+
+    size_t read_size = staging_stride * surface->height;
+    g_autofree uint8_t *host = g_malloc(read_size);
+    XSTAT_INC(n_surf_download);
+    XSTAT_ADD(b_surf_download, read_size);
+    pgraph_wgpu_read_buffer_sync(r, staging, 0, read_size, host);
+
+    store_surface_download(surface, pixels, host, staging_stride);
 }
 
 static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface);
@@ -788,10 +807,94 @@ static void log_surface_overlap(NV2AState *d, const SurfaceBinding *src,
 #endif
 }
 
+/*
+ * Read back every plain dirty surface that @surface evicts with one submit
+ * and one buffer map instead of one round trip each (~0.7 ms in Chrome):
+ * Rainbow Six 3 evicts a chain of six bloom targets per frame.
+ * XEMU_WASM_BATCH_DOWNLOAD=0 disables.
+ */
+static void download_overlapping_batched(NV2AState *d,
+                                         SurfaceBinding const *surface)
+{
+    static int enabled = -1;
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding *list[16];
+    size_t offs[16], strides[16], total = 0;
+    int n = 0;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_BATCH_DOWNLOAD");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled) {
+        return;
+    }
+
+    SurfaceBinding *o;
+    QTAILQ_FOREACH(o, &r->surf.surfaces, entry) {
+        if (n == ARRAY_SIZE(list)) {
+            break;
+        }
+        if (!check_surfaces_overlap(surface, o) || !o->draw_dirty ||
+            o->backing || !o->width || !o->height ||
+            o->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8) {
+            continue;
+        }
+        strides[n] = ROUND_UP(o->width * o->host_fmt.host_bytes_per_pixel,
+                              256);
+        offs[n] = total;
+        total += ROUND_UP(strides[n] * o->height, 256);
+        list[n++] = o;
+    }
+    if (n < 2) {
+        return;
+    }
+
+    WGPUBuffer staging = ensure_staging_dst(r, total);
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    for (int i = 0; i < n; i++) {
+        const char *reason = surface_stitch_reject_reason(d, list[i], surface);
+        log_surface_overlap(d, list[i], surface, false,
+                            reason ? reason : "owner-set-or-context");
+        nv2a_profile_inc_counter(NV2A_PROF_SURF_DOWNLOAD);
+        encode_surface_download(pg, list[i], enc, &staging, offs[i]);
+    }
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+    nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_1);
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+
+    g_autofree uint8_t *host = g_malloc(total);
+    XSTAT_ADD(n_surf_download, n);
+    XSTAT_ADD(b_surf_download, total);
+    pgraph_wgpu_read_buffer_sync(r, staging, 0, total, host);
+
+    for (int i = 0; i < n; i++) {
+        SurfaceBinding *s = list[i];
+        char key[128];
+
+        snprintf(key, sizeof(key), "dl:overlap-evict %s %ux%u fmt%u batched",
+                 s->color ? "color" : "zeta", s->width, s->height,
+                 s->shape.color_format);
+        xemu_wasm_count(g_intern_string(key));
+        store_surface_download(s, d->vram_ptr + s->vram_addr,
+                               host + offs[i], strides[i]);
+        memory_region_set_client_dirty(d->vram, s->vram_addr,
+                                       s->pitch * s->height, DIRTY_MEMORY_VGA);
+        memory_region_set_client_dirty(d->vram, s->vram_addr,
+                                       s->pitch * s->height,
+                                       DIRTY_MEMORY_NV2A_TEX);
+        s->download_pending = false;
+        s->draw_dirty = false;
+    }
+}
+
 static void invalidate_overlapping_surfaces(NV2AState *d,
                                             SurfaceBinding const *surface)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+
+    download_overlapping_batched(d, surface);
 
     SurfaceBinding *other_surface, *next_surface;
     QTAILQ_FOREACH_SAFE (other_surface, &r->surf.surfaces, entry,
