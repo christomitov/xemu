@@ -163,6 +163,17 @@ static void voice_lock(MCPXAPUState *d, uint16_t v, bool lock)
         }
         return;
     }
+    /*
+     * Locking must wait until no voice is being processed, but the frame
+     * thread also holds d->lock while the GP/EP DSPs run, which never touch
+     * voices. Wait only for the voice stage (vp_lock).
+     */
+    if (lock && apu_fast_unlock_enabled()) {
+        qemu_mutex_lock(&d->vp_lock);
+        qatomic_or(&d->vp.voice_locked[v / 64], 1ULL << (v % 64));
+        qemu_mutex_unlock(&d->vp_lock);
+        return;
+    }
 #endif
     qemu_mutex_lock(&d->lock);
 

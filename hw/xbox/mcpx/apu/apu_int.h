@@ -87,6 +87,8 @@ typedef struct MCPXAPUState {
 
     QemuThread apu_thread;
     QemuMutex lock;
+    /* held by the frame thread only while it walks and mixes voices */
+    QemuMutex vp_lock;
     QemuCond cond;
     QemuCond idle_cond;
     bool pause_requested;
