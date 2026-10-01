@@ -766,9 +766,11 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_threads)
              * 0-8 fps stalls), and when a game's working set exceeds the
              * buffer it refills and flushes again within seconds: R6 at
              * 160 MiB flushed every ~10-30 s (re-translating ~1700 TBs/s of
-             * code it already had). 512 MiB of the fixed 2 GiB heap.
+             * code it already had); at 512 MiB it still filled once ~80 s in
+             * (~150k translations: a large code base plus FPU-flag variants).
+             * 896 MiB of the fixed 2 GiB heap.
              */
-            tb_size = 512 * MiB;
+            tb_size = 896 * MiB;
         }
     }
 #endif
