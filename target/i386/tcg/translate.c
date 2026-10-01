@@ -2909,6 +2909,15 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
     TCGv_ptr p = tcg_temp_new_ptr();
     const intptr_t elem = sizeof(((CPUJumpCache *)0)->array[0]);
 
+    /*
+     * Breakpoints can be inserted without invalidating TBs (gdbstub, guest
+     * DRx): with any present, take the helper, which checks them.
+     */
+    tcg_gen_ld_ptr(tb, tcg_env,
+                   (intptr_t)offsetof(CPUState, breakpoints.tqh_first) -
+                   (intptr_t)offsetof(X86CPU, env));
+    tcg_gen_brcondi_ptr(TCG_COND_NE, tb, 0, miss);
+
     /* pc = cs_base + eip */
     tcg_gen_ld_i32(pc, tcg_env, offsetof(CPUX86State, segs[R_CS].base));
     tcg_gen_add_i32(pc, pc, cpu_eip);
