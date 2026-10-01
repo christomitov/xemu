@@ -477,6 +477,30 @@ static void eager_readback_schedule(NV2AState *d, SurfaceBinding *surface)
     XSTAT_INC(n_eager_readback);
 }
 
+/*
+ * PFIFO ran out of commands (pfifo.c): a game that draws a small target and
+ * then waits for the GPU before reading it is now waiting. Start the bound
+ * color target's early copy here; the CPU read finds it done or in flight.
+ */
+void pgraph_wgpu_on_fifo_idle(NV2AState *d)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    if (!r || !eager_enabled() || !qatomic_read(&r->color_binding)) {
+        return;
+    }
+    qemu_mutex_lock(&pg->lock);
+    SurfaceBinding *s = r->color_binding;
+    if (s && s->draw_dirty && eager_is_hot(s) && !r->draw.in_draw &&
+        !(s->eager_buf && s->eager_epoch == s->gpu_epoch) &&
+        (size_t)s->width * s->height <= 128 * 128) {
+        pgraph_wgpu_ensure_not_in_render_pass(pg);
+        eager_readback_schedule(d, s);
+    }
+    qemu_mutex_unlock(&pg->lock);
+}
+
 /* Use the early copy of @surface if it is still current; false otherwise. */
 static bool eager_readback_take(PGRAPHWgpuState *r, SurfaceBinding *surface,
                                 uint8_t *pixels)

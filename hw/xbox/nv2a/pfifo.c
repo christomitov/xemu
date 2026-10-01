@@ -20,6 +20,7 @@
  */
 
 #include "nv2a_int.h"
+#include "ui/xemu-settings.h"
 #include "qemu/xemu-wasm-stats.h"
 
 typedef struct RAMHTEntry {
@@ -497,6 +498,17 @@ void *pfifo_thread(void *arg)
 #endif
 
         if (!qatomic_read(&d->pfifo.fifo_kick)) {
+#ifdef EMSCRIPTEN
+            /*
+             * Out of commands: the guest is likely about to wait for the GPU
+             * and read back what it drew; start that readback now.
+             */
+            if (d->pgraph.renderer &&
+                d->pgraph.renderer->type == CONFIG_DISPLAY_RENDERER_WEBGPU) {
+                extern void pgraph_wgpu_on_fifo_idle(NV2AState *d);
+                pgraph_wgpu_on_fifo_idle(d);
+            }
+#endif
             qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
 
             // Both the pusher and puller are waiting for some action
