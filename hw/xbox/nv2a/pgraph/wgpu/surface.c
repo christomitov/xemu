@@ -273,9 +273,11 @@ static WGPUBuffer ensure_staging_dst(PGRAPHWgpuState *r, size_t size)
 static bool check_surface_overlaps_range(const SurfaceBinding *surface,
                                          hwaddr range_start, hwaddr range_len)
 {
-    hwaddr surface_end = surface->vram_addr + surface->size;
+    hwaddr surface_end = surface->vram_addr +
+                         pgraph_wgpu_surface_memory_size(surface);
     hwaddr range_end = range_start + range_len;
-    return !(surface->vram_addr >= range_end || range_start >= surface_end);
+    return range_len &&
+           !(surface->vram_addr >= range_end || range_start >= surface_end);
 }
 
 void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
@@ -389,6 +391,38 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
     }
 }
 
+static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface);
+static void unregister_cpu_access_callback(NV2AState *d,
+                                           SurfaceBinding *surface);
+static void destroy_surface_image(PGRAPHWgpuState *r, SurfaceBinding *surface);
+
+static void copy_surface_prefix(PGRAPHState *pg, const SurfaceBinding *src,
+                                 const SurfaceBinding *dst,
+                                 unsigned int width, unsigned int height)
+{
+    assert(src->texture != dst->texture);
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    WGPUTexelCopyTextureInfo from = {
+        .texture = src->texture, .aspect = WGPUTextureAspect_All,
+    };
+    WGPUTexelCopyTextureInfo to = {
+        .texture = dst->texture, .aspect = WGPUTextureAspect_All,
+    };
+    wgpuCommandEncoderCopyTextureToTexture(
+        enc, &from, &to, &(WGPUExtent3D){ width, height, 1 });
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+}
+
+void pgraph_wgpu_merge_surface_backing(PGRAPHState *pg,
+                                      SurfaceBinding *surface)
+{
+    if (surface->backing) {
+        assert(!surface->backing->backing && surface->draw_dirty);
+        copy_surface_prefix(pg, surface, surface->backing,
+                            surface->width, surface->height);
+    }
+}
+
 const char *pgraph_wgpu_dl_reason;
 
 static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
@@ -397,31 +431,66 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
         !surface->height) {
         return;
     }
+    pgraph_wgpu_merge_surface_backing(&d->pgraph, surface);
+    SurfaceBinding *image = surface->backing ? surface->backing : surface;
 #ifdef EMSCRIPTEN
     {
-        extern void xemu_wasm_count(const char *key);
         char key[128];
-        snprintf(key, sizeof(key), "dl:%s %s %ux%u fmt%u",
+        snprintf(key, sizeof(key), "dl:%s %s %ux%u fmt%u%s",
                  pgraph_wgpu_dl_reason ? pgraph_wgpu_dl_reason : "?",
-                 surface->color ? "color" : "zeta", surface->width,
-                 surface->height, surface->shape.color_format);
+                 image->color ? "color" : "zeta", image->width,
+                 image->height, image->shape.color_format,
+                 surface->backing ? " retained" : "");
         xemu_wasm_count(g_intern_string(key));
     }
 #endif
 
     // FIXME: Respect write enable at last TOU?
 
-    download_surface_to_buffer(d, surface, d->vram_ptr + surface->vram_addr);
+    download_surface_to_buffer(d, image, d->vram_ptr + image->vram_addr);
 
-    memory_region_set_client_dirty(d->vram, surface->vram_addr,
-                                   surface->pitch * surface->height,
+    memory_region_set_client_dirty(d->vram, image->vram_addr,
+                                   image->pitch * image->height,
                                    DIRTY_MEMORY_VGA);
-    memory_region_set_client_dirty(d->vram, surface->vram_addr,
-                                   surface->pitch * surface->height,
+    memory_region_set_client_dirty(d->vram, image->vram_addr,
+                                   image->pitch * image->height,
                                    DIRTY_MEMORY_NV2A_TEX);
 
     surface->download_pending = false;
     surface->draw_dirty = false;
+
+    if (surface->backing) {
+        PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+
+        /* Raw vertex reads must refresh the VRAM mirror as well. */
+        memory_region_set_client_dirty(d->vram, image->vram_addr, image->size,
+                                       DIRTY_MEMORY_NV2A);
+        /*
+         * All tails are now in VRAM. Install the smaller write trap BEFORE
+         * removing the full trap: a raw GPU-engine read need not have stopped
+         * the CPU, so separate queued remove/insert work would leave a gap.
+         */
+        MemAccessCallback *old_cb = surface->access_cb;
+        surface->access_cb = NULL;
+        surface->access_cb_write_only = false;
+        surface->backing = NULL;
+        assert(r->surf.num_retained);
+        r->surf.num_retained--;
+        if (!surface->upload_pending) {
+            register_cpu_access_callback(d, surface);
+            if (surface->access_cb) {
+                /* Materialization made VRAM current, including the tails. */
+                mem_access_callback_set_flags(qemu_get_cpu(0),
+                                              surface->access_cb, BP_MEM_WRITE);
+                surface->access_cb_write_only = true;
+            }
+        }
+        if (old_cb) {
+            mem_access_callback_remove_by_ref(qemu_get_cpu(0), old_cb);
+        }
+        destroy_surface_image(r, image);
+        g_free(image);
+    }
 }
 
 void pgraph_wgpu_wait_for_surface_download(SurfaceBinding *surface)
@@ -563,7 +632,8 @@ static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
     if (tcg_enabled()) {
         if (surface->width && surface->height) {
             surface->access_cb = mem_access_callback_insert(
-                qemu_get_cpu(0), d->vram, surface->vram_addr, surface->size,
+                qemu_get_cpu(0), d->vram, surface->vram_addr,
+                pgraph_wgpu_surface_memory_size(surface),
                 &surface_access_callback, d);
         } else {
             surface->access_cb = NULL;
@@ -637,15 +707,14 @@ static void unbind_surface(NV2AState *d, bool color)
     }
 }
 
-static void invalidate_surface(NV2AState *d, SurfaceBinding *surface)
+/* Detach without making the image recyclable (also used for private owners). */
+static void detach_surface(NV2AState *d, SurfaceBinding *surface)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
 
     trace_nv2a_pgraph_surface_invalidated(surface->vram_addr);
 
-    // FIXME: We may be reading from the surface in the current command buffer!
-    // Add a detection to handle it. For now, finish to be safe.
-    pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_SURFACE_DOWN);
+    assert(!r->draw.in_render_pass && !r->draw.in_draw);
 
     if (surface == r->color_binding) {
         assert(d->pgraph.surface_color.buffer_dirty);
@@ -659,14 +728,26 @@ static void invalidate_surface(NV2AState *d, SurfaceBinding *surface)
     unregister_cpu_access_callback(d, surface);
 
     QTAILQ_REMOVE(&r->surf.surfaces, surface, entry);
+}
+
+static void invalidate_surface(NV2AState *d, SurfaceBinding *surface)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+
+    /* A retained owner must be materialized or handed off, never discarded. */
+    assert(!surface->backing);
+    /* Keep the existing conservative barrier for ordinary invalidation. */
+    pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_SURFACE_DOWN);
+    detach_surface(d, surface);
     QTAILQ_INSERT_HEAD(&r->surf.invalid_surfaces, surface, entry);
 }
 
 static bool check_surfaces_overlap(const SurfaceBinding *surface,
                                    const SurfaceBinding *other_surface)
 {
-    return check_surface_overlaps_range(surface, other_surface->vram_addr,
-                                        other_surface->size);
+    return check_surface_overlaps_range(
+        surface, other_surface->vram_addr,
+        pgraph_wgpu_surface_memory_size(other_surface));
 }
 
 static void invalidate_overlapping_surfaces(NV2AState *d,
@@ -720,8 +801,7 @@ SurfaceBinding *pgraph_wgpu_surface_get_within(NV2AState *d, hwaddr addr)
 
     SurfaceBinding *surface;
     QTAILQ_FOREACH (surface, &r->surf.surfaces, entry) {
-        if (addr >= surface->vram_addr &&
-            addr < (surface->vram_addr + surface->size)) {
+        if (check_surface_overlaps_range(surface, addr, 1)) {
             return surface;
         }
     }
@@ -802,6 +882,7 @@ static void migrate_surface_image(SurfaceBinding *dst, SurfaceBinding *src)
 
 static void destroy_surface_image(PGRAPHWgpuState *r, SurfaceBinding *surface)
 {
+    assert(!surface->backing && !surface->access_cb);
     /*
      * Release only (no wgpuTextureDestroy): anything still referencing the
      * texture (e.g. a texture-module bind group) keeps it alive.
@@ -894,6 +975,14 @@ static bool check_surface_compatibility(SurfaceBinding const *s1,
     if (!format_compatible) {
         return false;
     }
+    if (s1->backing) {
+        /* Do not silently reinterpret the retained Morton address mapping. */
+        if (!s2->swizzle || s1->shape.color_format != s2->shape.color_format ||
+            s1->shape.anti_aliasing != s2->shape.anti_aliasing) {
+            return false;
+        }
+        strict = true;
+    }
 
     if (!strict) {
         return (s1->width >= s2->width) && (s1->height >= s2->height);
@@ -910,6 +999,54 @@ void pgraph_wgpu_surface_download_if_dirty(NV2AState *d,
     }
 }
 
+void pgraph_wgpu_materialize_retained(NV2AState *d, hwaddr addr, hwaddr size,
+                                     bool write)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+    SurfaceBinding *surface;
+
+    if (!r->surf.num_retained || !size) {
+        return;
+    }
+    QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
+        if (!surface->backing ||
+            !check_surface_overlaps_range(surface, addr, size)) {
+            continue;
+        }
+        pgraph_wgpu_dl_reason = "retained-raw-access";
+        pgraph_wgpu_surface_download_if_dirty(d, surface);
+        assert(!surface->backing);
+        if (write && check_surface_overlaps_range(surface, addr, size)) {
+            surface->upload_pending = true;
+            d->pgraph.draw_time++;
+        }
+    }
+}
+
+void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size)
+{
+    PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
+
+    /*
+     * Same PFIFO worker owns the list/geometry (CPU callbacks only change
+     * flags). Avoid another PGRAPH lock for unrelated command buffers. Reset
+     * and renderer switching quiesce the worker with PFIFO, already held here.
+     */
+    if (!r->surf.num_retained) {
+        return;
+    }
+    SurfaceBinding *surface;
+    QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
+        if (surface->backing &&
+            check_surface_overlaps_range(surface, addr, size)) {
+            qemu_mutex_lock(&d->pgraph.lock);
+            pgraph_wgpu_materialize_retained(d, addr, size, false);
+            qemu_mutex_unlock(&d->pgraph.lock);
+            return;
+        }
+    }
+}
+
 void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
                                      bool force)
 {
@@ -918,6 +1055,12 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
 
     if (!(surface->upload_pending || force)) {
         return;
+    }
+
+    if (surface->backing) {
+        /* Preserve tails before any forced upload / pending CPU handover. */
+        pgraph_wgpu_surface_download_if_dirty(d, surface);
+        assert(!surface->backing);
     }
 
     nv2a_profile_inc_counter(NV2A_PROF_SURF_UPLOAD);
@@ -1111,6 +1254,7 @@ static void populate_surface_binding_target_sized(NV2AState *d, bool color,
     target->height = height;
     target->pitch = surface->pitch;
     target->size = height * MAX(surface->pitch, width * fmt.bytes_per_pixel);
+    target->backing = NULL;
     target->upload_pending = true;
     target->download_pending = false;
     target->draw_dirty = false;
@@ -1170,6 +1314,140 @@ static SurfaceBinding *allocate_surface_binding(NV2AState *d,
     return surface;
 }
 
+/*
+ * A tightly packed square 2^n Morton image starts with the complete 2^(n-1)
+ * square: the low interleaved x/y bits are identical. Rectangles, row padding,
+ * scaling, AA changes and format conversions do NOT get this property here.
+ */
+static bool is_morton_square(const SurfaceBinding *s)
+{
+    return s->swizzle && s->color && is_power_of_2(s->width) &&
+           s->width == s->height &&
+           s->pitch == (uint64_t)s->width * s->fmt.bytes_per_pixel &&
+           s->size == (uint64_t)s->pitch * s->height &&
+           s->host_fmt.conv == WGPU_SURFACE_CONV_NONE &&
+           s->host_fmt.host_bytes_per_pixel == s->fmt.bytes_per_pixel;
+}
+
+/* A batched method may still be consuming this PFIFO command window. */
+static bool overlaps_active_pushbuffer(NV2AState *d, const SurfaceBinding *s)
+{
+    uint32_t push1 = d->pfifo.regs[NV_PFIFO_CACHE1_PUSH1];
+    if (GET_MASK(push1, NV_PFIFO_CACHE1_PUSH1_MODE) !=
+        NV_PFIFO_CACHE1_PUSH1_MODE_DMA) {
+        return false;
+    }
+    uint32_t get = qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET]);
+    uint32_t put = qatomic_read(&d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT]);
+    if (get == put) {
+        return false;
+    }
+    hwaddr instance = GET_MASK(d->pfifo.regs[NV_PFIFO_CACHE1_DMA_INSTANCE],
+                              NV_PFIFO_CACHE1_DMA_INSTANCE_ADDRESS) << 4;
+    DMAObject dma = nv_dma_load(d, instance);
+    hwaddr base = dma.address & 0x07ffffff;
+
+    if (get < put) {
+        return check_surface_overlaps_range(s, base + get, put - get);
+    }
+    /* Conservatively cover both portions of a wrapped command ring. */
+    return check_surface_overlaps_range(s, base, put) ||
+           (get <= dma.limit &&
+            check_surface_overlaps_range(s, base + get,
+                                         (hwaddr)dma.limit + 1 - get));
+}
+
+static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
+                                               SurfaceBinding *src,
+                                               const SurfaceBinding *target,
+                                               bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding *backing = src->backing ? src->backing : src;
+    SurfaceBinding *other;
+
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_SWIZZLE_REBIND");
+        const char *all = getenv("XEMU_WASM_REBIND_TRANSFER");
+        enabled = !(e && *e == '0') && !(all && *all == '0');
+    }
+    if (!enabled) {
+        return NULL;
+    }
+#else
+    return NULL;
+#endif
+    if (!upload || !tcg_enabled() || pg->surface_scale_factor != 1 ||
+        !src->initialized || !src->texture || !src->draw_dirty ||
+        !src->access_cb || src->upload_pending || src->download_pending ||
+        !is_morton_square(src) || !is_morton_square(target) ||
+        !is_morton_square(backing) ||
+        src->shape.anti_aliasing != target->shape.anti_aliasing ||
+        src->shape.color_format != target->shape.color_format ||
+        src->host_fmt.format != target->host_fmt.format ||
+        src->fmt.bytes_per_pixel != target->fmt.bytes_per_pixel ||
+        src->vram_addr != target->vram_addr ||
+        target->width > backing->width ||
+        (!src->backing && target->width >= src->width)) {
+        return NULL;
+    }
+    /* Deferred report writes must never land in a retained tail. */
+    WgpuQueryReport *report;
+    QSIMPLEQ_FOREACH(report, &r->draw.report_queue, entry) {
+        if (!report->clear) {
+            return NULL;
+        }
+    }
+    if (overlaps_active_pushbuffer(d, backing)) {
+        return NULL;
+    }
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (other != src && check_surfaces_overlap(backing, other)) {
+            return NULL;
+        }
+    }
+
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    assert(dst->texture != src->texture && dst->texture != backing->texture);
+    pgraph_wgpu_merge_surface_backing(pg, src);
+    copy_surface_prefix(pg, backing, dst, dst->width, dst->height);
+
+    dst->backing = backing;
+    dst->initialized = true;
+    dst->upload_pending = false;
+    dst->draw_dirty = true;
+    /* Keep the entire old interval trapped until it has been materialized. */
+    register_cpu_access_callback(d, dst);
+#ifdef EMSCRIPTEN
+    char key[160];
+    snprintf(key, sizeof(key),
+             "dl:gpu-swizzle-rebind fmt%u %ux%u->%ux%u backing%ux%u",
+             src->shape.color_format, src->width, src->height,
+             dst->width, dst->height, backing->width, backing->height);
+    xemu_wasm_count(g_intern_string(key));
+#endif
+    /*
+     * All copies are recorded after the old render pass. Subsequent GPU
+     * copies/draws are ordered in this encoder; a later CPU upload submits
+     * before its queue write. Release-only pruning also preserves recorded
+     * references. No finish (or query readback) is needed for this handoff.
+     */
+    if (src == backing) {
+        detach_surface(d, src);
+        r->surf.num_retained++;
+    } else {
+        src->backing = NULL;
+        src->draw_dirty = false;
+        detach_surface(d, src);
+        QTAILQ_INSERT_HEAD(&r->surf.invalid_surfaces, src, entry);
+    }
+    surface_put(d, dst);
+    return dst;
+}
+
 /* NULL means every dirty source texel has the same address in the target. */
 static const char *surface_transfer_reject_reason(NV2AState *d,
                                                  const SurfaceBinding *src,
@@ -1208,7 +1486,8 @@ static const char *surface_transfer_reject_reason(NV2AState *d,
     if (!src->access_cb) {
         return "untrapped";
     }
-    if (src->swizzle || dst->swizzle || pg->surface_scale_factor != 1 ||
+    if (src->backing || src->swizzle || dst->swizzle ||
+        pg->surface_scale_factor != 1 ||
         src->shape.anti_aliasing != dst->shape.anti_aliasing) {
         return "layout";
     }
@@ -1266,8 +1545,13 @@ static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
                                                 bool upload)
 {
     PGRAPHState *pg = &d->pgraph;
-    const char *reason = surface_transfer_reject_reason(d, src, target, upload);
+    SurfaceBinding *prefix = try_rebind_morton_prefix(d, src, target, upload);
+    const char *reason;
 
+    if (prefix) {
+        return prefix;
+    }
+    reason = surface_transfer_reject_reason(d, src, target, upload);
     if (reason) {
         log_surface_transfer(src, target, reason);
         return NULL;
@@ -1387,7 +1671,8 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 SurfaceBinding zeta_entry;
                 populate_surface_binding_target_sized(
                     d, !color, surface->width, surface->height, &zeta_entry);
-                hwaddr color_end = surface->vram_addr + surface->size;
+                hwaddr color_end = surface->vram_addr +
+                                  pgraph_wgpu_surface_memory_size(surface);
                 hwaddr zeta_end = zeta_entry.vram_addr + zeta_entry.size;
                 is_compatible &= surface->vram_addr >= zeta_end ||
                                  zeta_entry.vram_addr >= color_end;
@@ -1574,6 +1859,7 @@ void pgraph_wgpu_init_surfaces(PGRAPHState *pg)
 
     QTAILQ_INIT(&r->surf.surfaces);
     QTAILQ_INIT(&r->surf.invalid_surfaces);
+    r->surf.num_retained = 0;
 
     r->surf.downloads_pending = false;
     qemu_event_init(&r->surf.downloads_complete, false);
@@ -1623,6 +1909,7 @@ void pgraph_wgpu_surface_flush(NV2AState *d)
         pgraph_wgpu_surface_download_if_dirty(d, s);
         invalidate_surface(d, s);
     }
+    assert(!r->surf.num_retained);
     prune_invalid_surfaces(r, 0);
 
     pgraph_wgpu_reload_surface_scale_factor(pg);

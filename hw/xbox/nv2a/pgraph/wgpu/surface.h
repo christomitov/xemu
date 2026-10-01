@@ -54,6 +54,15 @@ struct SurfaceBinding {
     unsigned int pitch;
     size_t size;
 
+    /*
+     * A private, full-size Morton backing for a smaller render image. Only
+     * this binding is live/trapped; it owns backing->size guest bytes. The
+     * backing has no callback/list membership and cannot be recycled. Before
+     * rebind/readback, merge this image into its upper-left prefix. The first
+     * readback materializes ALL backing bytes and releases it. No chains.
+     */
+    SurfaceBinding *backing;
+
     bool cleared;
     int frame_time;
     int draw_time;
@@ -90,6 +99,7 @@ typedef struct PGRAPHWgpuSurfaceState {
 
     QTAILQ_HEAD(, SurfaceBinding) surfaces;
     QTAILQ_HEAD(, SurfaceBinding) invalid_surfaces;
+    unsigned int num_retained;
 
     WgpuSurfaceFormatInfo kelvin_surface_zeta_map[3];
 
@@ -111,6 +121,22 @@ typedef struct PGRAPHWgpuSurfaceState {
         size_t unpack_src_size;
     } compute;
 } PGRAPHWgpuSurfaceState;
+
+/* Owned guest range, not necessarily the current render image's footprint. */
+static inline size_t pgraph_wgpu_surface_memory_size(const SurfaceBinding *s)
+{
+    return s->backing ? s->backing->size : s->size;
+}
+
+/* pgraph.lock held: order the current render image into its private backing. */
+void pgraph_wgpu_merge_surface_backing(PGRAPHState *pg,
+                                      SurfaceBinding *surface);
+
+/* pgraph.lock held: materialize retained ranges before raw VRAM access. */
+void pgraph_wgpu_materialize_retained(NV2AState *d, hwaddr addr, hwaddr size,
+                                     bool write);
+/* PFIFO-only entry; takes pgraph.lock only when there are retained ranges. */
+void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size);
 
 /* surface module internal (surface-compute.c), used by surface.c */
 void pgraph_wgpu_init_surface_compute(PGRAPHState *pg);

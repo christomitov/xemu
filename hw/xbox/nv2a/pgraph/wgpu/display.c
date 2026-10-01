@@ -235,6 +235,8 @@ static void update_pvideo(NV2AState *d, PGRAPHWgpuState *r, DisplayUniforms *u)
         disp->pvideo_conv = g_realloc(disp->pvideo_conv, need);
         disp->pvideo_conv_size = need;
     }
+    hwaddr read_size = (hwaddr)pitch * (in_h - 1) + ROUND_UP(in_w, 2) * 2;
+    pgraph_wgpu_materialize_retained(d, base + offset, read_size, false);
     const uint8_t *src = d->vram_ptr + base + offset;
     uint8_t *out = disp->pvideo_conv;
     for (unsigned int y = 0; y < in_h; y++) {
@@ -567,6 +569,7 @@ static bool upload_scanout(NV2AState *d, PGRAPHWgpuState *r)
     if (base + (hwaddr)pitch * height > memory_region_size(d->vram)) {
         return false;
     }
+    pgraph_wgpu_materialize_retained(d, base, (hwaddr)pitch * height, false);
     const uint8_t *src = d->vram_ptr + base;
 
     ensure_source(r, width, height);
@@ -632,6 +635,13 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
         d, d->pcrtc.start + vga_display_params.line_offset);
     if (surface == NULL || !surface->color || !surface->width ||
         !surface->height || !surface->view) {
+        return false;
+    }
+    if (surface->backing) {
+        /* Its owned range is larger than the image: scanout needs raw bytes. */
+        pgraph_wgpu_materialize_retained(
+            d, surface->vram_addr, pgraph_wgpu_surface_memory_size(surface),
+            false);
         return false;
     }
 

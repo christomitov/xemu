@@ -1369,7 +1369,8 @@ check_surface_to_texture_compatiblity(const SurfaceBinding *surface,
 // FIXME: Should be able to skip the copy and sample the original surface image
 static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
                                     TextureBinding *texture,
-                                    SurfaceToTextureMode mode)
+                                    SurfaceToTextureMode mode,
+                                    SurfaceBinding *retained_owner)
 {
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     TextureShape *state = &texture->key.state;
@@ -1377,6 +1378,18 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         &kelvin_color_format_wgpu_map[state->color_format];
 
     assert(mode != S2T_NONE);
+
+    if (retained_owner) {
+        pgraph_wgpu_merge_surface_backing(pg, retained_owner);
+#ifdef EMSCRIPTEN
+        char key[128];
+        snprintf(key, sizeof(key), "dl:gpu-retained-s2t %ux%u backing%ux%u",
+                 surface->width, surface->height,
+                 retained_owner->backing->width,
+                 retained_owner->backing->height);
+        xemu_wasm_count(g_intern_string(key));
+#endif
+    }
 
     nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
 
@@ -1710,18 +1723,50 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     bool possibly_dirty_checked = false;
     bool surface_uploaded = false;
     SurfaceToTextureMode s2t_mode = S2T_NONE;
+    SurfaceBinding retained_source;
+    SurfaceBinding *retained_owner = NULL;
 
     // Check active surfaces to see if this texture was a render target
     SurfaceBinding *surface = pgraph_wgpu_surface_get(d, texture_vram_offset);
     if (surface && state.levels == 1) {
         s2t_mode = check_surface_to_texture_compatiblity(surface, &state);
 
+        /*
+         * Sampling the former larger target must not force the readback we
+         * just avoided. Any square Morton prefix of the backing has the same
+         * byte addresses. Borrow its view with the requested dimensions; the
+         * color shader textureLoads by destination pixel (no rescaling).
+         * Restrict this new path to native BGRA/BGRX swizzled color encodings.
+         * Other reinterpretations still materialize the complete owner.
+         */
+        if (s2t_mode == S2T_NONE && surface->backing &&
+            !surface->upload_pending && !surface->download_pending &&
+            pg->surface_scale_factor == 1 && state.dimensionality == 2 &&
+            state.depth == 1 && !state.cubemap && !state.border &&
+            is_power_of_2(state.width) && state.width == state.height &&
+            state.width <= surface->backing->width &&
+            (state.color_format ==
+                 NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8 ||
+             state.color_format ==
+                 NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X8R8G8B8) &&
+            surface->host_fmt.format == WGPUTextureFormat_BGRA8Unorm) {
+            retained_source = *surface->backing;
+            retained_source.width = state.width;
+            retained_source.height = state.height;
+            retained_source.pitch = state.width * surface->fmt.bytes_per_pixel;
+            retained_source.size = retained_source.pitch * state.height;
+            retained_source.draw_time = surface->draw_time;
+            retained_owner = surface;
+            surface = &retained_source;
+            s2t_mode = S2T_COLOR;
+        }
+
         if (s2t_mode == S2T_NONE && surface->color) {
             trace_nv2a_pgraph_surface_texture_compat_failed(
                 surface->shape.color_format, state.color_format);
         }
 
-        if (s2t_mode != S2T_NONE) {
+        if (s2t_mode != S2T_NONE && !retained_owner) {
             surface_uploaded = surface->upload_pending;
             pgraph_wgpu_upload_surface_data(d, surface, false);
         }
@@ -1746,6 +1791,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         }
         pgraph_wgpu_download_surfaces_in_range_if_dirty(
             pg, texture_vram_offset, texture_length);
+        pgraph_wgpu_materialize_retained(d, texture_palette_vram_offset,
+                                         texture_palette_data_size, false);
     }
 
     if (surface_to_texture && pg->surface_scale_factor > 1) {
@@ -1788,7 +1835,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             /* An upload can change the contents without a new draw_time. */
             if (surface_uploaded || surface->draw_time != snode->draw_time ||
                 !snode->from_surface) {
-                copy_surface_to_texture(pg, surface, snode, s2t_mode);
+                copy_surface_to_texture(pg, surface, snode, s2t_mode,
+                                         retained_owner);
             }
         } else {
             if ((possibly_dirty && content_hash != snode->hash) ||
@@ -1817,7 +1865,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     r->tex.texture_bindings[texture_idx] = snode;
 
     if (surface_to_texture) {
-        copy_surface_to_texture(pg, surface, snode, s2t_mode);
+        copy_surface_to_texture(pg, surface, snode, s2t_mode, retained_owner);
     } else {
         upload_texture_image(pg, texture_idx, snode);
         snode->draw_time = 0;

@@ -441,6 +441,10 @@ void pgraph_wgpu_bind_vertex_attributes(NV2AState *d, unsigned int min_element,
             attrib_data_addr = attr_data + attr->offset - d->vram_ptr;
             stride = attr->stride;
             start = attrib_data_addr + min_element * stride;
+            /* Includes zero-stride values and CPU-repacked attributes. */
+            hwaddr read_size = (hwaddr)(num_elements - 1) * stride +
+                               attr->size * attr->count;
+            pgraph_wgpu_materialize_retained(d, start, read_size, false);
             update_memory_buffer(d, start, num_elements * stride);
             src_base = d->vram_ptr;
         }

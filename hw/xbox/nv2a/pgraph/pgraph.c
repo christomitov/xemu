@@ -2879,6 +2879,10 @@ DEF_METHOD(NV097, BACK_END_WRITE_SEMAPHORE_RELEASE)
     assert(semaphore_offset < semaphore_dma_len);
     semaphore_data += semaphore_offset;
 
+    if (pg->renderer->ops.pre_memory_access) {
+        pg->renderer->ops.pre_memory_access(
+            d, semaphore_data - d->vram_ptr, sizeof(uint32_t), true);
+    }
     stl_le_p((uint32_t*)semaphore_data, parameter);
 
     //qemu_mutex_lock(&d->pgraph.lock);

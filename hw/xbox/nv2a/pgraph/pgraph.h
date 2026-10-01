@@ -121,6 +121,12 @@ typedef struct PGRAPHRenderer {
         void (*flush_draw)(NV2AState *d);
         void (*get_report)(NV2AState *d, uint32_t parameter);
         void (*image_blit)(NV2AState *d);
+        /* Optional retained-owner barriers for direct VRAM accesses. */
+        /* PFIFO-only entry, before reading a command/parameter span. */
+        void (*pre_read_command)(NV2AState *d, hwaddr addr, hwaddr size);
+        /* PGRAPH locked, before a direct GPU-engine memory access. */
+        void (*pre_memory_access)(NV2AState *d, hwaddr addr, hwaddr size,
+                                  bool write);
         void (*pre_savevm_trigger)(NV2AState *d);
         void (*pre_savevm_wait)(NV2AState *d);
         void (*pre_shutdown_trigger)(NV2AState *d);

@@ -169,6 +169,13 @@ void pgraph_wgpu_get_report(NV2AState *d, uint32_t parameter)
     uint8_t type = GET_MASK(parameter, NV097_GET_REPORT_TYPE);
     assert(type == NV097_GET_REPORT_TYPE_ZPASS_PIXEL_CNT);
 
+    /*
+     * Finish may write reports recursively during a surface download. Drain
+     * retained ownership BEFORE enqueuing any DMA write, and disallow new
+     * retention while reports are queued. Do not download from report finish.
+     */
+    pgraph_wgpu_materialize_retained(d, 0, memory_region_size(d->vram), false);
+
     WgpuQueryReport *report = g_malloc(sizeof(WgpuQueryReport));
     report->clear = false;
     report->parameter = parameter;

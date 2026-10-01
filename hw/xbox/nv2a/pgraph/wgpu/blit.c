@@ -121,12 +121,6 @@ void pgraph_wgpu_image_blit(NV2AState *d)
     dest += context_surfaces->dest_offset;
     hwaddr dest_addr = dest - d->vram_ptr;
 
-    SurfaceBinding *surf_src = pgraph_wgpu_surface_get(d, source_addr);
-    if (surf_src) {
-        pgraph_wgpu_dl_reason = "blit-src";
-        pgraph_wgpu_surface_download_if_dirty(d, surf_src);
-    }
-
     hwaddr source_offset = image_blit->in_y * context_surfaces->source_pitch +
                            image_blit->in_x * bytes_per_pixel;
     hwaddr dest_offset = image_blit->out_y * context_surfaces->dest_pitch +
@@ -157,9 +151,36 @@ void pgraph_wgpu_image_blit(NV2AState *d)
         leftover_bytes = clipped_dest_size - consumed_bytes;
     }
 
+    /*
+     * Direct engine accesses bypass CPU traps. Preserve the entire retained
+     * owner even for a full overwrite of its smaller render image. Prepare
+     * the write first: a source read of that same owner retires its backing.
+     */
+    hwaddr source_size = adjusted_height ?
+        (adjusted_height - 1) * context_surfaces->source_pitch + row_bytes : 0;
+    hwaddr write_size = adjusted_height ?
+        (adjusted_height - 1) * context_surfaces->dest_pitch + row_bytes : 0;
+    if (leftover_bytes) {
+        source_size = MAX(source_size,
+                         adjusted_height * context_surfaces->source_pitch +
+                         leftover_bytes);
+        write_size = MAX(write_size,
+                        adjusted_height * context_surfaces->dest_pitch +
+                        leftover_bytes);
+    }
+    pgraph_wgpu_materialize_retained(d, dest_addr + dest_offset, write_size,
+                                     true);
+    pgraph_wgpu_materialize_retained(
+        d, source_addr + source_offset, source_size, false);
+
+    SurfaceBinding *surf_src = pgraph_wgpu_surface_get(d, source_addr);
+    if (surf_src) {
+        pgraph_wgpu_dl_reason = "blit-src";
+        pgraph_wgpu_surface_download_if_dirty(d, surf_src);
+    }
     SurfaceBinding *surf_dest = pgraph_wgpu_surface_get(d, dest_addr);
     if (surf_dest) {
-        if (adjusted_height < surf_dest->height ||
+        if (surf_dest->backing || adjusted_height < surf_dest->height ||
             row_pixels < surf_dest->width) {
             pgraph_wgpu_dl_reason = "blit-dst-partial";
             pgraph_wgpu_surface_download_if_dirty(d, surf_dest);
