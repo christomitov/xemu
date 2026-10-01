@@ -21,6 +21,7 @@
 
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "qemu/main-loop.h"
+#include "qemu/xemu-wasm-stats.h"
 #ifdef EMSCRIPTEN
 #include "ui/xemu-settings.h"
 #endif
@@ -226,6 +227,7 @@ static void nv2a_vga_gfx_update(void *opaque)
 #endif
 
     NV2AState *d = container_of(vga, NV2AState, vga);
+    XSTAT_INC(n_vblank);
     d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
     d->pcrtc.raster = 0;
 

@@ -48,6 +48,7 @@ typedef struct PITChannelState {
     QEMUTimer *irq_timer;
     qemu_irq irq;
     uint32_t irq_disabled;
+    int wasm_last_out;  /* previous output level, for tick counting */
 } PITChannelState;
 
 struct PITCommonState {
