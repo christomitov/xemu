@@ -39,6 +39,7 @@
     X(n_slow_st)         /* stores taking the softmmu slow path */          \
     X(n_slow_st_miss)    /*  ... TLB miss (victim hit or fill) */          \
     X(n_slow_st_notdirty) /* ... clean page (code / dirty tracking) */     \
+    X(n_smc_bitmap_miss) /* ... code-page stores cleared by the code bitmap */ \
     X(n_slow_st_mmio)    /*  ... MMIO */                                    \
     X(n_slow_st_watch)   /*  ... watchpoint / access callback */            \
     X(n_slow_ld)         /* loads taking the softmmu slow path */           \

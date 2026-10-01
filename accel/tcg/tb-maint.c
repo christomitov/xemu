@@ -20,6 +20,7 @@
 #include "qemu/osdep.h"
 #include "qemu/xemu-wasm-stats.h"
 #include "qemu/interval-tree.h"
+#include "qemu/bitmap.h"
 #include "qemu/qtree.h"
 #include "exec/cputlb.h"
 #include "exec/log.h"
@@ -201,6 +202,10 @@ struct PageDesc {
 #if defined(XBOX) && defined(EMSCRIPTEN)
     /* stores to this page that missed all of its TBs (adaptive SMC) */
     uint32_t smc_miss;
+    /* stores seen before the code bitmap is built */
+    uint32_t smc_writes;
+    /* one bit per byte covered by a TB on this page; NULL until needed */
+    unsigned long *code_bitmap;
 #endif
 };
 
@@ -331,6 +336,67 @@ struct page_collection {
 typedef int PageForEachNext;
 #define PAGE_FOR_EACH_TB(start, last, pagedesc, tb, n) \
     TB_FOR_EACH_TAGGED((pagedesc)->first_tb, tb, n, page_next)
+
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/* The byte range [*first, *last] of @tb that lies on its page @n. */
+static void tb_page_range(const TranslationBlock *tb, unsigned n,
+                          tb_page_addr_t *first, tb_page_addr_t *last)
+{
+    tb_page_addr_t tb_start = tb_page_addr0(tb);
+    tb_page_addr_t tb_last = tb_start + tb->size - 1;
+
+    if (n == 0) {
+        tb_last = MIN(tb_last, tb_start | ~TARGET_PAGE_MASK);
+    } else {
+        tb_start = tb_page_addr1(tb);
+        tb_last = tb_start + (tb_last & ~TARGET_PAGE_MASK);
+    }
+    *first = tb_start;
+    *last = tb_last;
+}
+
+static void page_code_bitmap_add(PageDesc *p, const TranslationBlock *tb,
+                                 unsigned n)
+{
+    tb_page_addr_t first, last;
+
+    tb_page_range(tb, n, &first, &last);
+    bitmap_set(p->code_bitmap, first & ~TARGET_PAGE_MASK, last - first + 1);
+}
+
+static void page_code_bitmap_drop(PageDesc *p)
+{
+    g_free(p->code_bitmap);
+    p->code_bitmap = NULL;
+    p->smc_writes = 0;
+}
+
+static void page_code_bitmap_build(PageDesc *p)
+{
+    TranslationBlock *tb;
+    PageForEachNext n;
+
+    p->code_bitmap = bitmap_new(TARGET_PAGE_SIZE);
+    PAGE_FOR_EACH_TB(0, 0, p, tb, n) {
+        page_code_bitmap_add(p, tb, n);
+    }
+}
+
+/* XEMU_WASM_SMC_PAGE: 0 exact, 1 whole page, unset adaptive (2). */
+static void smc_config(int *mode, int *thresh)
+{
+    static int smc_mode = -1, smc_thresh;
+
+    if (smc_mode < 0) {
+        const char *e = getenv("XEMU_WASM_SMC_PAGE");
+        const char *m = getenv("XEMU_WASM_SMC_MISS");
+        smc_thresh = m ? atoi(m) : 64;
+        smc_mode = !e ? 2 : *e == '0' ? 0 : 1;
+    }
+    *mode = smc_mode;
+    *thresh = smc_thresh;
+}
+#endif
 
 #ifdef CONFIG_DEBUG_TCG
 
@@ -683,6 +749,9 @@ static void tb_remove_all_1(int level, void **lp)
         for (i = 0; i < V_L2_SIZE; ++i) {
             page_lock(&pd[i]);
             pd[i].first_tb = (uintptr_t)NULL;
+#if defined(XBOX) && defined(EMSCRIPTEN)
+            page_code_bitmap_drop(&pd[i]);
+#endif
             page_unlock(&pd[i]);
         }
     } else {
@@ -716,6 +785,11 @@ static void tb_page_add(PageDesc *p, TranslationBlock *tb, unsigned int n)
     tb->page_next[n] = p->first_tb;
     page_already_protected = p->first_tb != 0;
     p->first_tb = (uintptr_t)tb | n;
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    if (p->code_bitmap) {
+        page_code_bitmap_add(p, tb, n);
+    }
+#endif
 
     /*
      * If some code is already present, then the pages are already
@@ -752,6 +826,9 @@ static void tb_page_remove(PageDesc *pd, TranslationBlock *tb)
     PAGE_FOR_EACH_TB(unused, unused, pd, tb1, n1) {
         if (tb1 == tb) {
             *pprev = tb1->page_next[n1];
+#if defined(XBOX) && defined(EMSCRIPTEN)
+            page_code_bitmap_drop(pd);
+#endif
             return;
         }
         pprev = &tb1->page_next[n1];
@@ -1208,13 +1285,8 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
      * missed all of them, flush the whole page so stores become fast again.
      * XEMU_WASM_SMC_PAGE=1 always flushes the page, =0 is always exact.
      */
-    static int smc_mode = -1, smc_thresh;
-    if (smc_mode < 0) {
-        const char *e = getenv("XEMU_WASM_SMC_PAGE");
-        const char *m = getenv("XEMU_WASM_SMC_MISS");
-        smc_mode = !e ? 2 : *e == '0' ? 0 : 1;
-        smc_thresh = m ? atoi(m) : 64;
-    }
+    int smc_mode, smc_thresh;
+    smc_config(&smc_mode, &smc_thresh);
     bool smc_page = smc_mode == 1 ||
                     (smc_mode == 2 && p->smc_miss >= smc_thresh);
     bool smc_hit = false;
@@ -1333,6 +1405,33 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
 {
     PageDesc *p = page_find(start >> TARGET_PAGE_BITS);
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    /*
+     * Stores to data sharing a page with code: test a per-page code bitmap
+     * instead of walking every TB on the page under the page collection
+     * lock. The adaptive page flush still applies once misses accumulate.
+     */
+    int smc_mode, smc_thresh;
+    smc_config(&smc_mode, &smc_thresh);
+    if (p && smc_mode != 1) {
+        unsigned off = start & ~TARGET_PAGE_MASK;
+        bool miss = false;
+
+        page_lock(p);
+        if (p->code_bitmap) {
+            miss = find_next_bit(p->code_bitmap, off + len, off) >= off + len;
+        } else if (p->first_tb && ++p->smc_writes >= 4) {
+            page_code_bitmap_build(p);
+        }
+        if (miss && (smc_mode == 0 || p->smc_miss + 1 < smc_thresh)) {
+            p->smc_miss++;
+            page_unlock(p);
+            XSTAT_INC(n_smc_bitmap_miss);
+            return;
+        }
+        page_unlock(p);
+    }
+#endif
     if (p) {
         ram_addr_t last = start + len - 1;
         struct page_collection *pages = page_collection_lock(start, last);
