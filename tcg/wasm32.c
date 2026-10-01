@@ -172,7 +172,8 @@ EMSCRIPTEN_KEEPALIVE uint32_t *wasm32_tb_info(void *hdr)
 
     memset(out, 0, sizeof(out));
     if (tb) {
-        out[0] = tb->pc;
+        /* CF_PCREL blocks have no vaddr: give the physical address */
+        out[0] = (tb_cflags(tb) & CF_PCREL) ? tb_page_addr0(tb) : tb->pc;
         out[1] = tb->cs_base;
         out[2] = tb->size;
         out[3] = tb->icount;
