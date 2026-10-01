@@ -773,15 +773,19 @@ WGPUBindGroup pgraph_wgpu_update_bind_group(PGRAPHState *pg)
             };
         }
 
-        e = &s->bg_cache[s->bg_cache_next++ % WGPU_BIND_GROUP_CACHE];
-        /* command encoders keep a reference while it is in use */
-        bg_cache_entry_release(e);
         XSTAT_INC(n_bind_group_create);
-        e->bind_group = wgpuDeviceCreateBindGroup(
+        WGPUBindGroup bg = wgpuDeviceCreateBindGroup(
             r->device, &(WGPUBindGroupDescriptor){
                            .layout = l->bind_group_layout,
                            .entryCount = n,
                            .entries = entries });
+        if (!bg) {
+            return NULL;
+        }
+        e = &s->bg_cache[s->bg_cache_next++ % WGPU_BIND_GROUP_CACHE];
+        /* command encoders keep a reference while it is in use */
+        bg_cache_entry_release(e);
+        e->bind_group = bg;
         e->layout = l->bind_group_layout;
         wgpuBindGroupLayoutAddRef(e->layout);
         e->buffer = s->uniform_buffer;
@@ -938,10 +942,10 @@ void pgraph_wgpu_finalize_shaders(PGRAPHState *pg)
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     PGRAPHWgpuShaderState *s = &r->shaders;
 
+    for (int k = 0; k < WGPU_BIND_GROUP_CACHE; k++) {
+        bg_cache_entry_release(&s->bg_cache[k]);
+    }
     if (s->bind_group) {
-        for (int k = 0; k < WGPU_BIND_GROUP_CACHE; k++) {
-            bg_cache_entry_release(&s->bg_cache[k]);
-        }
         s->bind_group = NULL;
     }
     shader_cache_finalize(s);
