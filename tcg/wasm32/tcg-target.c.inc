@@ -557,6 +557,60 @@ static void wasm_count(TCGContext *s, uint64_t *ctr)
     wasm_mem(s, W_I64_STORE, 0);
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * XEMU_WASM_HELPER_PROF=1: count calls per helper (by function pointer);
+ * xemu_wasm_helper_prof_dump() prints the top ones.
+ */
+#include <emscripten.h>
+#define HPROF_N 4096
+static struct { uintptr_t fn; const char *name; uint64_t n; } hprof[HPROF_N];
+
+static void wasm_count_helper(TCGContext *s, const void *func,
+                              const TCGHelperInfo *info)
+{
+    static int on = -1;
+    uint32_t i;
+
+    if (on < 0) {
+        const char *e = getenv("XEMU_WASM_HELPER_PROF");
+        on = e && *e == '1';
+    }
+    if (!on) {
+        return;
+    }
+    for (i = ((uintptr_t)func * 2654435761u) % HPROF_N;
+         hprof[i].fn && hprof[i].fn != (uintptr_t)func;
+         i = (i + 1) % HPROF_N) {
+    }
+    hprof[i].fn = (uintptr_t)func;
+    hprof[i].name = info->name;
+    wasm_count(s, &hprof[i].n);
+}
+
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_helper_prof_dump(void)
+{
+    for (int k = 0; k < 25; k++) {
+        int best = -1;
+        for (int i = 0; i < HPROF_N; i++) {
+            if (hprof[i].n && (best < 0 || hprof[i].n > hprof[best].n)) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        fprintf(stderr, "[hprof] %-24s %llu\n",
+                hprof[best].name ? hprof[best].name : "?",
+                (unsigned long long)hprof[best].n);
+        hprof[best].n = 0;
+    }
+    for (int i = 0; i < HPROF_N; i++) {
+        hprof[i].n = 0;
+    }
+}
+#endif
+
 /* publish what the vCPU is doing for the sampling profile (NULL = jit) */
 static void wasm_phase(TCGContext *s, const char *name)
 {
@@ -1245,6 +1299,7 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
 
 #ifdef EMSCRIPTEN
     wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_helper(s, func, info);
 #endif
     /* fast attempt */
     wasm_push_call_args(s, typemask, nargs);
@@ -1274,11 +1329,24 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
 }
 #endif
 
+#ifdef EMSCRIPTEN
+static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
+                               const TCGHelperInfo *info);
+static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
+                              const TCGHelperInfo *info);
+#endif
+
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
                       const TCGHelperInfo *info)
 {
 #ifdef EMSCRIPTEN
     if (wasm_call_i128_fast(s, func, info)) {
+        return;
+    }
+    if (wasm_call_sse_fast(s, func, info)) {
+        return;
+    }
+    if (wasm_call_cc_fast(s, func, info)) {
         return;
     }
 #endif
@@ -1296,6 +1364,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
 
 #ifdef EMSCRIPTEN
     wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_helper(s, func, info);
 #endif
     if (may_suspend) {
         wasm_new_resumable_block(s);
@@ -3041,6 +3110,502 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 #define W_F64_REINTERPRET_I64 0xbf
 #define W_F64_CONST         0x44
 #define W_I32_LT_U          0x49
+
+#ifdef EMSCRIPTEN
+#define W_I32_LOAD8_U_   0x2d
+#define W_I32_LOAD16_U_  0x2f
+#define W_I32_STORE16_   0x3b
+#define W_I32_SUB_       0x6b
+
+int xemu_wasm_sse_status_ofs(int which) __attribute__((weak));
+
+/* push call argument slot j (a pointer) */
+static void sse_arg(TCGContext *s, int j)
+{
+    wasm_get_r32(s, TCG_REG_CALL_STACK);
+    wasm_mem(s, W_I32_LOAD, TCG_TARGET_CALL_STACK_OFFSET + j * 8);
+}
+
+/* push (v is +-0 or a normal float), v a local holding the bits */
+static void sse_zon(TCGContext *s, int v)
+{
+    wasm_var(s, W_LOCAL_GET, v);
+    wasm_i32_const(s, 23);
+    wasm8(s, W_I32_SHR_U);
+    wasm_i32_const(s, 0xff);
+    wasm8(s, W_I32_AND);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_SUB_);
+    wasm_i32_const(s, 254);
+    wasm8(s, W_I32_LT_U);
+    wasm_var(s, W_LOCAL_GET, v);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_SHL);
+    wasm8(s, W_I32_EQZ);
+    wasm8(s, W_I32_OR);
+}
+
+/* push ((v << 1) != 0): v is not +-0 */
+static void sse_nonzero(TCGContext *s, int v)
+{
+    wasm_var(s, W_LOCAL_GET, v);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_SHL);
+    wasm_i32_const(s, 0);
+    wasm8(s, W_I32_NE);
+}
+
+static void sse_f32(TCGContext *s, int v)
+{
+    wasm_var(s, W_LOCAL_GET, v);
+    wasm8(s, W_F32_REINTERPRET_I32);
+}
+
+static void sse_f64(TCGContext *s, int v)
+{
+    sse_f32(s, v);
+    wasm8(s, W_F64_PROMOTE_F32);
+}
+
+int xemu_wasm_ccop_val(int which) __attribute__((weak));
+
+#define W_I32_POPCNT_ 0x69
+
+/*
+ * cc_compute_c / cc_compute_all(dst, src1, src2, op) inline for the CC_OP
+ * values that dominate in practice (the dashboard intro: cc_compute_all
+ * with LOGICB 1.7M/s, cc_compute_c with EFLAGS 1.4M/s), with exactly the
+ * helper's result (target/i386/tcg/cc_helper.c); other ops call it.
+ *   c:   EFLAGS -> src1 & 1;  LOGICx -> 0;  INCx/DECx -> src1
+ *   all: EFLAGS -> src1;  LOGICB/LOGICL -> P|Z|S of the result
+ * XEMU_WASM_CC_FAST=0 disables, =2 verifies against the helper.
+ * Locals: L32_0 = op, L32_2 = dst, L32_3 = src1.
+ */
+static void cc_logic_flags(TCGContext *s, bool byte)
+{
+    /* PF: even parity of the low byte */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, 0xff);
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_I32_POPCNT_);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_AND);
+    wasm_i32_const(s, 1);
+    wasm8(s, W_I32_XOR);
+    wasm_i32_const(s, 2);
+    wasm8(s, W_I32_SHL);
+    /* ZF */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    if (byte) {
+        wasm_i32_const(s, 0xff);
+        wasm8(s, W_I32_AND);
+    }
+    wasm8(s, W_I32_EQZ);
+    wasm_i32_const(s, 6);
+    wasm8(s, W_I32_SHL);
+    wasm8(s, W_I32_OR);
+    /* SF */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    if (!byte) {
+        wasm_i32_const(s, 24);
+        wasm8(s, W_I32_SHR_U);
+    }
+    wasm_i32_const(s, 0x80);
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_I32_OR);
+}
+
+static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
+                              const TCGHelperInfo *info)
+{
+    static int enabled = -1;
+    unsigned typemask = info->typemask;
+    int nargs = helper_nargs(typemask);
+    int func_idx, nest = 0;
+    bool all;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_CC_FAST");
+        enabled = e ? atoi(e) : 1;
+        if (!xemu_wasm_ccop_val) {
+            enabled = 0;
+        }
+    }
+    if (!enabled || !info->name || nargs != 4) {
+        return false;
+    }
+    if (!strcmp(info->name, "cc_compute_all")) {
+        all = true;
+    } else if (!strcmp(info->name, "cc_compute_c")) {
+        all = false;
+    } else {
+        return false;
+    }
+    /* target_ulong must be i32 (32-bit guest), op an int */
+    for (int j = 1; j <= 4; j++) {
+        int tc = extract32(typemask, j * 3, 3);
+        if (tc != dh_typecode_i32 && tc != dh_typecode_s32) {
+            return false;
+        }
+    }
+    func_idx = get_helper_idx(func);
+    if (func_idx < 0) {
+        func_idx = register_helper(func);
+        gen_func_type(info);
+    }
+
+    sse_arg(s, 3);
+    wasm_var(s, W_LOCAL_SET, L32_0);
+    sse_arg(s, 0);
+    wasm_var(s, W_LOCAL_SET, L32_2);
+    sse_arg(s, 1);
+    wasm_var(s, W_LOCAL_SET, L32_3);
+
+    /* op == EFLAGS */
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_i32_const(s, xemu_wasm_ccop_val(0));
+    wasm8(s, W_I32_EQ);
+    wasm_if_hint(s, W_TYPE_I32, true);
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    if (!all) {
+        wasm_i32_const(s, 1);
+        wasm8(s, W_I32_AND);
+    }
+    wasm8(s, W_ELSE);
+    nest++;
+    if (all) {
+        for (int k = 0; k < 2; k++) {
+            /* op == LOGICB / LOGICL */
+            wasm_var(s, W_LOCAL_GET, L32_0);
+            wasm_i32_const(s, xemu_wasm_ccop_val(1 + k));
+            wasm8(s, W_I32_EQ);
+            wasm_if_hint(s, W_TYPE_I32, true);
+            cc_logic_flags(s, k == 0);
+            wasm8(s, W_ELSE);
+            nest++;
+        }
+    } else {
+        /* (op - LOGICB) <u 4: LOGICB..LOGICQ */
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, xemu_wasm_ccop_val(1));
+        wasm8(s, W_I32_SUB_);
+        wasm_i32_const(s, 4);
+        wasm8(s, W_I32_LT_U);
+        wasm_if_hint(s, W_TYPE_I32, true);
+        wasm_i32_const(s, 0);
+        wasm8(s, W_ELSE);
+        nest++;
+        /* (op - INCB) <u 8: INCB..DECQ */
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, xemu_wasm_ccop_val(3));
+        wasm8(s, W_I32_SUB_);
+        wasm_i32_const(s, 8);
+        wasm8(s, W_I32_LT_U);
+        wasm_if_hint(s, W_TYPE_I32, true);
+        wasm_var(s, W_LOCAL_GET, L32_3);
+        wasm8(s, W_ELSE);
+        nest++;
+    }
+    /* any other op: the helper */
+    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_helper(s, func, info);
+    wasm_set_tci_tb_ptr(s);
+    wasm_push_call_args(s, typemask, nargs);
+    wasm_phase(s, info->name);
+    wasm_call_idx(s, func_idx);
+    wasm_phase(s, NULL);
+    while (nest--) {
+        wasm8(s, W_END);
+    }
+
+    if (enabled == 2) {
+        /* verify: the helper's result must equal the inline one */
+        wasm_var(s, W_LOCAL_SET, L32_1);
+        wasm_count(s, &xemu_wasm_stats.n_sse_checked);
+        wasm_push_call_args(s, typemask, nargs);
+        wasm_call_idx(s, func_idx);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm8(s, W_I32_NE);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+        wasm_count(s, &xemu_wasm_stats.n_sse_mismatch);
+        wasm8(s, W_END);
+        wasm_var(s, W_LOCAL_GET, L32_1);
+    }
+    wasm_call_results(s, typemask & 7);
+    return true;
+}
+
+/*
+ * addss/subss/mulss/divss inline: the exact fast path of ffp_f32_arith()
+ * (target/i386/tcg/fast_fp.h) emitted as wasm, so the common case needs
+ * no helper call. Same gates: round-to-nearest-even, operands +-0 or
+ * normal, result finite with r == 0 or |r| > FLT_MIN, no zero product or
+ * quotient from nonzero inputs, no division by zero; the inexact flag is
+ * computed exactly (TwoSum for add/sub, exact double products for mul/div).
+ * Anything else, and a rewind, runs the original helper (L32_1 == 0).
+ *
+ * Locals: L32_2 = a bits, L32_3 = b bits (negated for sub), L32_0 = r bits,
+ * L32_1 = done.
+ */
+static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
+                               const TCGHelperInfo *info)
+{
+    static int enabled = -1;
+    unsigned typemask = info->typemask;
+    int nargs = helper_nargs(typemask);
+    int op, rm_ofs, fl_ofs, func_idx;
+
+    if (enabled < 0) {
+        /* 0: off, 1: on, 2: verify against the helper (testing) */
+        const char *e = getenv("XEMU_WASM_SSE_FAST");
+        enabled = e ? atoi(e) : 1;
+        if (!xemu_wasm_sse_status_ofs || xemu_wasm_sse_status_ofs(0) < 0) {
+            enabled = 0;
+        }
+    }
+    if (!enabled || !info->name) {
+        return false;
+    }
+    if (!strcmp(info->name, "addss")) {
+        op = W_F32_ADD;
+    } else if (!strcmp(info->name, "subss")) {
+        op = W_F32_SUB;
+    } else if (!strcmp(info->name, "mulss")) {
+        op = W_F32_MUL;
+    } else if (!strcmp(info->name, "divss")) {
+        op = W_F32_DIV;
+    } else {
+        return false;
+    }
+    rm_ofs = xemu_wasm_sse_status_ofs(0);
+    fl_ofs = xemu_wasm_sse_status_ofs(1);
+
+    func_idx = get_helper_idx(func);
+    if (func_idx < 0) {
+        func_idx = register_helper(func);
+        gen_func_type(info);
+    }
+    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_helper(s, func, info);
+
+    /* helper(env, d, v, s): d.s0 = v.s0 OP s.s0; d.s1..3 = v.s1..3 */
+    wasm_i32_const(s, 0);
+    wasm_var(s, W_LOCAL_SET, L32_1);
+    sse_arg(s, 2);
+    wasm_mem(s, W_I32_LOAD, 0);
+    wasm_var(s, W_LOCAL_SET, L32_2);
+    sse_arg(s, 3);
+    wasm_mem(s, W_I32_LOAD, 0);
+    wasm_var(s, W_LOCAL_SET, L32_3);
+
+    /* rounding nearest-even && zon(a) && zon(b) [&& b != 0 for div] */
+    wasm_get_r32(s, TCG_AREG0);
+    wasm_mem(s, W_I32_LOAD8_U_, rm_ofs);
+    wasm8(s, W_I32_EQZ);
+    sse_zon(s, L32_2);
+    wasm8(s, W_I32_AND);
+    sse_zon(s, L32_3);
+    wasm8(s, W_I32_AND);
+    if (op == W_F32_DIV) {
+        sse_nonzero(s, L32_3);
+        wasm8(s, W_I32_AND);
+    }
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+    {
+        if (op == W_F32_SUB) {
+            /* a - b == a + (-b), exactly */
+            wasm_var(s, W_LOCAL_GET, L32_3);
+            wasm_i32_const(s, 0x80000000);
+            wasm8(s, W_I32_XOR);
+            wasm_var(s, W_LOCAL_SET, L32_3);
+            op = W_F32_ADD;
+        }
+        sse_f32(s, L32_2);
+        sse_f32(s, L32_3);
+        wasm8(s, op);
+        wasm8(s, W_I32_REINTERPRET_F32);
+        wasm_var(s, W_LOCAL_SET, L32_0);
+
+        /* res_ok(r): (e-2) <u 253 || r == +-0 || (e == 1 && frac != 0) */
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, 23);
+        wasm8(s, W_I32_SHR_U);
+        wasm_i32_const(s, 0xff);
+        wasm8(s, W_I32_AND);
+        wasm_i32_const(s, 2);
+        wasm8(s, W_I32_SUB_);
+        wasm_i32_const(s, 253);
+        wasm8(s, W_I32_LT_U);
+        sse_nonzero(s, L32_0);
+        wasm8(s, W_I32_EQZ);
+        wasm8(s, W_I32_OR);
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, 23);
+        wasm8(s, W_I32_SHR_U);
+        wasm_i32_const(s, 0xff);
+        wasm8(s, W_I32_AND);
+        wasm_i32_const(s, 1);
+        wasm8(s, W_I32_EQ);
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_i32_const(s, 0x7fffff);
+        wasm8(s, W_I32_AND);
+        wasm_i32_const(s, 0);
+        wasm8(s, W_I32_NE);
+        wasm8(s, W_I32_AND);
+        wasm8(s, W_I32_OR);
+        if (op == W_F32_MUL || op == W_F32_DIV) {
+            /* not (r == 0 from a nonzero product / dividend): underflow */
+            sse_nonzero(s, L32_0);
+            sse_nonzero(s, L32_2);
+            wasm8(s, W_I32_EQZ);
+            wasm8(s, W_I32_OR);
+            if (op == W_F32_MUL) {
+                sse_nonzero(s, L32_3);
+                wasm8(s, W_I32_EQZ);
+                wasm8(s, W_I32_OR);
+            }
+            wasm8(s, W_I32_AND);
+        }
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+        {
+            /* push inexact */
+            switch (op) {
+            case W_F32_ADD:
+                /* bb = r - a; err = (a - (r - bb)) + (b - bb) */
+                sse_f32(s, L32_2);
+                sse_f32(s, L32_0);
+                sse_f32(s, L32_0);
+                sse_f32(s, L32_2);
+                wasm8(s, W_F32_SUB);            /* bb */
+                wasm8(s, W_F32_SUB);            /* r - bb */
+                wasm8(s, W_F32_SUB);            /* a - (r - bb) */
+                sse_f32(s, L32_3);
+                sse_f32(s, L32_0);
+                sse_f32(s, L32_2);
+                wasm8(s, W_F32_SUB);            /* bb */
+                wasm8(s, W_F32_SUB);            /* b - bb */
+                wasm8(s, W_F32_ADD);
+                wasm8(s, W_I32_REINTERPRET_F32);
+                wasm_i32_const(s, 1);
+                wasm8(s, W_I32_SHL);            /* err != +-0 */
+                wasm_i32_const(s, 0);
+                wasm8(s, W_I32_NE);
+                break;
+            case W_F32_MUL:
+                sse_f64(s, L32_0);
+                sse_f64(s, L32_2);
+                sse_f64(s, L32_3);
+                wasm8(s, W_F64_MUL);
+                wasm8(s, W_F64_NE);
+                break;
+            default: /* W_F32_DIV */
+                sse_f64(s, L32_0);
+                sse_f64(s, L32_3);
+                wasm8(s, W_F64_MUL);
+                sse_f64(s, L32_2);
+                wasm8(s, W_F64_NE);
+                break;
+            }
+            if (enabled == 2) {
+                wasm8(s, W_I64_EXTEND_I32_U);
+                wasm_var(s, W_LOCAL_SET, L64_1);
+                wasm_i32_const(s, 1);
+                wasm_var(s, W_LOCAL_SET, L32_1);
+                goto verify_done;
+            }
+            wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+            wasm_get_r32(s, TCG_AREG0);
+            wasm_get_r32(s, TCG_AREG0);
+            wasm_mem(s, W_I32_LOAD16_U_, fl_ofs);
+            wasm_i32_const(s, 0x10);            /* float_flag_inexact */
+            wasm8(s, W_I32_OR);
+            wasm_mem(s, W_I32_STORE16_, fl_ofs);
+            wasm8(s, W_END);
+
+            /* d.s1..3 = v.s1..3 (read before d.s0 is written: d may be v) */
+            sse_arg(s, 1);
+            sse_arg(s, 2);
+            wasm_mem(s, W_I32_LOAD, 4);
+            wasm_mem(s, W_I32_STORE, 4);
+            sse_arg(s, 1);
+            sse_arg(s, 2);
+            wasm_mem(s, W_I64_LOAD, 8);
+            wasm_mem(s, W_I64_STORE, 8);
+            sse_arg(s, 1);
+            wasm_var(s, W_LOCAL_GET, L32_0);
+            wasm_mem(s, W_I32_STORE, 0);
+            wasm_i32_const(s, 1);
+            wasm_var(s, W_LOCAL_SET, L32_1);
+        }
+    verify_done:
+        wasm8(s, W_END);
+    }
+    wasm8(s, W_END);
+
+    /* fallback: the original helper call */
+    wasm_new_resumable_block(s);
+    if (enabled == 2) {
+        /* run the helper anyway, with the inexact flag cleared */
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_mem(s, W_I32_LOAD16_U_, fl_ofs);
+        wasm8(s, W_I64_EXTEND_I32_U);
+        wasm_var(s, W_LOCAL_SET, L64_0);
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_var(s, W_LOCAL_GET, L64_0);
+        wasm8(s, W_I32_WRAP_I64);
+        wasm_i32_const(s, ~0x10);
+        wasm8(s, W_I32_AND);
+        wasm_mem(s, W_I32_STORE16_, fl_ofs);
+        wasm_i32_const(s, 1);
+    } else {
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm8(s, W_I32_EQZ);
+    }
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    wasm_set_tci_tb_ptr(s);
+    wasm_push_call_args(s, typemask, nargs);
+    wasm_save_regs(s);
+    wasm_phase(s, info->name);
+    wasm_call_idx(s, func_idx);
+    wasm_phase(s, NULL);
+    wasm_handle_unwinding(s);
+    wasm8(s, W_END);
+    if (enabled == 2) {
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+        wasm_count(s, &xemu_wasm_stats.n_sse_checked);
+        /* d.s0 != r || inexact(helper) != inexact(fast) */
+        sse_arg(s, 1);
+        wasm_mem(s, W_I32_LOAD, 0);
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm8(s, W_I32_NE);
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_mem(s, W_I32_LOAD16_U_, fl_ofs);
+        wasm_i32_const(s, 4);
+        wasm8(s, W_I32_SHR_U);
+        wasm_i32_const(s, 1);
+        wasm8(s, W_I32_AND);
+        wasm_var(s, W_LOCAL_GET, L64_1);
+        wasm8(s, W_I32_WRAP_I64);
+        wasm8(s, W_I32_NE);
+        wasm8(s, W_I32_OR);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+        wasm_count(s, &xemu_wasm_stats.n_sse_mismatch);
+        wasm8(s, W_END);
+        wasm8(s, W_END);
+        /* restore the flags the guest had, plus what the helper raised */
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_mem(s, W_I32_LOAD16_U_, fl_ofs);
+        wasm_var(s, W_LOCAL_GET, L64_0);
+        wasm8(s, W_I32_WRAP_I64);
+        wasm8(s, W_I32_OR);
+        wasm_mem(s, W_I32_STORE16_, fl_ofs);
+    }
+    wasm_call_results(s, typemask & 7);
+    return true;
+}
+#endif
 #define W_PREFIX_FC         0xfc
 #define W_FC_I32_TRUNC_SAT_F64_S 0x02
 #define W_FC_I64_TRUNC_SAT_F64_S 0x06

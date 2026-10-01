@@ -339,3 +339,21 @@ void helper_clts(CPUX86State *env)
     env->cr[0] &= ~CR0_TS_MASK;
     env->hflags &= ~HF_TS_MASK;
 }
+
+#ifdef EMSCRIPTEN
+/*
+ * CC_OP values for the wasm32 JIT's inline cc_compute_{c,all} fast paths
+ * (tcg/wasm32): the backend is target independent.
+ */
+int xemu_wasm_ccop_val(int which)
+{
+    static const int v[] = {
+        CC_OP_EFLAGS, CC_OP_LOGICB, CC_OP_LOGICL, CC_OP_INCB,
+    };
+    QEMU_BUILD_BUG_ON(CC_OP_LOGICQ != CC_OP_LOGICB + 3);
+    QEMU_BUILD_BUG_ON(CC_OP_DECB != CC_OP_INCB + 4);
+    QEMU_BUILD_BUG_ON(CC_OP_DECQ != CC_OP_INCB + 7);
+    QEMU_BUILD_BUG_ON(CC_P != 4 || CC_Z != 0x40 || CC_S != 0x80);
+    return v[which];
+}
+#endif
