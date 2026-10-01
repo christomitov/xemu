@@ -1647,6 +1647,9 @@ void *probe_access(CPUArchState *env, vaddr addr, int size,
     }
 
     if (unlikely(flags & (TLB_NOTDIRTY | TLB_WATCHPOINT))) {
+#ifdef EMSCRIPTEN
+        XPHASE_PUSH(XPHASE_VCPU, "probe_watch");
+#endif
         /* Handle watchpoints.  */
         if (flags & TLB_WATCHPOINT) {
             int wp_access = (access_type == MMU_DATA_STORE
@@ -1661,8 +1664,14 @@ void *probe_access(CPUArchState *env, vaddr addr, int size,
 
         /* Handle clean RAM pages.  */
         if (flags & TLB_NOTDIRTY) {
+#ifdef EMSCRIPTEN
+            XPHASE_SET(XPHASE_VCPU, "probe_notdirty");
+#endif
             notdirty_write(env_cpu(env), addr, size, full, retaddr);
         }
+#ifdef EMSCRIPTEN
+        XPHASE_POP(XPHASE_VCPU);
+#endif
     }
 
     return host;
