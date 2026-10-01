@@ -98,6 +98,8 @@ extern XemuWasmStats xemu_wasm_stats;
 int64_t xemu_wasm_stats_now_ns(void);
 /* per-MemoryRegion MMIO call count + time (vCPU thread), for the report */
 void xemu_wasm_mmio_prof(const char *region, int64_t ns);
+/* Named pfifo-thread events; key must be an interned string. */
+void xemu_wasm_count(const char *key);
 #define XSTAT_INC(f) (xemu_wasm_stats.f++)
 #define XSTAT_ADD(f, v) (xemu_wasm_stats.f += (uint64_t)(v))
 #define XSTAT_T0() int64_t xstat_t0_ = xemu_wasm_stats_now_ns()

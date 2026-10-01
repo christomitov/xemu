@@ -991,6 +991,9 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
  *    (pgraph_wgpu_pack_depth_stencil); a compute pass stores them into the
  *    R32Uint texture of the X8_Y24 formats (a buffer->texture copy would
  *    need 256 byte aligned rows).
+ *  - S2T_Z24S8_PACKED_COLOR: the same packed words, interpreted as the raw
+ *    bytes of a linear A8R8G8B8 or B8G8R8A8 texture by a render pass. This
+ *    retains both the depth quantization and stencil byte of the VRAM path.
  * Every other surface/texture combination takes the VRAM path (surface is
  * downloaded if dirty, texture decoded from VRAM).
  */
@@ -999,6 +1002,7 @@ typedef enum SurfaceToTextureMode {
     S2T_COLOR,
     S2T_DEPTH16,
     S2T_Z24S8,
+    S2T_Z24S8_PACKED_COLOR,
 } SurfaceToTextureMode;
 
 #define S2T_WGSL_VS \
@@ -1046,6 +1050,29 @@ static const char s2t_z24s8_wgsl[] =
     "    textureStore(dst, vec2i(id.xy), vec4u(src[id.y * dim.x + id.x], 0u, 0u, 0u));\n"
     "}\n";
 
+/*
+ * unpack4x8unorm exposes the little-endian guest bytes b0..b3. Match the
+ * sampled RGBA of convert_texels(): A8R8G8B8 is uploaded verbatim to BGRA8,
+ * whereas B8G8R8A8 is converted to RGBA8 with CONV_RGBA8_GBAR.
+ * The depth view supplies the packed row width, including surface scaling;
+ * no mutable uniform buffer / queue write is needed between conversions.
+ */
+static const char s2t_packed_color_wgsl[] =
+    "@group(0) @binding(0) var<storage, read> src: array<u32>;\n"
+    "@group(0) @binding(1) var extent_src: texture_depth_2d;\n"
+    S2T_WGSL_VS
+    "fn load(pos: vec4f) -> vec4f {\n"
+    "    let dim = textureDimensions(extent_src);\n"
+    "    let c = vec2u(pos.xy);\n"
+    "    return unpack4x8unorm(src[c.y * dim.x + c.x]);\n"
+    "}\n"
+    "@fragment fn fs_a8r8g8b8(@builtin(position) pos: vec4f) -> @location(0) vec4f {\n"
+    "    return load(pos).bgra;\n"
+    "}\n"
+    "@fragment fn fs_b8g8r8a8(@builtin(position) pos: vec4f) -> @location(0) vec4f {\n"
+    "    return load(pos).gbar;\n"
+    "}\n";
+
 static WGPUPipelineLayout create_pipeline_layout(PGRAPHWgpuState *r,
                                                  WGPUBindGroupLayout *bgl,
                                                  const WGPUBindGroupLayoutEntry
@@ -1070,6 +1097,8 @@ static void init_surface_to_texture(PGRAPHWgpuState *r)
         r, "surface-to-texture depth", s2t_depth_wgsl);
     t->s2t_z24s8_module = pgraph_wgpu_create_wgsl_module(
         r, "surface-to-texture z24s8", s2t_z24s8_wgsl);
+    t->s2t_packed_color_module = pgraph_wgpu_create_wgsl_module(
+        r, "surface-to-texture packed color", s2t_packed_color_wgsl);
 
     WGPUBindGroupLayoutEntry color_entry = {
         .binding = 0,
@@ -1101,6 +1130,18 @@ static void init_surface_to_texture(PGRAPHWgpuState *r)
     };
     t->s2t_z24s8_layout =
         create_pipeline_layout(r, &t->s2t_z24s8_bgl, z24s8_entries, 2);
+
+    WGPUBindGroupLayoutEntry packed_color_entries[2] = {
+        { .binding = 0,
+          .visibility = WGPUShaderStage_Fragment,
+          .buffer = { .type = WGPUBufferBindingType_ReadOnlyStorage } },
+        { .binding = 1,
+          .visibility = WGPUShaderStage_Fragment,
+          .texture = { .sampleType = WGPUTextureSampleType_Depth,
+                       .viewDimension = WGPUTextureViewDimension_2D } },
+    };
+    t->s2t_packed_color_layout = create_pipeline_layout(
+        r, &t->s2t_packed_color_bgl, packed_color_entries, 2);
 }
 
 static WGPURenderPipeline create_s2t_render_pipeline(PGRAPHWgpuState *r,
@@ -1177,6 +1218,22 @@ static WGPUComputePipeline get_s2t_z24s8_pipeline(PGRAPHWgpuState *r)
     return t->s2t_z24s8_pipeline;
 }
 
+static WGPURenderPipeline get_s2t_packed_color_pipeline(PGRAPHWgpuState *r,
+                                                       WGPUTextureFormat format)
+{
+    assert(format == WGPUTextureFormat_BGRA8Unorm ||
+           format == WGPUTextureFormat_RGBA8Unorm);
+    int fmt_idx = format == WGPUTextureFormat_BGRA8Unorm ? 0 : 1;
+    WGPURenderPipeline *p = &r->tex.s2t_packed_color_pipelines[fmt_idx];
+
+    if (!*p) {
+        *p = create_s2t_render_pipeline(
+            r, r->tex.s2t_packed_color_module, r->tex.s2t_packed_color_layout,
+            format, fmt_idx == 0 ? "fs_a8r8g8b8" : "fs_b8g8r8a8");
+    }
+    return *p;
+}
+
 static void finalize_surface_to_texture(PGRAPHWgpuState *r)
 {
     PGRAPHWgpuTextureState *t = &r->tex;
@@ -1192,6 +1249,10 @@ static void finalize_surface_to_texture(PGRAPHWgpuState *r)
             wgpuRenderPipelineRelease(t->s2t_depth_pipelines[i]);
             t->s2t_depth_pipelines[i] = NULL;
         }
+        if (t->s2t_packed_color_pipelines[i]) {
+            wgpuRenderPipelineRelease(t->s2t_packed_color_pipelines[i]);
+            t->s2t_packed_color_pipelines[i] = NULL;
+        }
     }
     if (t->s2t_z24s8_pipeline) {
         wgpuComputePipelineRelease(t->s2t_z24s8_pipeline);
@@ -1200,9 +1261,11 @@ static void finalize_surface_to_texture(PGRAPHWgpuState *r)
 
     WGPUPipelineLayout *layouts[] = { &t->s2t_color_layout,
                                       &t->s2t_depth_layout,
-                                      &t->s2t_z24s8_layout };
+                                      &t->s2t_z24s8_layout,
+                                      &t->s2t_packed_color_layout };
     WGPUBindGroupLayout *bgls[] = { &t->s2t_color_bgl, &t->s2t_depth_bgl,
-                                    &t->s2t_z24s8_bgl };
+                                    &t->s2t_z24s8_bgl,
+                                    &t->s2t_packed_color_bgl };
     for (int i = 0; i < ARRAY_SIZE(layouts); i++) {
         if (*layouts[i]) {
             wgpuPipelineLayoutRelease(*layouts[i]);
@@ -1215,7 +1278,8 @@ static void finalize_surface_to_texture(PGRAPHWgpuState *r)
     }
     WGPUShaderModule *modules[] = { &t->s2t_color_module,
                                     &t->s2t_depth_module,
-                                    &t->s2t_z24s8_module };
+                                    &t->s2t_z24s8_module,
+                                    &t->s2t_packed_color_module };
     for (int i = 0; i < ARRAY_SIZE(modules); i++) {
         if (*modules[i]) {
             wgpuShaderModuleRelease(*modules[i]);
@@ -1260,10 +1324,26 @@ check_surface_to_texture_compatiblity(const SurfaceBinding *surface,
     }
 
     if (!surface->color) {
-        if (is_x8y24_depth_format(shape->color_format) &&
-            surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8 &&
+        if (surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8 &&
             surface->depth_view && surface->stencil_view) {
-            return S2T_Z24S8;
+            if (is_x8y24_depth_format(shape->color_format)) {
+                return S2T_Z24S8;
+            }
+            /*
+             * Raw Z24S8 bytes sampled as color (not normalized depth).
+             * Start with identical linear 2D layouts only. In particular,
+             * pitch < row bytes aliases rows on the VRAM path, and a
+             * swizzled surface cannot be reinterpreted as linear texels.
+             */
+            if (!surface->swizzle && shape->dimensionality == 2 &&
+                shape->depth == 1 && shape->width && shape->height &&
+                shape->pitch >= (uint64_t)shape->width * 4 &&
+                (shape->color_format ==
+                     NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 ||
+                 shape->color_format ==
+                     NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_B8G8R8A8)) {
+                return S2T_Z24S8_PACKED_COLOR;
+            }
         }
         if (is_y16_depth_format(shape->color_format) &&
             surface->host_fmt.depth && !surface->host_fmt.stencil &&
@@ -1349,26 +1429,47 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
     } else {
         WGPUBindGroupLayout bgl;
         WGPURenderPipeline pipeline;
-        WGPUTextureView src_view;
+        WGPUBindGroupEntry entries[2] = { { .binding = 0 } };
+        size_t entry_count = 1;
 
         if (mode == S2T_COLOR) {
             bgl = r->tex.s2t_color_bgl;
             pipeline = get_s2t_color_pipeline(r, wf->format,
                                               wf->from_surface_opaque);
-            src_view = surface->view;
+            entries[0].textureView = surface->view;
+        } else if (mode == S2T_Z24S8_PACKED_COLOR) {
+            /* Pack and decode on the same encoder; never map pack_dst. */
+            pgraph_wgpu_pack_depth_stencil(pg, surface, enc);
+            bgl = r->tex.s2t_packed_color_bgl;
+            pipeline = get_s2t_packed_color_pipeline(r, wf->format);
+            entries[0].buffer = r->surf.compute.pack_dst;
+            entries[0].size = (uint64_t)scaled_width * scaled_height * 4;
+            entries[1] = (WGPUBindGroupEntry){
+                .binding = 1, .textureView = surface->depth_view,
+            };
+            entry_count = 2;
+#ifdef EMSCRIPTEN
+            /* A GPU-only hit, not an actual surface download. */
+            char key[128];
+            snprintf(key, sizeof(key),
+                     "dl:gpu-zeta-s2t tex:fmt%u %ux%u p%u",
+                     state->color_format, state->width, state->height,
+                     state->pitch);
+            xemu_wasm_count(g_intern_string(key));
+#endif
         } else {
+            assert(mode == S2T_DEPTH16);
             bgl = r->tex.s2t_depth_bgl;
             pipeline = get_s2t_depth_pipeline(
                 r, wf->conv == CONV_DEPTH16_FLOAT);
-            src_view = surface->depth_view ? surface->depth_view :
-                                             surface->view;
+            entries[0].textureView = surface->depth_view ? surface->depth_view :
+                                                         surface->view;
         }
 
-        WGPUBindGroupEntry entry = { .binding = 0, .textureView = src_view };
         WGPUBindGroup bind_group = wgpuDeviceCreateBindGroup(
             r->device, &(WGPUBindGroupDescriptor){ .layout = bgl,
-                                                   .entryCount = 1,
-                                                   .entries = &entry });
+                                                   .entryCount = entry_count,
+                                                   .entries = entries });
 
         WGPURenderPassColorAttachment ca = {
             .view = texture->view,
@@ -1607,6 +1708,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     bool possibly_dirty = false;
     bool possibly_dirty_checked = false;
+    bool surface_uploaded = false;
     SurfaceToTextureMode s2t_mode = S2T_NONE;
 
     // Check active surfaces to see if this texture was a render target
@@ -1620,6 +1722,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         }
 
         if (s2t_mode != S2T_NONE) {
+            surface_uploaded = surface->upload_pending;
             pgraph_wgpu_upload_surface_data(d, surface, false);
         }
     }
@@ -1682,8 +1785,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     if (binding_found) {
         if (surface_to_texture) {
-            // FIXME: Add draw time tracking
-            if (surface->draw_time != snode->draw_time ||
+            /* An upload can change the contents without a new draw_time. */
+            if (surface_uploaded || surface->draw_time != snode->draw_time ||
                 !snode->from_surface) {
                 copy_surface_to_texture(pg, surface, snode, s2t_mode);
             }
