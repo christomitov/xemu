@@ -3329,6 +3329,9 @@ static void invalidate_and_set_dirty(MemoryRegion *mr, hwaddr addr,
     }
     if (dirty_log_mask & (1 << DIRTY_MEMORY_CODE)) {
         assert(tcg_enabled());
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("invsrc:dma"); }
+#endif
         tb_invalidate_phys_range(NULL, addr, addr + length - 1);
         dirty_log_mask &= ~(1 << DIRTY_MEMORY_CODE);
     }

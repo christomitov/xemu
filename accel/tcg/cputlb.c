@@ -1431,6 +1431,9 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
     trace_memory_notdirty_write_access(mem_vaddr, ram_addr, size);
 
     if (!physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
+#ifdef EMSCRIPTEN
+        { extern void xemu_wasm_count(const char *); xemu_wasm_count("invsrc:cpu"); }
+#endif
         tb_invalidate_phys_range_fast(cpu, ram_addr, size, retaddr);
     }
 
