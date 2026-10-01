@@ -105,6 +105,9 @@
     X(n_apu_frame)       /* MCPX APU frames */                               \
     X(n_vblank)          /* guest VBLANKs raised (59.94 = NTSC realtime) */ \
     X(n_pit_tick)        /* PIT channel 0 output rising edges (timer IRQs) */ \
+    X(n_rep_movs)        /* REP MOVS bulk-copy helper calls */ \
+    X(b_rep_movs)        /* ... bytes copied by it */ \
+    X(n_rep_movs_bail)   /* ... calls that left a remainder to the loop */ \
     /* guest-visible */                                                      \
     X(n_flip)            /* guest buffer flips (frames) */
 

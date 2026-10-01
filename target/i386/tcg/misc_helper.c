@@ -26,6 +26,7 @@
 #include "accel/tcg/cpu-ldst.h"
 #include "accel/tcg/probe.h"
 #include "exec/target_page.h"
+#include "qemu/xemu-wasm-stats.h"
 
 /*
  * NOTE: the translator must set DisasContext.cc_op to CC_OP_EFLAGS
@@ -179,6 +180,8 @@ void helper_rep_movs_fast(CPUX86State *env, uint32_t ot, uint32_t src_seg)
     if (!enabled || env->df != 1) {
         return;
     }
+    XSTAT_INC(n_rep_movs);
+    XPHASE_PUSH(XPHASE_VCPU, "rep_movs_fast");
     while ((uint32_t)env->regs[R_ECX]) {
         uint32_t esi = env->regs[R_ESI], edi = env->regs[R_EDI];
         target_ulong src = env->segs[src_seg].base + esi;
@@ -189,21 +192,24 @@ void helper_rep_movs_fast(CPUX86State *env, uint32_t ot, uint32_t src_seg)
         uint32_t n = MIN(left, MIN(src_room, dst_room));
 
         n &= ~(size - 1);
-        if (n == 0) {
-            return;     /* an element straddles a page: per-element path */
+        if (n == 0 || (dst > src && dst < src + n)) {
+            /* element straddles a page, or forward overlap: per element */
+            XSTAT_INC(n_rep_movs_bail);
+            break;
         }
-        /* forward element copy == memmove unless dst lies just after src */
-        if (dst > src && dst < src + n) {
-            return;
-        }
+        XPHASE_SET(XPHASE_VCPU, "rep_movs_probe");
         void *hs = probe_access(env, src, n, MMU_DATA_LOAD, mmu_idx, ra);
         void *hd = probe_access(env, dst, n, MMU_DATA_STORE, mmu_idx, ra);
         if (!hs || !hd) {
-            return;     /* MMIO */
+            XSTAT_INC(n_rep_movs_bail);
+            break;      /* MMIO */
         }
+        XPHASE_SET(XPHASE_VCPU, "rep_movs_copy");
         memmove(hd, hs, n);
+        XSTAT_ADD(b_rep_movs, n);
         env->regs[R_ESI] = (uint32_t)(esi + n);
         env->regs[R_EDI] = (uint32_t)(edi + n);
         env->regs[R_ECX] = (uint32_t)env->regs[R_ECX] - n / size;
     }
+    XPHASE_POP(XPHASE_VCPU);
 }
