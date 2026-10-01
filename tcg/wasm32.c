@@ -428,6 +428,7 @@ static int compile_tb(WasmTBHeader *h, int depth)
 #define REGION_L32_0        1
 
 static int region_enabled = -1;
+static int region_hints = 1;    /* XEMU_WASM_HINTS=0: no branch hints */
 
 typedef struct ByteBuf {
     uint8_t *p;
@@ -598,7 +599,8 @@ static int compile_region(WasmTBHeader *h)
     const uint8_t *hty[256];
     int htylen[256];
     int nh = 0;
-    ByteBuf mod = { 0 }, sec = { 0 }, code = { 0 };
+    ByteBuf mod = { 0 }, sec = { 0 }, code = { 0 }, hints = { 0 };
+    int nhints = 0;
     int fidx;
 
     double t_start = emscripten_get_now();
@@ -727,6 +729,15 @@ static int compile_region(WasmTBHeader *h)
                     idx >>= 7;
                 }
                 pos += 5;
+            } else if (rl->kind == WASM_RELOC_HINT) {
+                if (!region_hints) {
+                    continue;
+                }
+                /* code starts with the locals: offsets are body-relative */
+                bb_uleb(&hints, code.len);
+                bb_uleb(&hints, 1);
+                bb_u8(&hints, rl->arg);
+                nhints++;
             } else if (rl->kind == WASM_RELOC_GOTO) {
                 /* depth from here to top: TB loop, body level, blocks */
                 int d = rl->depth + 1 + top;
@@ -749,6 +760,14 @@ static int compile_region(WasmTBHeader *h)
     bb_u8(&code, 0x0b);                             /* end loop */
     bb_u8(&code, 0x00);                             /* unreachable */
     bb_u8(&code, 0x0b);                             /* end func */
+    if (nhints) {
+        bb_name(&sec, "metadata.code.branch_hint");
+        bb_uleb(&sec, 1);
+        bb_uleb(&sec, REGION_HELPER_START + nh);
+        bb_uleb(&sec, nhints);
+        bb_bytes(&sec, hints.p, hints.len);
+        bb_section(&mod, 0, &sec);
+    }
     bb_uleb(&sec, 1);
     bb_uleb(&sec, code.len);
     bb_bytes(&sec, code.p, code.len);
@@ -767,6 +786,7 @@ static int compile_region(WasmTBHeader *h)
     g_free(mod.p);
     g_free(sec.p);
     g_free(code.p);
+    g_free(hints.p);
     if (!h->icount) {
         TranslationBlock *tb = tcg_tb_lookup((uintptr_t)h);
         h->icount = tb ? tb->icount : 0;
@@ -847,6 +867,8 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             if (unlikely(region_enabled < 0)) {
                 const char *e = getenv("XEMU_WASM_REGION");
                 const char *l = getenv("XEMU_WASM_LINK");
+                const char *hn = getenv("XEMU_WASM_HINTS");
+                region_hints = !(hn && *hn == '0');
                 region_enabled = !(e && *e == '0');
                 /*
                  * Members' chain.s0/s1 tail calls would share the region's
