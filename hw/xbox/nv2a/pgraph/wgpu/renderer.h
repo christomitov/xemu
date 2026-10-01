@@ -194,6 +194,8 @@ void pgraph_wgpu_download_dirty_surfaces(NV2AState *d);
  * set by callers on the pfifo thread, counted per reason for the Stats report.
  */
 extern const char *pgraph_wgpu_dl_reason;
+/* NV097_CLEAR_SURFACE parameter while a clear binds its surfaces, else 0 */
+extern uint32_t pgraph_wgpu_clear_param;
 void pgraph_wgpu_surface_download_if_dirty(NV2AState *d,
                                            SurfaceBinding *surface);
 void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
