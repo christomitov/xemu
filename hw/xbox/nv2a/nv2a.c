@@ -344,6 +344,64 @@ static void nv2a_reset(NV2AState *d)
     nv2a_unlock_fifo(d);
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * Blocks whose reads need no BQL: plain register reads (PMC, PFB), or
+ * protected by their own locks (PGRAPH: pgraph.lock; USER: lock-free
+ * DMA_GET/PUT/REF polling, pfifo.lock otherwise). The guest polls them
+ * thousands of times a second, and every read used to take the BQL: the
+ * vCPU spun ~4% of its time on it while the main loop held it. Their
+ * writes (which may raise IRQs) still run under the BQL, via these
+ * wrappers; every other block keeps the default global locking.
+ */
+#define NV2A_BQL_WRITE(lname)                                               \
+static void lname##_write_bql(void *opaque, hwaddr addr, uint64_t val,      \
+                              unsigned int size)                            \
+{                                                                           \
+    bool locked = bql_locked();                                             \
+    if (!locked) {                                                          \
+        bql_lock();                                                         \
+    }                                                                       \
+    lname##_write(opaque, addr, val, size);                                 \
+    if (!locked) {                                                          \
+        bql_unlock();                                                       \
+    }                                                                       \
+}                                                                           \
+static const MemoryRegionOps lname##_ops_lockless_read = {                  \
+    .read = lname##_read,                                                   \
+    .write = lname##_write_bql,                                             \
+};
+NV2A_BQL_WRITE(pmc)
+NV2A_BQL_WRITE(pfb)
+NV2A_BQL_WRITE(pgraph)
+NV2A_BQL_WRITE(user)
+
+static const MemoryRegionOps *nv2a_lockless_read_ops(int block)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_NV2A_NOBQL");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled) {
+        return NULL;
+    }
+    switch (block) {
+    case NV_PMC:
+        return &pmc_ops_lockless_read;
+    case NV_PFB:
+        return &pfb_ops_lockless_read;
+    case NV_PGRAPH:
+        return &pgraph_ops_lockless_read;
+    case NV_USER:
+        return &user_ops_lockless_read;
+    default:
+        return NULL;
+    }
+}
+#endif
+
 static void nv2a_realize(PCIDevice *dev, Error **errp)
 {
     NV2AState *d = NV2A_DEVICE(dev);
@@ -359,9 +417,21 @@ static void nv2a_realize(PCIDevice *dev, Error **errp)
 
     for (int i=0; i < ARRAY_SIZE(blocktable); i++) {
         if (!blocktable[i].name) continue;
+        const MemoryRegionOps *ops = &blocktable[i].ops;
+#ifdef EMSCRIPTEN
+        const MemoryRegionOps *lockless = nv2a_lockless_read_ops(i);
+        if (lockless) {
+            ops = lockless;
+        }
+#endif
         memory_region_init_io(&d->block_mmio[i], OBJECT(dev),
-                              &blocktable[i].ops, d,
+                              ops, d,
                               blocktable[i].name, blocktable[i].size);
+#ifdef EMSCRIPTEN
+        if (lockless) {
+            memory_region_enable_lockless_io(&d->block_mmio[i]);
+        }
+#endif
         memory_region_add_subregion(&d->mmio, blocktable[i].offset,
                                     &d->block_mmio[i]);
     }
