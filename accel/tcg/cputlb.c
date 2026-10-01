@@ -2086,6 +2086,27 @@ static uint64_t int_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
     return ret_be;
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * Test hook (XEMU_WASM_TEST_UNWIND=N): every Nth MMIO load/store yields to
+ * the event loop, forcing an Asyncify unwind/rewind through the calling
+ * JIT code (which otherwise is rare and hard to exercise).
+ */
+static void wasm_test_unwind(void)
+{
+    static int every = -1, n;
+    if (every < 0) {
+        const char *e = getenv("XEMU_WASM_TEST_UNWIND");
+        every = e ? atoi(e) : 0;
+    }
+    if (every && ++n % every == 0) {
+        extern void emscripten_sleep(unsigned int ms);
+        XSTAT_INC(n_test_unwind);
+        emscripten_sleep(0);
+    }
+}
+#endif
+
 static uint64_t do_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
                                uint64_t ret_be, vaddr addr, int size,
                                int mmu_idx, MMUAccessType type, uintptr_t ra)
@@ -2102,23 +2123,7 @@ static uint64_t do_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
     mr = section->mr;
 
 #ifdef EMSCRIPTEN
-    {
-        /*
-         * Test hook (XEMU_WASM_TEST_UNWIND=N): every Nth MMIO load yields
-         * to the event loop, forcing an Asyncify unwind/rewind through the
-         * calling JIT code (which otherwise is rare and hard to exercise).
-         */
-        static int every = -1, n;
-        if (every < 0) {
-            const char *e = getenv("XEMU_WASM_TEST_UNWIND");
-            every = e ? atoi(e) : 0;
-        }
-        if (every && ++n % every == 0) {
-            extern void emscripten_sleep(unsigned int ms);
-            XSTAT_INC(n_test_unwind);
-            emscripten_sleep(0);
-        }
-    }
+    wasm_test_unwind();
 #endif
 
     BQL_LOCK_GUARD();
@@ -2716,6 +2721,10 @@ static uint64_t do_st_mmio_leN(CPUState *cpu, CPUTLBEntryFull *full,
     attrs = full->attrs;
     section = io_prepare(&mr_offset, cpu, full->xlat_section, attrs, addr, ra);
     mr = section->mr;
+
+#ifdef EMSCRIPTEN
+    wasm_test_unwind();
+#endif
 
     BQL_LOCK_GUARD();
     return int_st_mmio_leN(cpu, full, val_le, addr, size, mmu_idx,

@@ -473,24 +473,58 @@ void tcg_gen_qemu_st_i64_chk(TCGv_i64 val, TCGTemp *addr, TCGArg idx,
  * does not require 16-byte atomicity, and it would be adventagous
  * to avoid a call to a helper function.
  */
+#ifdef EMSCRIPTEN
+/*
+ * wasm: the ld/st_i128 helper is a resumable Asyncify call site in JIT
+ * code, much more expensive than two inline TLB lookups. Two 64-bit
+ * accesses are only equivalent to one 128-bit access when they cannot
+ * fault or hit different pages/watchpoints separately (the helper probes
+ * the whole span first, so a store never writes its low half and then
+ * faults on the high half): use them only when the 16 bytes lie within
+ * one page, checked at run time, and keep the helper otherwise. Single
+ * vCPU only (no CF_PARALLEL). XEMU_WASM_SPLIT_I128=0 disables.
+ */
+static __thread int i128_force_path;    /* 0: normal, 1: split, 2: helper */
+
+static bool wasm_split_i128(void)
+{
+    static int split = -1;
+    if (split < 0) {
+        const char *e = getenv("XEMU_WASM_SPLIT_I128");
+        split = !(e && *e == '0');
+    }
+    return split && !(tcg_ctx->gen_tb->cflags & CF_PARALLEL) &&
+           i128_force_path == 0;
+}
+
+/* if ((addr & ~page_mask) > page_size - 16) goto slow; with a TB-lifetime
+ * copy of the address (EBB temps do not survive the labels) */
+static TCGTemp *wasm_i128_page_check(TCGTemp *addr, TCGLabel *slow)
+{
+    TCGv_i32 off = tcg_temp_new_i32();
+
+    if (tcg_ctx->addr_type == TCG_TYPE_I32) {
+        TCGv_i32 a = tcg_temp_new_i32();
+        tcg_gen_mov_i32(a, temp_tcgv_i32(addr));
+        tcg_gen_andi_i32(off, a, TARGET_PAGE_SIZE - 1);
+        addr = tcgv_i32_temp(a);
+    } else {
+        TCGv_i64 a = tcg_temp_new_i64();
+        tcg_gen_mov_i64(a, temp_tcgv_i64(addr));
+        tcg_gen_extrl_i64_i32(off, a);
+        tcg_gen_andi_i32(off, off, TARGET_PAGE_SIZE - 1);
+        addr = tcgv_i64_temp(a);
+    }
+    tcg_gen_brcondi_i32(TCG_COND_GTU, off, TARGET_PAGE_SIZE - 16, slow);
+    return addr;
+}
+#endif
+
 static bool use_two_i64_for_i128(MemOp mop)
 {
 #ifdef EMSCRIPTEN
-    /*
-     * wasm: the helper call is far more expensive than two inline TLB
-     * lookups (it is a resumable Asyncify call site in JIT code). With a
-     * single vCPU (no CF_PARALLEL) no other CPU can observe the two halves
-     * separately, so any requested atomicity is preserved.
-     */
-    {
-        static int split = -1;
-        if (split < 0) {
-            const char *e = getenv("XEMU_WASM_SPLIT_I128");
-            split = !(e && *e == '0');
-        }
-        if (split && !(tcg_ctx->gen_tb->cflags & CF_PARALLEL)) {
-            return true;
-        }
+    if (i128_force_path) {
+        return i128_force_path == 1;
     }
 #endif
     /* Two softmmu tlb lookups is larger than one function call. */
@@ -586,6 +620,22 @@ static void tcg_gen_qemu_ld_i128_int(TCGv_i128 val, TCGTemp *addr,
 
     check_max_alignment(memop_alignment_bits(memop));
     tcg_gen_req_mo(TCG_MO_LD_LD | TCG_MO_ST_LD);
+
+#ifdef EMSCRIPTEN
+    if (wasm_split_i128()) {
+        TCGLabel *slow = gen_new_label(), *done = gen_new_label();
+        TCGTemp *a = wasm_i128_page_check(addr, slow);
+        i128_force_path = 1;
+        tcg_gen_qemu_ld_i128_int(val, a, idx, memop);
+        tcg_gen_br(done);
+        gen_set_label(slow);
+        i128_force_path = 2;
+        tcg_gen_qemu_ld_i128_int(val, a, idx, memop);
+        gen_set_label(done);
+        i128_force_path = 0;
+        return;
+    }
+#endif
 
     /* In serial mode, reduce atomicity. */
     if (!(tcg_ctx->gen_tb->cflags & CF_PARALLEL)) {
@@ -699,6 +749,22 @@ static void tcg_gen_qemu_st_i128_int(TCGv_i128 val, TCGTemp *addr,
 
     check_max_alignment(memop_alignment_bits(memop));
     tcg_gen_req_mo(TCG_MO_ST_LD | TCG_MO_ST_ST);
+
+#ifdef EMSCRIPTEN
+    if (wasm_split_i128()) {
+        TCGLabel *slow = gen_new_label(), *done = gen_new_label();
+        TCGTemp *a = wasm_i128_page_check(addr, slow);
+        i128_force_path = 1;
+        tcg_gen_qemu_st_i128_int(val, a, idx, memop);
+        tcg_gen_br(done);
+        gen_set_label(slow);
+        i128_force_path = 2;
+        tcg_gen_qemu_st_i128_int(val, a, idx, memop);
+        gen_set_label(done);
+        i128_force_path = 0;
+        return;
+    }
+#endif
 
     /* In serial mode, reduce atomicity. */
     if (!(tcg_ctx->gen_tb->cflags & CF_PARALLEL)) {

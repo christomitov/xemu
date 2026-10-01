@@ -3442,7 +3442,7 @@ static int tcg_out_tb_end(TCGContext *s)
     int L = 0, brif_at = -1;
     if (nregions > 1) {
         if (nregions > 1000) {
-            return -1;
+            return -2;      /* too many regions: retranslate with fewer insns */
         }
         for (int k = nregions - 1; k >= 1; k--) {
             op[L++] = 0x02;

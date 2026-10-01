@@ -421,7 +421,7 @@ static int compile_tb(WasmTBHeader *h, int depth)
  * a region runs or is Asyncify-suspended (single vCPU thread).
  */
 #define REGION_MAX          16
-#define REGION_MAX_BYTES    (64 * 1024) /* member bodies, total */
+#define REGION_MAX_BYTES    (128 * 1024) /* member entry + rewind bodies */
 #define REGION_NUM_GLOBALS  17      /* TCG regs + BLOCK_PTR (backend) */
 #define REGION_HELPER_START 4       /* HELPER_IDX_START (backend) */
 #define REGION_CUR_LOCAL    25      /* after the TB locals (backend) */
@@ -604,7 +604,7 @@ static int compile_region(WasmTBHeader *h)
     int fidx;
 
     double t_start = emscripten_get_now();
-    uint32_t bytes = h->body_len;
+    uint32_t bytes = h->body_len + h->body_b_len;
 
     m[n++] = h;
     for (int i = 0; i < n && n < REGION_MAX; i++) {
@@ -616,9 +616,9 @@ static int compile_region(WasmTBHeader *h)
                 dup |= m[j] == c;
             }
             if (c && !dup && region_member_ok(c) &&
-                bytes + c->body_len <= REGION_MAX_BYTES) {
+                bytes + c->body_len + c->body_b_len <= REGION_MAX_BYTES) {
                 m[n++] = c;
-                bytes += c->body_len;
+                bytes += c->body_len + c->body_b_len;
             }
         }
     }
