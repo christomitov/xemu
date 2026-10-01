@@ -31,7 +31,17 @@
 /* Only the bottom TB_JMP_PAGE_BITS of the jump cache hash bits vary for
    addresses on the same page.  The top bits are the same.  This allows
    TLB invalidation to quickly clear a subset of the hash table.  */
+#ifdef EMSCRIPTEN
+/*
+ * 128 slots per page (bits / 2) made blocks 128 bytes apart in one page
+ * share a slot: ~90% of the Xbox intro's 50k jump cache misses/s were
+ * such conflicts, each a QHT lookup. 1024 slots per page mixes all 12
+ * offset bits; a page flush clears 1024 entries instead of 128.
+ */
+#define TB_JMP_PAGE_BITS 10
+#else
 #define TB_JMP_PAGE_BITS (TB_JMP_CACHE_BITS / 2)
+#endif
 #define TB_JMP_PAGE_SIZE (1 << TB_JMP_PAGE_BITS)
 #define TB_JMP_ADDR_MASK (TB_JMP_PAGE_SIZE - 1)
 #define TB_JMP_PAGE_MASK (TB_JMP_CACHE_SIZE - TB_JMP_PAGE_SIZE)
