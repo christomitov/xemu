@@ -108,6 +108,8 @@
     X(n_rep_movs)        /* REP MOVS bulk-copy helper calls */ \
     X(b_rep_movs)        /* ... bytes copied by it */ \
     X(n_rep_movs_bail)   /* ... calls that left a remainder to the loop */ \
+    X(n_eager_readback)  /* small surfaces copied back early */ \
+    X(n_eager_readback_hit) /* ... whose early copy served a CPU read */ \
     /* guest-visible */                                                      \
     X(n_flip)            /* guest buffer flips (frames) */
 
