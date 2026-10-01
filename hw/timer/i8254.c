@@ -296,7 +296,15 @@ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time)
          * loop livelocks in the PIT cb. Coalesce: skip whole missed periods
          * so one fire brings the chain back into the future. */
         int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-        if (expire_time != -1 && expire_time < now_ns) {
+        /*
+         * Only when far behind: a rate-generator tick is two transitions
+         * ~0.8 us apart (out low, then high = the IRQ edge), so the second
+         * one is nearly always in the past when the callback runs. Skipping
+         * there dropped about 2 of every 3 ticks (~350 timer IRQs/s instead
+         * of 1000), and the guest's tick count, which games time animations
+         * with, ran at a third of real speed. Short delays catch up in order.
+         */
+        if (expire_time != -1 && expire_time < now_ns - 100 * SCALE_MS) {
             int64_t ticks = (s->mode == 3) ? (s->count / 2) : s->count;
             if (ticks > 1) {
                 int64_t period_ns = muldiv64(ticks, NANOSECONDS_PER_SECOND,

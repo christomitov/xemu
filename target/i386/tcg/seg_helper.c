@@ -1271,6 +1271,18 @@ void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
 
 void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw)
 {
+#ifdef EMSCRIPTEN
+    {   /* page report: hardware interrupts delivered, by vector */
+        static const char *names[256];
+        extern void xemu_wasm_count(const char *);
+        if (!names[intno & 0xff]) {
+            char k[16];
+            snprintf(k, sizeof(k), "irq:%02x", intno & 0xff);
+            names[intno & 0xff] = g_intern_string(k);
+        }
+        xemu_wasm_count(names[intno & 0xff]);
+    }
+#endif
     do_interrupt_all(env_archcpu(env), intno, 0, 0, 0, is_hw);
 }
 
