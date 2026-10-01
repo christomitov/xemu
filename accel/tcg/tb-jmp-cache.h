@@ -24,10 +24,40 @@
  */
 typedef struct CPUJumpCache {
     struct rcu_head rcu;
+#ifdef EMSCRIPTEN
+    /*
+     * Generation: an entry is valid only if its gen matches, so a flush
+     * bumps this instead of clearing 32K entries (the Xbox reloads CR3
+     * ~450 times/s, each a full TLB + jump cache flush).
+     */
+    uint32_t gen;
+#endif
     struct {
         TranslationBlock *tb;
         vaddr pc;
+#ifdef EMSCRIPTEN
+        uint32_t gen;
+#endif
     } array[TB_JMP_CACHE_SIZE];
 } CPUJumpCache;
+
+static inline bool tb_jmp_cache_match(const CPUJumpCache *jc, uint32_t h,
+                                      vaddr pc)
+{
+#ifdef EMSCRIPTEN
+    return jc->array[h].pc == pc && jc->array[h].gen == jc->gen;
+#else
+    return jc->array[h].pc == pc;
+#endif
+}
+
+static inline void tb_jmp_cache_set_pc(CPUJumpCache *jc, uint32_t h,
+                                       vaddr pc)
+{
+    jc->array[h].pc = pc;
+#ifdef EMSCRIPTEN
+    jc->array[h].gen = jc->gen;
+#endif
+}
 
 #endif /* ACCEL_TCG_TB_JMP_CACHE_H */

@@ -262,7 +262,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
 
     tb = qatomic_read(&jc->array[hash].tb);
     if (likely(tb &&
-               jc->array[hash].pc == s.pc &&
+               tb_jmp_cache_match(jc, hash, s.pc) &&
                tb->cs_base == s.cs_base &&
                tb->flags == s.flags &&
                tb_cflags(tb) == s.cflags)) {
@@ -275,7 +275,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
         return NULL;
     }
 
-    jc->array[hash].pc = s.pc;
+    tb_jmp_cache_set_pc(jc, hash, s.pc);
     qatomic_set(&jc->array[hash].tb, tb);
 
 hit:
@@ -1012,7 +1012,7 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                  */
                 h = tb_jmp_cache_hash_func(s.pc);
                 jc = cpu->tb_jmp_cache;
-                jc->array[h].pc = s.pc;
+                tb_jmp_cache_set_pc(jc, h, s.pc);
                 qatomic_set(&jc->array[h].tb, tb);
             }
 

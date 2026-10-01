@@ -930,6 +930,7 @@ void tlb_reset_dirty(CPUState *cpu, uintptr_t start, uintptr_t length)
 {
     int mmu_idx;
 
+    XSTAT_INC(n_tlb_reset_dirty);
     qemu_spin_lock(&cpu->neg.tlb.c.lock);
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
@@ -937,6 +938,12 @@ void tlb_reset_dirty(CPUState *cpu, uintptr_t start, uintptr_t length)
         unsigned int n = tlb_n_entries(fast);
         unsigned int i;
 
+#ifdef EMSCRIPTEN
+        /* nothing filled in this mode since its last flush (x86 uses few) */
+        if (desc->n_used_entries == 0) {
+            n = 0;
+        }
+#endif
         for (i = 0; i < n; i++) {
             tlb_reset_dirty_range_locked(&desc->fulltlb[i], &fast->table[i],
                                          start, length);

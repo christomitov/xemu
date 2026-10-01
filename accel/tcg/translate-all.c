@@ -680,6 +680,13 @@ void tcg_flush_jmp_cache(CPUState *cpu)
     if (unlikely(jc == NULL)) {
         return;
     }
+    XSTAT_INC(n_jc_flush);
+#ifdef EMSCRIPTEN
+    /* entries of older generations can no longer match */
+    if (++jc->gen != 0) {
+        return;
+    }
+#endif
 
     for (int i = 0; i < TB_JMP_CACHE_SIZE; i++) {
         qatomic_set(&jc->array[i].tb, NULL);
