@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "qemu/interval-tree.h"
 #include "qemu/qtree.h"
 #include "exec/cputlb.h"
@@ -972,6 +973,8 @@ static void do_tb_phys_invalidate(TranslationBlock *tb, bool rm_from_page_list)
 
 static void tb_phys_invalidate__locked(TranslationBlock *tb)
 {
+    XSTAT_INC(n_tb_invalidate);
+
     qemu_thread_jit_write();
     do_tb_phys_invalidate(tb, true);
     qemu_thread_jit_execute();
