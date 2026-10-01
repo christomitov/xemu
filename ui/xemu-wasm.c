@@ -21,6 +21,7 @@
 #include "qapi/qapi-commands-misc.h"
 #include "hw/xbox/smbus.h"
 #include "ui/xemu-settings.h"
+#include "ui/xemu-snapshots.h"
 #include <emscripten.h>
 #include <emscripten/threading.h>
 #include <emscripten/stack.h>
@@ -410,16 +411,15 @@ int xemu_input_get_test_mode(void)
     return 0;
 }
 
-int xemu_snapshots_save_extra_data(FILE *f)
+void xemu_snapshots_save_extra_data(QEMUFile *f)
 {
-    (void)f;
-    return 0;
+    /* Headless snapshots have no thumbnail or other UI metadata prefix. */
 }
 
-int xemu_snapshots_offset_extra_data(FILE *f)
+bool xemu_snapshots_offset_extra_data(QEMUFile *f)
 {
-    (void)f;
-    return 0;
+    /* The QEMU stream header is already at the current offset. */
+    return true;
 }
 
 void xemu_snapshots_mark_dirty(void) {}
@@ -434,9 +434,8 @@ static volatile int disc_req; /* 0 none, 1 load, 2 load+reset, 3 eject */
 
 /*
  * Machine state snapshots for the headless benchmark: the page (or the
- * bench) asks for one, the gui tick starts a migration to a file in MEMFS
- * and resumes the VM when it completes. A run started with
- * XEMU_WASM_INCOMING=<path> restores it (-incoming file:<path>).
+ * bench) asks for one, and a realtime timer saves an internal HDD snapshot.
+ * A run started with XEMU_WASM_LOADVM=bench restores it (-loadvm bench).
  */
 static volatile int state_req;
 static volatile int state_status;   /* 0 idle, 1 saving, 2 saved, -1 failed */
