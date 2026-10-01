@@ -3560,3 +3560,22 @@ void helper_emms(CPUX86State *env)
 #include "ops_sse.h"
 
 #endif
+
+#ifdef EMSCRIPTEN
+/*
+ * For the wasm32 JIT's inline SSE scalar fast path (tcg/wasm32): offsets in
+ * CPUX86State of sse_status's rounding mode (u8) and exception flags (u16),
+ * or -1 when the exact host-FP fast paths are disabled (XEMU_FAST_FP=0).
+ */
+int xemu_wasm_sse_status_ofs(int which)
+{
+    QEMU_BUILD_BUG_ON(sizeof(FloatRoundMode) != 1);
+    QEMU_BUILD_BUG_ON(sizeof(((float_status *)0)->float_exception_flags) != 2);
+    if (!ffp_enabled()) {
+        return -1;
+    }
+    return which == 0 ?
+        offsetof(CPUX86State, sse_status.float_rounding_mode) :
+        offsetof(CPUX86State, sse_status.float_exception_flags);
+}
+#endif
