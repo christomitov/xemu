@@ -2101,6 +2101,26 @@ static uint64_t do_ld_mmio_beN(CPUState *cpu, CPUTLBEntryFull *full,
     section = io_prepare(&mr_offset, cpu, full->xlat_section, attrs, addr, ra);
     mr = section->mr;
 
+#ifdef EMSCRIPTEN
+    {
+        /*
+         * Test hook (XEMU_WASM_TEST_UNWIND=N): every Nth MMIO load yields
+         * to the event loop, forcing an Asyncify unwind/rewind through the
+         * calling JIT code (which otherwise is rare and hard to exercise).
+         */
+        static int every = -1, n;
+        if (every < 0) {
+            const char *e = getenv("XEMU_WASM_TEST_UNWIND");
+            every = e ? atoi(e) : 0;
+        }
+        if (every && ++n % every == 0) {
+            extern void emscripten_sleep(unsigned int ms);
+            XSTAT_INC(n_test_unwind);
+            emscripten_sleep(0);
+        }
+    }
+#endif
+
     BQL_LOCK_GUARD();
     return int_ld_mmio_beN(cpu, full, ret_be, addr, size, mmu_idx,
                            type, ra, mr, mr_offset);
