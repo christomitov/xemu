@@ -972,8 +972,22 @@ void mem_access_callback_set_flags(CPUState *cpu, MemAccessCallback *cb,
 {
     assert(flags && !(flags & ~(BP_MEM_READ | BP_MEM_WRITE)));
     assert(((uintptr_t)cb & 3) == 0);
-    async_run_on_cpu(cpu, do_mem_access_callback_set_flags,
-                     RUN_ON_CPU_HOST_PTR((void *)((uintptr_t)cb | flags)));
+    run_on_cpu_data data = RUN_ON_CPU_HOST_PTR((void *)((uintptr_t)cb | flags));
+#ifdef EMSCRIPTEN
+    /*
+     * From the vCPU itself (an access callback narrowing its own trap),
+     * apply it now: queued work only runs at the next exit from the CPU
+     * loop (~200/s), and until then every read still trapped (~30k/s in
+     * Rainbow Six 3). The access in progress already has its translation.
+     * Work queued earlier for @cb (a widening from the GPU thread) runs
+     * after this and wins, which only traps more.
+     */
+    if (qemu_cpu_is_self(cpu)) {
+        do_mem_access_callback_set_flags(cpu, data);
+        return;
+    }
+#endif
+    async_run_on_cpu(cpu, do_mem_access_callback_set_flags, data);
 }
 
 void mem_check_access_callback_vaddr(CPUState *cpu,
