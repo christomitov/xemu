@@ -785,6 +785,11 @@ void tb_flush__exclusive_or_serial(void)
     assert(!runstate_is_running() ||
            (current_cpu && cpu_in_serial_context(current_cpu)));
 
+#ifdef EMSCRIPTEN
+    fprintf(stderr, "[tb] flush #%u: %zu of %zu code bytes used, %zu TBs\n",
+            qatomic_read(&tb_ctx.tb_flush_count) + 1, tcg_code_size(),
+            tcg_code_capacity(), (size_t)tcg_nb_tbs());
+#endif
     CPU_FOREACH(cpu) {
         tcg_flush_jmp_cache(cpu);
     }
@@ -796,6 +801,7 @@ void tb_flush__exclusive_or_serial(void)
     tcg_region_reset_all();
     /* XXX: flush processor icache at this point if cache flush is expensive */
     qatomic_inc(&tb_ctx.tb_flush_count);
+    XSTAT_INC(n_tb_flush);
     qemu_plugin_flush_cb();
 }
 

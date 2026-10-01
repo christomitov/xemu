@@ -753,6 +753,24 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_threads)
     int have_prot, need_prot;
 
     /* Size the buffer.  */
+#ifdef EMSCRIPTEN
+    {
+        /* XEMU_WASM_TB_MB: code buffer size in MiB (testing) */
+        const char *e = getenv("XEMU_WASM_TB_MB");
+        if (e && atoi(e) > 0) {
+            tb_size = (size_t)atoi(e) * MiB;
+        } else if (tb_size == 0) {
+            /*
+             * ~4 KB per TB here (TCI bytecode + wasm module bytes): the
+             * 32 MiB 32-bit default holds only ~8k TBs and games fill it in
+             * ~100 s; the flush then drops every TB and JIT module at once
+             * (multi-second 0-8 fps stalls). 160 MiB holds ~38k TBs, about
+             * the JIT instance cap.
+             */
+            tb_size = 160 * MiB;
+        }
+    }
+#endif
     if (tb_size == 0) {
         size_t phys_mem = qemu_get_host_physmem();
         if (phys_mem == 0) {

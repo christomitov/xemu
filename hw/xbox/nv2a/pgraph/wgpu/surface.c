@@ -508,15 +508,18 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
         }
 
         /*
-         * One trap per GPU->CPU handover is enough: once any pending
-         * download has completed (we wait below) VRAM is current, and a
-         * write has marked the surface for re-upload. Keep trapping and
-         * every further CPU access (millions/s when a game writes video
-         * frames into a render surface) pays for this callback.
-         * Re-armed by pgraph_wgpu_surface_rearm_cpu_trap() once the GPU
-         * copy is current again (GPU draw or upload).
+         * One trapped write per GPU->CPU handover is enough: it marked the
+         * surface for re-upload, and keep trapping would make every further
+         * CPU write (millions/s when a game writes video frames into a
+         * render surface) pay for this callback. A read must keep the trap
+         * armed: disarming there would miss a later CPU write, and the GPU
+         * would keep using stale contents. Re-armed by
+         * pgraph_wgpu_surface_rearm_cpu_trap() once the GPU copy is current
+         * again (GPU draw or upload).
          */
-        disarm_cpu_access_callback(d, surface);
+        if (write) {
+            disarm_cpu_access_callback(d, surface);
+        }
     }
 
     qemu_mutex_unlock(&d->pgraph.lock);
