@@ -70,6 +70,20 @@ struct SurfaceBinding {
     bool draw_dirty;
     bool download_pending;
     bool upload_pending;
+    /*
+     * Early readback (surface.c): a small surface the CPU reads after the GPU
+     * draws it is copied back asynchronously when it stops being the render
+     * target, so the CPU's read rarely waits for the GPU. gpu_epoch counts
+     * GPU writes; the early copy is used only if it is still current.
+     */
+    uint32_t gpu_epoch;
+    bool cpu_read_hot;
+    WGPUBuffer eager_buf;
+    WGPUFuture eager_future;
+    int *eager_status;          /* 0 pending, 1 mapped, -1 failed */
+    size_t eager_stride;
+    size_t eager_size;
+    uint32_t eager_epoch;
 
     BasicSurfaceFormatInfo fmt;
     WgpuSurfaceFormatInfo host_fmt;

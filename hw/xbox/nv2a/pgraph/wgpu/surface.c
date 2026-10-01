@@ -365,6 +365,114 @@ static void store_surface_download(SurfaceBinding *surface, uint8_t *pixels,
     }
 }
 
+/* ---- early readback of small surfaces the CPU reads back ---- */
+
+static void on_eager_mapped(WGPUMapAsyncStatus status, WGPUStringView msg,
+                            void *u1, void *u2)
+{
+    *(int *)u1 = status == WGPUMapAsyncStatus_Success ? 1 : -1;
+}
+
+static void eager_drop(SurfaceBinding *surface)
+{
+    if (surface->eager_buf) {
+        /* the status word is leaked on purpose: a callback may still fire */
+        wgpuBufferRelease(surface->eager_buf);
+        surface->eager_buf = NULL;
+        surface->eager_status = NULL;
+    }
+}
+
+static bool eager_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_EAGER_READBACK");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+}
+
+/*
+ * @surface stops being the color target. If the CPU read it back after an
+ * earlier GPU draw, start copying it back now (submitting the work so far)
+ * so the CPU's next read finds the data ready instead of waiting for the
+ * whole frame's GPU work.
+ */
+static void eager_readback_schedule(NV2AState *d, SurfaceBinding *surface)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    if (!eager_enabled() || !surface || !surface->color ||
+        !surface->cpu_read_hot || !surface->draw_dirty || surface->backing ||
+        !surface->texture || surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8 ||
+        (size_t)surface->width * surface->height > 128 * 128 ||
+        r->draw.in_render_pass || r->draw.in_draw) {
+        return;
+    }
+    eager_drop(surface);
+
+    size_t stride = ROUND_UP(surface->width *
+                             surface->host_fmt.host_bytes_per_pixel, 256);
+    size_t size = stride * surface->height;
+    WGPUBuffer buf = wgpuDeviceCreateBuffer(
+        r->device, &(WGPUBufferDescriptor){
+                       .label = { "eager readback", WGPU_STRLEN },
+                       .usage = WGPUBufferUsage_MapRead |
+                                WGPUBufferUsage_CopyDst,
+                       .size = size });
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    encode_surface_download(pg, surface, enc, &buf, 0);
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+
+    int *status = g_new0(int, 1);
+    surface->eager_future = wgpuBufferMapAsync(
+        buf, WGPUMapMode_Read, 0, size,
+        (WGPUBufferMapCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
+                                     .callback = on_eager_mapped,
+                                     .userdata1 = status });
+    surface->eager_buf = buf;
+    surface->eager_status = status;
+    surface->eager_stride = stride;
+    surface->eager_size = size;
+    surface->eager_epoch = surface->gpu_epoch;
+    XSTAT_INC(n_eager_readback);
+}
+
+/* Use the early copy of @surface if it is still current; false otherwise. */
+static bool eager_readback_take(PGRAPHWgpuState *r, SurfaceBinding *surface,
+                                uint8_t *pixels)
+{
+    if (!surface->eager_buf) {
+        return false;
+    }
+    if (surface->eager_epoch != surface->gpu_epoch) {
+        eager_drop(surface);            /* drawn again since: stale */
+        return false;
+    }
+    if (*surface->eager_status == 0) {
+        pgraph_wgpu_wait(r, surface->eager_future);   /* usually done */
+    }
+    bool ok = *surface->eager_status == 1;
+    if (ok) {
+        g_autofree uint8_t *host = g_malloc(surface->eager_size);
+        memcpy(host, wgpuBufferGetConstMappedRange(surface->eager_buf, 0,
+                                                   surface->eager_size),
+               surface->eager_size);
+        wgpuBufferUnmap(surface->eager_buf);
+        store_surface_download(surface, pixels, host, surface->eager_stride);
+        g_free(surface->eager_status);
+        surface->eager_status = NULL;
+        XSTAT_INC(n_eager_readback_hit);
+    }
+    wgpuBufferRelease(surface->eager_buf);
+    surface->eager_buf = NULL;
+    surface->eager_status = NULL;
+    return ok;
+}
+
 static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
                                        uint8_t *pixels)
 {
@@ -373,6 +481,10 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
 
     if (!surface->width || !surface->height) {
         return;
+    }
+
+    if (eager_readback_take(r, surface, pixels)) {
+        return;     /* the early copy was current: no GPU round trip */
     }
 
     nv2a_profile_inc_counter(NV2A_PROF_SURF_DOWNLOAD);
@@ -599,6 +711,9 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
         if (surface->draw_dirty) {
             surface->download_pending = true;
             wait_for_downloads = true;
+            if (!write) {
+                surface->cpu_read_hot = true;
+            }
         }
 
         if (write) {
@@ -767,6 +882,7 @@ static void invalidate_surface(NV2AState *d, SurfaceBinding *surface)
     assert(!surface->backing);
     /* Keep the existing conservative barrier for ordinary invalidation. */
     pgraph_wgpu_finish(&d->pgraph, WGPU_FINISH_REASON_SURFACE_DOWN);
+    eager_drop(surface);
     detach_surface(d, surface);
     QTAILQ_INSERT_HEAD(&r->surf.invalid_surfaces, surface, entry);
 }
@@ -1113,9 +1229,12 @@ static void migrate_surface_image(SurfaceBinding *dst, SurfaceBinding *src)
     src->stencil_view = NULL;
 }
 
+static void eager_drop(SurfaceBinding *surface);
+
 static void destroy_surface_image(PGRAPHWgpuState *r, SurfaceBinding *surface)
 {
     assert(!surface->backing && !surface->access_cb);
+    eager_drop(surface);
     /*
      * Release only (no wgpuTextureDestroy): anything still referencing the
      * texture (e.g. a texture-module bind group) keeps it alive.
@@ -1397,6 +1516,7 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_2);
 
     surface->initialized = true;
+    surface->gpu_epoch++;   /* contents replaced: early readbacks are stale */
     /* GPU copy == VRAM again: trap the next CPU write */
     pgraph_wgpu_surface_rearm_cpu_trap(d, surface);
 }
@@ -2236,6 +2356,9 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
         // pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_CREATE);
         pgraph_wgpu_ensure_not_in_render_pass(pg);
 
+        if (color) {
+            eager_readback_schedule(d, r->color_binding);
+        }
         unbind_surface(d, color);
 
         SurfaceBinding *surface = pgraph_wgpu_surface_get(d, target.vram_addr);
