@@ -420,8 +420,16 @@ void pgraph_wgpu_merge_surface_backing(PGRAPHState *pg,
 {
     if (surface->backing) {
         assert(!surface->backing->backing && surface->draw_dirty);
-        copy_surface_rect(pg, surface, surface->backing,
-                          surface->width, surface->height, 0, 0);
+        if (!surface->swizzle && surface->pitch != surface->backing->pitch) {
+            assert(pgraph_wgpu_is_linear_bgra(surface->backing));
+            pgraph_wgpu_reshape_surface(pg, surface, surface->backing->view,
+                                        surface->backing->vram_addr,
+                                        surface->backing->width,
+                                        surface->backing->height, false);
+        } else {
+            copy_surface_rect(pg, surface, surface->backing,
+                              surface->width, surface->height, 0, 0);
+        }
     }
 }
 
@@ -1451,10 +1459,14 @@ static const char *surface_stitch_reject_reason(NV2AState *d,
     if (src->upload_pending || src->download_pending) {
         return "cpu-pending";
     }
-    if (!src->draw_dirty) {
+    bool reshape = pgraph_wgpu_linear_reshape_enabled() &&
+                   pgraph_wgpu_is_linear_bgra(src) &&
+                   pgraph_wgpu_is_linear_bgra(dst);
+    /* A prior tail materialization may leave a clean owner among the mips. */
+    if (!src->draw_dirty && !reshape) {
         return "clean";
     }
-    if (!src->access_cb || src->access_cb_write_only) {
+    if (!src->access_cb || (src->draw_dirty && src->access_cb_write_only)) {
         return "untrapped";
     }
     bool morton = is_morton_square(src) && is_morton_square(dst);
@@ -1470,7 +1482,7 @@ static const char *surface_stitch_reject_reason(NV2AState *d,
         src->fmt.bytes_per_pixel != dst->fmt.bytes_per_pixel) {
         return "format";
     }
-    if (linear && src->pitch != dst->pitch) {
+    if (linear && src->pitch != dst->pitch && !reshape) {
         return "pitch";
     }
     /* Every old guest byte must fit, not just the intersection. */
@@ -1484,9 +1496,10 @@ static const char *surface_stitch_reject_reason(NV2AState *d,
             return "morton-alignment";
         }
     } else if (delta % src->fmt.bytes_per_pixel ||
-               (delta % dst->pitch) / src->fmt.bytes_per_pixel + src->width >
-                   dst->width ||
-               delta / dst->pitch + src->height > dst->height) {
+               (!reshape &&
+                ((delta % dst->pitch) / src->fmt.bytes_per_pixel + src->width >
+                     dst->width ||
+                 delta / dst->pitch + src->height > dst->height))) {
         /* Padding is CPU-current, but every GPU pixel must fit in the image. */
         return "pixel-range";
     }
@@ -1559,7 +1572,7 @@ static SurfaceBinding *try_stitch_surfaces_gpu(NV2AState *d,
                 return NULL;
             }
         }
-        owners++;
+        owners += src->draw_dirty;
     }
     if (!owners) {
         return NULL;
@@ -1582,13 +1595,25 @@ static SurfaceBinding *try_stitch_surfaces_gpu(NV2AState *d,
     /* Prefill uncovered bytes. Each stale source block is replaced below. */
     pgraph_wgpu_upload_surface_data(d, backing, false);
     QTAILQ_FOREACH(src, &r->surf.surfaces, entry) {
-        if (!check_surfaces_overlap(target, src)) {
+        if (!check_surfaces_overlap(target, src) || !src->draw_dirty) {
             continue;
         }
-        unsigned int x, y;
-        surface_stitch_origin(src, target, &x, &y);
-        copy_surface_rect(pg, src, backing, src->width, src->height, x, y);
-        log_surface_overlap(d, src, target, true, "whole-owner");
+        hwaddr delta = src->vram_addr - target->vram_addr;
+        bool reshape = !src->swizzle &&
+                       (src->pitch != target->pitch ||
+                        (delta % target->pitch) / src->fmt.bytes_per_pixel +
+                            src->width > target->width);
+        if (reshape) {
+            pgraph_wgpu_reshape_surface(pg, src, backing->view,
+                                        backing->vram_addr, backing->width,
+                                        backing->height, false);
+        } else {
+            unsigned int x, y;
+            surface_stitch_origin(src, target, &x, &y);
+            copy_surface_rect(pg, src, backing, src->width, src->height, x, y);
+        }
+        log_surface_overlap(d, src, target, true,
+                            reshape ? "linear-reshape" : "whole-owner");
     }
     copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
     dst->backing = backing;
@@ -1610,7 +1635,7 @@ static SurfaceBinding *try_stitch_surfaces_gpu(NV2AState *d,
     return dst;
 }
 
-static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
+static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
                                                SurfaceBinding *src,
                                                const SurfaceBinding *target,
                                                bool upload)
@@ -1621,30 +1646,38 @@ static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
     SurfaceBinding *other;
 
 #ifdef EMSCRIPTEN
-    static int enabled = -1;
+    static int enabled = -1, swizzle_enabled;
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_SWIZZLE_REBIND");
         const char *all = getenv("XEMU_WASM_REBIND_TRANSFER");
-        enabled = !(e && *e == '0') && !(all && *all == '0');
+        enabled = !(all && *all == '0');
+        swizzle_enabled = !(e && *e == '0');
     }
     if (!enabled) {
         return NULL;
     }
 #else
+    const bool swizzle_enabled = false;
     return NULL;
 #endif
+    bool morton = swizzle_enabled && is_morton_square(src) &&
+                  is_morton_square(target) && is_morton_square(backing) &&
+                  target->width <= backing->width &&
+                  (src->backing || target->width < src->width);
+    bool linear = pgraph_wgpu_linear_reshape_enabled() &&
+                  pgraph_wgpu_is_linear_bgra(src) &&
+                  pgraph_wgpu_is_linear_bgra(target) &&
+                  pgraph_wgpu_is_linear_bgra(backing) &&
+                  target->size <= backing->size;
     if (!upload || !tcg_enabled() || pg->surface_scale_factor != 1 ||
         !src->initialized || !src->texture || !src->draw_dirty ||
         !src->access_cb || src->upload_pending || src->download_pending ||
-        !is_morton_square(src) || !is_morton_square(target) ||
-        !is_morton_square(backing) ||
+        (!morton && !linear) ||
         src->shape.anti_aliasing != target->shape.anti_aliasing ||
         src->shape.color_format != target->shape.color_format ||
         src->host_fmt.format != target->host_fmt.format ||
         src->fmt.bytes_per_pixel != target->fmt.bytes_per_pixel ||
-        src->vram_addr != target->vram_addr ||
-        target->width > backing->width ||
-        (!src->backing && target->width >= src->width)) {
+        src->vram_addr != target->vram_addr) {
         return NULL;
     }
     /* Deferred report writes must never land in a retained tail. */
@@ -1666,7 +1699,12 @@ static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
     SurfaceBinding *dst = allocate_surface_binding(d, target);
     assert(dst->texture != src->texture && dst->texture != backing->texture);
     pgraph_wgpu_merge_surface_backing(pg, src);
-    copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
+    if (linear && backing->pitch != dst->pitch) {
+        pgraph_wgpu_reshape_surface(pg, backing, dst->view, dst->vram_addr,
+                                    dst->width, dst->height, false);
+    } else {
+        copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
+    }
 
     dst->backing = backing;
     dst->initialized = true;
@@ -1677,8 +1715,9 @@ static SurfaceBinding *try_rebind_morton_prefix(NV2AState *d,
 #ifdef EMSCRIPTEN
     char key[160];
     snprintf(key, sizeof(key),
-             "dl:gpu-swizzle-rebind fmt%u %ux%u->%ux%u backing%ux%u",
-             src->shape.color_format, src->width, src->height,
+             "dl:gpu-%s-rebind fmt%u %ux%u->%ux%u backing%ux%u",
+             linear ? "linear" : "swizzle", src->shape.color_format,
+             src->width, src->height,
              dst->width, dst->height, backing->width, backing->height);
     xemu_wasm_count(g_intern_string(key));
 #endif
@@ -1798,7 +1837,7 @@ static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
                                                 bool upload)
 {
     PGRAPHState *pg = &d->pgraph;
-    SurfaceBinding *prefix = try_rebind_morton_prefix(d, src, target, upload);
+    SurfaceBinding *prefix = try_rebind_surface_prefix(d, src, target, upload);
     const char *reason;
 
     if (prefix) {
@@ -2140,6 +2179,7 @@ void pgraph_wgpu_finalize_surfaces(PGRAPHState *pg)
     pgraph_wgpu_surface_flush(container_of(pg, NV2AState, pgraph));
 
     pgraph_wgpu_finalize_surface_compute(pg);
+    pgraph_wgpu_finalize_surface_reshape(pg);
 
     if (r->surf.staging_dst) {
         wgpuBufferRelease(r->surf.staging_dst);

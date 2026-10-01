@@ -55,11 +55,12 @@ struct SurfaceBinding {
     size_t size;
 
     /*
-     * A private, full-size Morton backing for a smaller render image. Only
-     * this binding is live/trapped; it owns backing->size guest bytes. The
-     * backing has no callback/list membership and cannot be recycled. Before
-     * rebind/readback, merge this image into its upper-left prefix. The first
-     * readback materializes ALL backing bytes and releases it. No chains.
+     * A private, full-size backing for the render image, at the same base.
+     * Only this binding is live/trapped; it owns backing->size guest bytes.
+     * The backing has no callback/list membership and cannot be recycled.
+     * Before rebind/readback, merge this image by guest byte address (Morton
+     * prefix, identical pitch, or tight BGRA linear reshape). Materialization
+     * writes ALL backing bytes and releases it. No chains.
      */
     SurfaceBinding *backing;
 
@@ -107,6 +108,10 @@ typedef struct PGRAPHWgpuSurfaceState {
     WGPUBuffer staging_dst;
     size_t staging_dst_size;
 
+    /* surface-reshape.c: lazily created native BGRA linear byte reshaping */
+    WGPUBindGroupLayout reshape_bgl;
+    WGPURenderPipeline reshape_pipeline;
+
     /* surface-compute.c: depth/stencil pack (download) + unpack (upload) */
     struct {
         /* built for the host Z24S8 format chosen at init
@@ -137,6 +142,15 @@ void pgraph_wgpu_materialize_retained(NV2AState *d, hwaddr addr, hwaddr size,
                                      bool write);
 /* PFIFO-only entry; takes pgraph.lock only when there are retained ranges. */
 void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size);
+
+/* Native linear byte reshaping; destination is distinct, tight BGRA8. */
+bool pgraph_wgpu_linear_reshape_enabled(void);
+bool pgraph_wgpu_is_linear_bgra(const SurfaceBinding *s);
+void pgraph_wgpu_reshape_surface(PGRAPHState *pg, const SurfaceBinding *src,
+                                 WGPUTextureView dst, hwaddr dst_addr,
+                                 unsigned int width, unsigned int height,
+                                 bool opaque);
+void pgraph_wgpu_finalize_surface_reshape(PGRAPHState *pg);
 
 /* surface module internal (surface-compute.c), used by surface.c */
 void pgraph_wgpu_init_surface_compute(PGRAPHState *pg);
