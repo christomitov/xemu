@@ -471,6 +471,14 @@ static void xemu_wasm_service_state(void)
     }
     MigrationInfo *info = qmp_query_migrate(NULL);
     if (info && info->has_status) {
+        static int last = -1;
+        if ((int)info->status != last) {
+            last = info->status;
+            fprintf(stderr, "[state] migration %s, ram %" PRIu64 "/%" PRIu64
+                    " bytes\n", MigrationStatus_str(info->status),
+                    info->ram ? info->ram->transferred : 0,
+                    info->ram ? info->ram->total : 0);
+        }
         if (info->status == MIGRATION_STATUS_COMPLETED) {
             fprintf(stderr, "[state] saved /xemu/state.bin\n");
             __atomic_store_n(&state_status, 2, __ATOMIC_SEQ_CST);

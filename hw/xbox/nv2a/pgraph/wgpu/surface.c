@@ -383,6 +383,42 @@ static void eager_drop(SurfaceBinding *surface)
     }
 }
 
+/*
+ * Games recreate small read-back targets every frame (R6's 40x30 one is
+ * evicted and cleared each frame), so remember which addresses the CPU read
+ * after a GPU draw, not just which SurfaceBinding.
+ */
+static struct { hwaddr addr; unsigned w, h; } eager_hot[8];
+static unsigned eager_hot_next;
+
+static void eager_mark_hot(const SurfaceBinding *s)
+{
+    for (int i = 0; i < ARRAY_SIZE(eager_hot); i++) {
+        if (eager_hot[i].addr == s->vram_addr && eager_hot[i].w == s->width &&
+            eager_hot[i].h == s->height) {
+            return;
+        }
+    }
+    eager_hot[eager_hot_next % ARRAY_SIZE(eager_hot)].addr = s->vram_addr;
+    eager_hot[eager_hot_next % ARRAY_SIZE(eager_hot)].w = s->width;
+    eager_hot[eager_hot_next % ARRAY_SIZE(eager_hot)].h = s->height;
+    eager_hot_next++;
+}
+
+static bool eager_is_hot(const SurfaceBinding *s)
+{
+    if (s->cpu_read_hot) {
+        return true;
+    }
+    for (int i = 0; i < ARRAY_SIZE(eager_hot); i++) {
+        if (eager_hot[i].addr == s->vram_addr && eager_hot[i].w == s->width &&
+            eager_hot[i].h == s->height && eager_hot[i].w) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool eager_enabled(void)
 {
     static int enabled = -1;
@@ -405,7 +441,7 @@ static void eager_readback_schedule(NV2AState *d, SurfaceBinding *surface)
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
 
     if (!eager_enabled() || !surface || !surface->color ||
-        !surface->cpu_read_hot || !surface->draw_dirty || surface->backing ||
+        !eager_is_hot(surface) || !surface->draw_dirty || surface->backing ||
         !surface->texture || surface->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8 ||
         (size_t)surface->width * surface->height > 128 * 128 ||
         r->draw.in_render_pass || r->draw.in_draw) {
@@ -713,6 +749,7 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
             wait_for_downloads = true;
             if (!write) {
                 surface->cpu_read_hot = true;
+                eager_mark_hot(surface);
             }
         }
 
@@ -1028,7 +1065,8 @@ static void download_overlapping_batched(NV2AState *d,
             break;
         }
         if (!check_surfaces_overlap(surface, o) || !o->draw_dirty ||
-            o->backing || clear_overwrites(d, surface, o) || !o->width || !o->height ||
+            o->backing || clear_overwrites(d, surface, o) ||
+            o->eager_buf ||     /* its early copy needs no round trip */ !o->width || !o->height ||
             o->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8) {
             continue;
         }
