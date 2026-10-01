@@ -918,6 +918,27 @@ static void tb_jmp_cache_inval_tb(TranslationBlock *tb)
     CPUState *cpu;
 
     if (tb_cflags(tb) & CF_PCREL) {
+#ifdef EMSCRIPTEN
+        /*
+         * Every jump cache hit also compares the TB's cflags with the
+         * wanted ones (tb_lookup, helper_lookup_tb_ptr, the inline probe of
+         * target/i386 translate.c), and an invalidated TB carries
+         * CF_INVALID, so a stale entry can no longer match; a TB revived
+         * from inv_htable has the same key and code bytes, so a hit on it
+         * is correct. Flushing the whole cache for every invalidated TB
+         * emptied it ~260 times/s in R6 (SMC on kernel data pages): ~50%
+         * misses. Mapping changes still flush it via tlb_flush.
+         * XEMU_WASM_JC_INVAL_FLUSH=1 restores the flush.
+         */
+        static int flush = -1;
+        if (flush < 0) {
+            const char *e = getenv("XEMU_WASM_JC_INVAL_FLUSH");
+            flush = e && *e == '1';
+        }
+        if (!flush) {
+            return;
+        }
+#endif
         /* A TB may be at any virtual address */
         CPU_FOREACH(cpu) {
             tcg_flush_jmp_cache(cpu);
