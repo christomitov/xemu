@@ -3474,6 +3474,15 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
     } else {
         return false;
     }
+    /* helper_xxxss(env, Reg *d, Reg *v, Reg *s): void, four pointers */
+    if (nargs != 4 || (typemask & 7) != dh_typecode_void) {
+        return false;
+    }
+    for (int j = 1; j <= 4; j++) {
+        if (extract32(typemask, j * 3, 3) != dh_typecode_ptr) {
+            return false;
+        }
+    }
     rm_ofs = xemu_wasm_sse_status_ofs(0);
     fl_ofs = xemu_wasm_sse_status_ofs(1);
 

@@ -288,6 +288,8 @@ typedef struct CPUTLBDesc {
     /* maximum number of entries observed in the window */
     size_t window_max_entries;
     size_t n_used_entries;
+    /* xemu wasm: any entry filled since the last full flush of this mode */
+    bool filled;
     /* The next index to use in the tlb victim table.  */
     size_t vindex;
     /* The tlb victim table, in two parts.  */
