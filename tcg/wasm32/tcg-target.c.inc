@@ -426,6 +426,26 @@ static inline void wasm_if(TCGContext *s, uint8_t blocktype)
     wasm8(s, blocktype);
 }
 
+/*
+ * "if" with a branch hint: V8 compiles the unlikely side as deferred code,
+ * moving spills and register shuffles off the hot path.
+ */
+static int wasm_hints = -1;
+static bool wasm_hints_enabled(void)
+{
+    if (wasm_hints < 0) {
+        const char *e = getenv("XEMU_WASM_HINTS");
+        wasm_hints = !(e && *e == '0');
+    }
+    return wasm_hints;
+}
+
+static void wasm_if_hint(TCGContext *s, uint8_t blocktype, bool likely)
+{
+    wasm_add_reloc(WASM_RELOC_HINT, likely, 0);
+    wasm_if(s, blocktype);
+}
+
 static inline void wasm_br(TCGContext *s, uint32_t depth)
 {
     wasm8(s, W_BR);
@@ -1020,7 +1040,7 @@ static void wasm_handle_unwinding(TCGContext *s)
 {
     wasm_var(s, W_CALL, CHECK_UNWINDING_IDX);
     wasm8(s, W_I32_EQZ);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     wasm_i32_const(s, 0);
     wasm8(s, W_RETURN);
     wasm8(s, W_END);
@@ -1231,7 +1251,7 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     wasm8(s, W_I32_AND);
     wasm8(s, W_I32_EQ);
 
-    wasm_if(s, W_TYPE_I32);
+    wasm_if_hint(s, W_TYPE_I32, true);    /* TLB hit */
     wasm_var(s, W_LOCAL_GET, L32_0);
     wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBEntry, addend));
     wasm_var(s, W_LOCAL_GET, L32_2);
@@ -1330,7 +1350,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
 
     /* fast path */
     wasm_var(s, W_LOCAL_GET, L32_1);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm_mem(s, ld_op[mop & MO_SSIZE], 0);
     wasm_set_r(s, data);
@@ -1343,7 +1363,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_new_resumable_block(s);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm8(s, W_I32_EQZ);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     wasm_get_r32(s, TCG_AREG0);
     wasm_get_r32(s, addr);
     wasm8(s, W_I64_EXTEND_I32_U);
@@ -1372,7 +1392,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_tlb_load(s, addr, oi, false);
 
     wasm_var(s, W_LOCAL_GET, L32_1);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm_get_r(s, data);
     wasm_mem(s, st_op[mop & MO_SIZE], 0);
@@ -1381,7 +1401,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_new_resumable_block(s);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm8(s, W_I32_EQZ);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     wasm_get_r32(s, TCG_AREG0);
     wasm_get_r32(s, addr);
     wasm8(s, W_I64_EXTEND_I32_U);
@@ -3183,7 +3203,7 @@ static void tcg_out_tb_start(TCGContext *s)
      * do_init is 0 and BLOCK_PTR still selects the interrupted region.
      */
     wasm_ctx_load_i32(s, WASM_CTX_DO_INIT_OFF);
-    wasm_if(s, W_BLOCKTYPE_VOID);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, true);     /* rewind: rare */
 
     wasm_ctx_load_i32(s, WASM_CTX_ENV_OFF);
     wasm8(s, W_I64_EXTEND_I32_U);
@@ -3392,6 +3412,29 @@ static int tcg_out_tb_end(TCGContext *s)
     mod8(&w, 0x00);
     mod_uleb(&w, HELPER_IDX_START + helpers_num);
     mod_section_end(&w, sec);
+
+    /* branch hints (custom section, before the code section) */
+    if (wasm_hints_enabled()) {
+        int nhints = 0;
+        for (RelocNode *p = relocs; p; p = p->next) {
+            nhints += p->r.kind == WASM_RELOC_HINT;
+        }
+        if (nhints) {
+            sec = mod_section_begin(&w, 0);
+            mod_name(&w, "metadata.code.branch_hint");
+            mod_uleb(&w, 1);
+            mod_uleb(&w, HELPER_IDX_START + helpers_num);
+            mod_uleb(&w, nhints);
+            for (RelocNode *p = relocs; p; p = p->next) {
+                if (p->r.kind == WASM_RELOC_HINT) {
+                    mod_uleb(&w, WASM_TB_LOCALS_LEN + p->r.off);
+                    mod_uleb(&w, 1);
+                    mod8(&w, p->r.arg);
+                }
+            }
+            mod_section_end(&w, sec);
+        }
+    }
 
     /* code section */
     sec = mod_section_begin(&w, 10);

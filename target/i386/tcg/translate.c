@@ -2899,6 +2899,9 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
         return;
     }
     QEMU_BUILD_BUG_ON(offsetof(X86CPU, parent_obj) != 0);
+    /* 32-bit softmmu only: pc, vaddr and cs_base fit in 32 bits */
+    QEMU_BUILD_BUG_ON(TARGET_LONG_BITS != 32);
+    QEMU_BUILD_BUG_ON(sizeof(vaddr) != 4 && sizeof(vaddr) != 8);
 
     TCGLabel *miss = gen_new_label();
     TCGv_i32 pc = tcg_temp_new_i32();

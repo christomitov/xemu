@@ -74,7 +74,12 @@ typedef struct WasmTBHeader {
  *   with the successor's header in L32_0; code may be inserted at @off.
  *   @depth: br depth from @off to the TB's own loop.
  */
-enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2 };
+/*
+ * WASM_RELOC_HINT: an "if" at @off with a branch hint (@arg 1 = likely,
+ * 0 = unlikely) for the metadata.code.branch_hint section.
+ */
+enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3 };
+#define WASM_TB_LOCALS_LEN 9    /* locals declaration of a TB function */
 typedef struct WasmReloc {
     uint32_t off;
     uint8_t kind;

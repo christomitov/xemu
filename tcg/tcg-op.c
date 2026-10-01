@@ -3265,6 +3265,8 @@ void tcg_gen_goto_tb(unsigned idx)
 /* goto_ptr to a TB code pointer computed by the frontend (wasm inline lookup) */
 void tcg_gen_goto_ptr(TCGv_ptr ptr)
 {
+    tcg_debug_assert(!(tcg_ctx->gen_tb->cflags & CF_NO_GOTO_PTR));
+    plugin_gen_disable_mem_helpers();
     tcg_gen_op1i(INDEX_op_goto_ptr, TCG_TYPE_PTR, tcgv_ptr_arg(ptr));
 }
 
