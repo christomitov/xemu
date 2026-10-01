@@ -283,6 +283,10 @@ typedef struct CPUTLBDesc {
      */
     vaddr large_page_addr;
     vaddr large_page_mask;
+#ifdef EMSCRIPTEN
+    /* xemu wasm: victim TLB swaps since the last flush of this mode */
+    uint32_t n_victim_hits;
+#endif
     /* host time (in ns) at the beginning of the time window */
     int64_t window_begin_ns;
     /* maximum number of entries observed in the window */
