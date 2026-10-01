@@ -1638,15 +1638,29 @@ void *tlb_vaddr_to_host(CPUArchState *env, vaddr addr,
 static void *wasm_i128_fast_host(CPUArchState *env, vaddr addr, MemOpIdx oi,
                                  MMUAccessType type)
 {
+    CPUState *cpu = env_cpu(env);
     MemOp mop = get_memop(oi);
     unsigned a = memop_alignment_bits(mop);
+    int mmu_idx = get_mmuidx(oi);
+    CPUTLBEntry *e;
 
     if ((mop & MO_BSWAP) != MO_LE ||
+        (mop & MO_ATOM_MASK) != MO_ATOM_NONE ||
         (addr & ((1u << a) - 1)) ||
         (addr & ~TARGET_PAGE_MASK) > TARGET_PAGE_SIZE - 16) {
         return NULL;
     }
-    return tlb_vaddr_to_host(env, addr, type, get_mmuidx(oi));
+    /*
+     * Hit-only: the current TLB entry's comparator must equal the page
+     * exactly (any TLB_* flag makes it differ). No fill, victim lookup or
+     * page walk here: those have side effects (A/D bits, notdirty, MMIO
+     * page tables) and belong to the original helper.
+     */
+    e = tlb_entry(cpu, mmu_idx, addr);
+    if (tlb_read_idx(e, type) != (addr & TARGET_PAGE_MASK)) {
+        return NULL;
+    }
+    return (void *)((uintptr_t)addr + e->addend);
 }
 
 uint32_t xemu_wasm_ld_i128_fast(Int128 *ret, CPUArchState *env,
