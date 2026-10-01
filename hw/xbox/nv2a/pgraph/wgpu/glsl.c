@@ -12,6 +12,7 @@
  */
 
 #include "renderer.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "xemu_wgsl.h"
 
 void pgraph_wgpu_init_glsl_compiler(void)
@@ -49,12 +50,49 @@ static void log_source(const char *src)
     }
 }
 
+/*
+ * GLSL -> WGSL results, keyed by stage + SHA-1 of the GLSL, as files in
+ * /xemu/wgsl/. The page restores the directory from the Cache API before
+ * boot and saves new entries, so shaders seen on an earlier visit skip
+ * glslang + Tint. Bump WGSL_CACHE_VERSION when translation output changes.
+ * XEMU_WASM_WGSL_CACHE=0 disables.
+ */
+#define WGSL_CACHE_VERSION "1"
+
+static char *wgsl_cache_path(int stage, const char *glsl)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_WGSL_CACHE");
+        enabled = !(e && *e == '0');
+        if (enabled) {
+            g_mkdir_with_parents("/xemu/wgsl", 0755);
+        }
+    }
+    if (!enabled) {
+        return NULL;
+    }
+    g_autofree char *sum = g_compute_checksum_for_string(G_CHECKSUM_SHA1,
+                                                         glsl, -1);
+    return g_strdup_printf("/xemu/wgsl/v" WGSL_CACHE_VERSION "-%d-%s.wgsl",
+                           stage, sum);
+}
+
 char *pgraph_wgpu_glsl_to_wgsl(int stage, const char *glsl)
 {
     char *err = NULL;
+    g_autofree char *cache = wgsl_cache_path(stage, glsl);
+    if (cache) {
+        g_autofree char *hit = NULL;
+        if (g_file_get_contents(cache, &hit, NULL, NULL) && hit[0]) {
+            XSTAT_INC(n_wgsl_cache_hit);
+            return strdup(hit);
+        }
+    }
     /* Tint aborts the process on an internal compiler error; keep the input
-     * on MEMFS so the offending shader can be inspected after a crash. */
-    {
+     * on MEMFS so the offending shader can be inspected after a crash
+     * (XEMU_WASM_KEEP_SHADER=1; each write is a synchronous MEMFS trip). */
+    if (getenv("XEMU_WASM_KEEP_SHADER")) {
         FILE *f = fopen("/xemu/last-shader.glsl", "w");
         if (f) {
             fprintf(f, "// stage %d\n%s", stage, glsl);
@@ -62,6 +100,9 @@ char *pgraph_wgpu_glsl_to_wgsl(int stage, const char *glsl)
         }
     }
     char *wgsl = xemu_glsl_to_wgsl(stage, glsl, &err);
+    if (wgsl && cache) {
+        g_file_set_contents(cache, wgsl, -1, NULL);
+    }
 
     if (!wgsl) {
         fprintf(stderr, "[wgpu] GLSL -> WGSL translation failed (stage %d):\n"
