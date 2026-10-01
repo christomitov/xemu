@@ -1624,6 +1624,54 @@ void *tlb_vaddr_to_host(CPUArchState *env, vaddr addr,
     return flags ? NULL : host;
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * wasm JIT fast paths for 128-bit guest accesses (tcg/wasm32 calls these
+ * before the resumable ld/st_i128 helper call, which is far more expensive
+ * there). They succeed only when the whole 16 bytes are plain RAM in one
+ * page with a clean TLB entry (no MMIO, watchpoint, notdirty, ... flags:
+ * tlb_vaddr_to_host returns NULL for any) and the access is aligned as
+ * required, i.e. exactly when the helper would do one plain host copy;
+ * anything else returns 0 and the caller runs the original helper.
+ * Single vCPU: no atomicity concern.
+ */
+static void *wasm_i128_fast_host(CPUArchState *env, vaddr addr, MemOpIdx oi,
+                                 MMUAccessType type)
+{
+    MemOp mop = get_memop(oi);
+    unsigned a = memop_alignment_bits(mop);
+
+    if ((mop & MO_BSWAP) != MO_LE ||
+        (addr & ((1u << a) - 1)) ||
+        (addr & ~TARGET_PAGE_MASK) > TARGET_PAGE_SIZE - 16) {
+        return NULL;
+    }
+    return tlb_vaddr_to_host(env, addr, type, get_mmuidx(oi));
+}
+
+uint32_t xemu_wasm_ld_i128_fast(Int128 *ret, CPUArchState *env,
+                                uint64_t addr, uint32_t oi)
+{
+    void *h = wasm_i128_fast_host(env, addr, oi, MMU_DATA_LOAD);
+    if (!h) {
+        return 0;
+    }
+    memcpy(ret, h, 16);
+    return 1;
+}
+
+uint32_t xemu_wasm_st_i128_fast(CPUArchState *env, uint64_t addr,
+                                const Int128 *val, uint32_t oi)
+{
+    void *h = wasm_i128_fast_host(env, addr, oi, MMU_DATA_STORE);
+    if (!h) {
+        return 0;
+    }
+    memcpy(h, val, 16);
+    return 1;
+}
+#endif
+
 /*
  * Return a ram_addr_t for the virtual address for execution.
  *

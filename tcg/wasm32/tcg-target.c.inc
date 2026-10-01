@@ -1179,9 +1179,107 @@ static bool wasm_helper_may_suspend(const TCGHelperInfo *info)
     return true;
 }
 
+static void wasm_push_call_args(TCGContext *s, unsigned typemask, int nargs);
+static void wasm_call_results(TCGContext *s, int rettype);
+
+#ifdef EMSCRIPTEN
+uint32_t xemu_wasm_ld_i128_fast(Int128 *ret, CPUArchState *env,
+                                uint64_t addr, uint32_t oi);
+uint32_t xemu_wasm_st_i128_fast(CPUArchState *env, uint64_t addr,
+                                const Int128 *val, uint32_t oi);
+
+/*
+ * ld/st_i128: try xemu_wasm_{ld,st}_i128_fast (plain non-suspending call;
+ * it succeeds only for an aligned single-page clean-TLB RAM access) and
+ * run the original resumable helper call only when it declines. L32_1
+ * holds the fast result across the resumable region boundary; a rewind
+ * starts with L32_1 == 0 and so replays the original helper.
+ */
+static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
+                                const TCGHelperInfo *info)
+{
+    static int enabled = -1;
+    bool ld;
+    const void *fast;
+    unsigned typemask = info->typemask;
+    int nargs = helper_nargs(typemask);
+    int func_idx, fast_idx;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_I128_FAST");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled || !info->name) {
+        return false;
+    }
+    if (!strcmp(info->name, "ld_i128")) {
+        ld = true;
+        fast = xemu_wasm_ld_i128_fast;
+    } else if (!strcmp(info->name, "st_i128")) {
+        ld = false;
+        fast = xemu_wasm_st_i128_fast;
+    } else {
+        return false;
+    }
+
+    func_idx = get_helper_idx(func);
+    if (func_idx < 0) {
+        func_idx = register_helper(func);
+        gen_func_type(info);
+    }
+    fast_idx = get_helper_idx(fast);
+    if (fast_idx < 0) {
+        static const uint8_t ty_ld[] = { 0x60, 4, W_TYPE_I32, W_TYPE_I32,
+                                         W_TYPE_I64, W_TYPE_I32,
+                                         1, W_TYPE_I32 };
+        static const uint8_t ty_st[] = { 0x60, 4, W_TYPE_I32, W_TYPE_I64,
+                                         W_TYPE_I32, W_TYPE_I32,
+                                         1, W_TYPE_I32 };
+        fast_idx = register_helper(fast);
+        for (int i = 0; i < sizeof(ty_ld); i++) {
+            types_out8(ld ? ty_ld[i] : ty_st[i]);
+        }
+    }
+
+#ifdef EMSCRIPTEN
+    wasm_count(s, &xemu_wasm_stats.n_helper);
+#endif
+    /* fast attempt */
+    wasm_push_call_args(s, typemask, nargs);
+    wasm_call_idx(s, fast_idx);
+    wasm_var(s, W_LOCAL_SET, L32_1);
+
+    /* fallback: the original helper call, resumable */
+    wasm_new_resumable_block(s);
+    wasm_var(s, W_LOCAL_GET, L32_1);
+    wasm8(s, W_I32_EQZ);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    wasm_set_tci_tb_ptr(s);
+    wasm_push_call_args(s, typemask, nargs);
+    wasm_save_regs(s);
+    wasm_phase(s, info->name);
+    wasm_call_idx(s, func_idx);
+    wasm_phase(s, NULL);
+    if (!ld) {
+        /* st_i128 returns nothing */
+    }
+    wasm_handle_unwinding(s);
+    wasm8(s, W_END);
+
+    /* both paths left the result at the call stack slots */
+    wasm_call_results(s, typemask & 7);
+    return true;
+}
+#endif
+
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
                       const TCGHelperInfo *info)
 {
+#ifdef EMSCRIPTEN
+    if (wasm_call_i128_fast(s, func, info)) {
+        return;
+    }
+#endif
     bool may_suspend = wasm_helper_may_suspend(info);
     unsigned typemask = info->typemask;
     int rettype = typemask & 7;
@@ -1201,6 +1299,27 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         wasm_new_resumable_block(s);
     }
     wasm_set_tci_tb_ptr(s);
+
+    wasm_push_call_args(s, typemask, nargs);
+
+    if (may_suspend) {
+        wasm_save_regs(s);
+    }
+    wasm_phase(s, info->name);
+    wasm_call_idx(s, func_idx);
+    wasm_phase(s, NULL);
+    wasm_call_results(s, rettype);
+    if (may_suspend) {
+        wasm_handle_unwinding(s);
+    }
+}
+
+/* Push a helper call's arguments (and the i128 result pointer) from the
+ * TCG call stack slots. */
+static void wasm_push_call_args(TCGContext *s, unsigned typemask, int nargs)
+{
+    int rettype = typemask & 7;
+    int slot = 0;
 
     if (rettype == dh_typecode_i128) {
         /* the result is returned via memory, at the arg slots */
@@ -1239,14 +1358,11 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
             g_assert_not_reached();
         }
     }
+}
 
-    if (may_suspend) {
-        wasm_save_regs(s);
-    }
-    wasm_phase(s, info->name);
-    wasm_call_idx(s, func_idx);
-    wasm_phase(s, NULL);
-
+/* Move a helper call's result into R0 (/R1). */
+static void wasm_call_results(TCGContext *s, int rettype)
+{
     switch (rettype) {
     case dh_typecode_void:
         break;
@@ -1270,9 +1386,6 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
         break;
     default:
         g_assert_not_reached();
-    }
-    if (may_suspend) {
-        wasm_handle_unwinding(s);
     }
 }
 
