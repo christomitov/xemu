@@ -29,6 +29,7 @@
 #include "accel/tcg/getpc.h"
 #include "wasm32.h"
 #include "exec/translation-block.h"
+#include "system/memory.h"
 
 /*
  * Adaptive JIT threshold: a TB runs in the interpreter until it has run
@@ -167,7 +168,7 @@ static WasmInstance instances[MAX_INSTANCES_BUF];
 /* For the page's "Send hot code" dump: the guest block behind a TB header. */
 EMSCRIPTEN_KEEPALIVE uint32_t *wasm32_tb_info(void *hdr)
 {
-    static uint32_t out[4];
+    static uint32_t out[5];
     TranslationBlock *tb = hdr ? tcg_tb_lookup((uintptr_t)hdr) : NULL;
 
     memset(out, 0, sizeof(out));
@@ -177,6 +178,8 @@ EMSCRIPTEN_KEEPALIVE uint32_t *wasm32_tb_info(void *hdr)
         out[1] = tb->cs_base;
         out[2] = tb->size;
         out[3] = tb->icount;
+        /* host address of the guest code bytes, for disassembly */
+        out[4] = (uint32_t)(uintptr_t)qemu_map_ram_ptr(NULL, tb_page_addr0(tb));
     }
     return out;
 }
