@@ -1498,9 +1498,23 @@ static void do_gen_rep(DisasContext *s, MemOp ot, TCGv dshift,
 #ifdef EMSCRIPTEN
     /* Bulk-copy what it can first; the loop below handles any remainder. */
     if (fn == gen_movs && !is_repz_nz && s->aflag == MO_32 && ot <= MO_32) {
+        /*
+         * Short copies stay on the inline loop: the helper call and its two
+         * probe_access() lookups cost more than a few element moves.
+         * XEMU_WASM_REP_MOVS_MIN: minimum bytes for the helper (256).
+         */
+        static int min_bytes = -1;
+        if (min_bytes < 0) {
+            const char *e = getenv("XEMU_WASM_REP_MOVS_MIN");
+            min_bytes = e ? atoi(e) : 256;
+        }
+        TCGLabel *small = gen_new_label();
         int seg = s->override >= 0 ? s->override : R_DS;
+        tcg_gen_brcondi_tl(TCG_COND_LTU, cpu_regs[R_ECX],
+                           (min_bytes + (1 << ot) - 1) >> ot, small);
         gen_helper_rep_movs_fast(tcg_env, tcg_constant_i32(ot),
                                  tcg_constant_i32(seg));
+        gen_set_label(small);
     }
 #endif
 
