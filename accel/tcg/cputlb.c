@@ -131,6 +131,16 @@ static inline uintptr_t tlb_index(CPUState *cpu, uintptr_t mmu_idx,
 {
     uintptr_t size_mask = cpu_tlb_fast(cpu, mmu_idx)->mask >> CPU_TLB_ENTRY_BITS;
 
+#ifdef EMSCRIPTEN
+    /*
+     * Fold address bits 24..31 into the index: the Xbox reaches the same
+     * memory through aliases that differ only there (0x0xxxxxxx,
+     * 0x8xxxxxxx, ...), which otherwise share a slot at any TLB size and
+     * evicted each other ~95k times/s in the dashboard intro. Must match
+     * the JIT's inline lookup (tcg/wasm32 wasm_tlb_load).
+     */
+    addr ^= (addr >> 12) & 0xff000;
+#endif
     return (addr >> TARGET_PAGE_BITS) & size_mask;
 }
 
@@ -1841,6 +1851,13 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data, MemOp memop,
     CPUTLBEntryFull *full;
     int flags;
 
+#ifdef EMSCRIPTEN
+    bool st_miss = !tlb_hit(tlb_addr, addr);
+    if (st_miss && tlb_addr != -1 &&
+        (((tlb_addr ^ addr) & TARGET_PAGE_MASK) & 0xffffff) == 0) {
+        XSTAT_INC(n_tlb_alias);   /* same page bits 12..23, other 16 MiB */
+    }
+#endif
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
         if (!victim_tlb_hit(cpu, mmu_idx, index, access_type,
@@ -1857,6 +1874,34 @@ static bool mmu_lookup1(CPUState *cpu, MMULookupPageData *data, MemOp memop,
     full = &cpu->neg.tlb.d[mmu_idx].fulltlb[index];
     flags = tlb_addr & (TLB_FLAGS_MASK & ~TLB_FORCE_SLOW);
     flags |= full->slow_flags[access_type];
+#ifdef EMSCRIPTEN
+    if (access_type == MMU_DATA_STORE) {
+        XSTAT_INC(n_slow_st);
+        if (st_miss) {
+            XSTAT_INC(n_slow_st_miss);
+        }
+        if (flags & TLB_NOTDIRTY) {
+            XSTAT_INC(n_slow_st_notdirty);
+        }
+        if (flags & TLB_MMIO) {
+            XSTAT_INC(n_slow_st_mmio);
+        }
+        if (flags & TLB_WATCHPOINT) {
+            XSTAT_INC(n_slow_st_watch);
+        }
+    } else if (access_type == MMU_DATA_LOAD) {
+        XSTAT_INC(n_slow_ld);
+        if (st_miss) {
+            XSTAT_INC(n_slow_ld_miss);
+        }
+        if (flags & TLB_MMIO) {
+            XSTAT_INC(n_slow_ld_mmio);
+        }
+        if (flags & TLB_WATCHPOINT) {
+            XSTAT_INC(n_slow_ld_watch);
+        }
+    }
+#endif
 
     if (likely(!maybe_resized)) {
         /* Alignment has not been checked by tlb_fill_align. */
