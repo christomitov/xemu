@@ -555,17 +555,54 @@ void pgraph_wgpu_shaders_on_submit(PGRAPHState *pg)
     r->shaders.uniforms_uploaded = false;
 }
 
+/*
+ * Exact equality of a uniform block with the last uploaded copy. Was an
+ * XXH3 hash of both blocks on every draw (~3.5 KB, mostly the 192 vertex
+ * shader constants): scalar XXH3 in wasm made that most of the
+ * "draw:bindgroup" GPU-thread time (~3 us/draw at ~80k draws/s).
+ */
+static bool uniform_block_same(PGRAPHWgpuShaderState *s, int i,
+                               const ShaderUniformBlock *b)
+{
+    size_t n = b->total_size;
+    const uint8_t *p = b->allocation, *q = s->uniform_last[i];
+
+    if (!q || s->uniform_last_size[i] != n) {
+        return false;
+    }
+    for (size_t k = 0; k + 8 <= n; k += 8) {
+        uint64_t x, y;
+        memcpy(&x, p + k, 8);
+        memcpy(&y, q + k, 8);
+        if (x != y) {
+            return false;
+        }
+    }
+    return !memcmp(p + (n & ~7), q + (n & ~7), n & 7);
+}
+
+static void uniform_block_remember(PGRAPHWgpuShaderState *s, int i,
+                                   const ShaderUniformBlock *b)
+{
+    if (s->uniform_last_size[i] < b->total_size || !s->uniform_last[i]) {
+        g_free(s->uniform_last[i]);
+        s->uniform_last[i] = g_malloc(b->total_size);
+    }
+    memcpy(s->uniform_last[i], b->allocation, b->total_size);
+    s->uniform_last_size[i] = b->total_size;
+}
+
 static void upload_uniforms(PGRAPHWgpuState *r, ShaderBinding *binding)
 {
     PGRAPHWgpuShaderState *s = &r->shaders;
     ShaderUniformBlock *blocks[2] = { &binding->vsh.module_info->uniforms,
                                       &binding->psh.module_info->uniforms };
-    uint64_t hashes[2];
+    bool same[2];
     bool changed = !s->uniforms_uploaded;
 
     for (int i = 0; i < 2; i++) {
-        hashes[i] = fast_hash(blocks[i]->allocation, blocks[i]->total_size);
-        changed |= hashes[i] != s->uniform_hashes[i];
+        same[i] = uniform_block_same(s, i, blocks[i]);
+        changed |= !same[i];
     }
     if (!changed) {
         nv2a_profile_inc_counter(NV2A_PROF_SHADER_UBO_NOTDIRTY);
@@ -586,7 +623,7 @@ static void upload_uniforms(PGRAPHWgpuState *r, ShaderBinding *binding)
 
     for (int i = 0; i < 2; i++) {
         /* an unchanged block keeps its (still intact) earlier slice */
-        if (!all && hashes[i] == s->uniform_hashes[i]) {
+        if (!all && same[i]) {
             continue;
         }
         s->uniform_block_offsets[i] = s->uniform_offset;
@@ -603,7 +640,7 @@ static void upload_uniforms(PGRAPHWgpuState *r, ShaderBinding *binding)
                            s->uniform_offset + blocks[i]->total_size);
         s->uniform_offset += ROUND_UP(blocks[i]->total_size,
                                       s->uniform_alignment);
-        s->uniform_hashes[i] = hashes[i];
+        uniform_block_remember(s, i, blocks[i]);
     }
     s->uniforms_uploaded = true;
 }
@@ -965,6 +1002,11 @@ void pgraph_wgpu_finalize_shaders(PGRAPHState *pg)
         wgpuBufferRelease(s->uniform_buffer);
         g_free(s->uniform_staging);
         s->uniform_staging = NULL;
+        for (int i = 0; i < 2; i++) {
+            g_free(s->uniform_last[i]);
+            s->uniform_last[i] = NULL;
+            s->uniform_last_size[i] = 0;
+        }
         s->uniform_buffer = NULL;
     }
 }
