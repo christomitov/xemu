@@ -1209,7 +1209,8 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
         const char *e = getenv("XEMU_WASM_I128_FAST");
         enabled = !(e && *e == '0');
     }
-    if (!enabled || !info->name) {
+    if (!enabled || !info->name ||
+        (tcg_ctx->gen_tb->cflags & CF_PARALLEL)) {
         return false;
     }
     if (!strcmp(info->name, "ld_i128")) {
