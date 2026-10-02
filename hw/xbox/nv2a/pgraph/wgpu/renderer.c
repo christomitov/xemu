@@ -89,15 +89,17 @@ static void on_device_lost(const WGPUDevice *device, WGPUDeviceLostReason reason
             (int)msg.length, msg.data);
 }
 
-void pgraph_wgpu_wait(PGRAPHWgpuState *r, WGPUFuture future)
+void pgraph_wgpu_wait_at(PGRAPHWgpuState *r, WGPUFuture future,
+                         const char *where)
 {
     WGPUFutureWaitInfo info = { .future = future };
     XPHASE_PUSH(XPHASE_GPU, "gpu_wait");
 #ifdef EMSCRIPTEN
     /*
-     * Charge blocking waits to the last event this thread counted (the
-     * dl:* reason of a readback, normally) as "waitms:<event>", in units of
-     * 0.1 ms, so the report ranks readbacks by time spent rather than count.
+     * Charge blocking waits to their call site and the last event this
+     * thread counted (the dl:* reason of a readback, normally) as
+     * "waitms:<site> <event>", in units of 0.1 ms, so the report ranks
+     * readbacks by time spent rather than count.
      */
     int64_t t0 = xemu_wasm_stats_now_ns();
     wgpuInstanceWaitAny(r->instance, 1, &info, UINT64_MAX);
@@ -105,7 +107,9 @@ void pgraph_wgpu_wait(PGRAPHWgpuState *r, WGPUFuture future)
     if (dt >= 50000) {
         const char *why = xemu_wasm_last_count_key;
         char key[160];
-        snprintf(key, sizeof(key), "waitms:%s", why ? why : "?");
+        const char *base = strrchr(where, '/');
+        snprintf(key, sizeof(key), "waitms:%s %s", base ? base + 1 : where,
+                 why ? why : "?");
         xemu_wasm_count_add(g_intern_string(key), (uint32_t)(dt / 100000));
     }
 #else
