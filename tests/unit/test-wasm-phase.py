@@ -41,6 +41,7 @@ PREFIX = r'''
 #include <stdlib.h>
 #include <string.h>
 #define EMSCRIPTEN_KEEPALIVE
+#define EMSCRIPTEN 1
 #define XBOX 1
 #define qatomic_read(p) __atomic_load_n(p, __ATOMIC_SEQ_CST)
 #define qatomic_set(p,v) __atomic_store_n(p, v, __ATOMIC_SEQ_CST)
@@ -54,6 +55,10 @@ static bool g_str_has_suffix(const char *s, const char *p) {
     return n >= m && strcmp(s + n - m, p) == 0;
 }
 typedef struct TCGHelperInfo { const char *name; } TCGHelperInfo;
+typedef struct TCGContext { unsigned count; const char *last; } TCGContext;
+static void wasm_phase(TCGContext *s, const char *name) {
+    s->count++; s->last = name;
+}
 '''
 
 SUFFIX = r'''
@@ -83,7 +88,38 @@ static void group(const char *in, const char *want) {
     const char *got = wasm_helper_phase_name(&info);
     assert((!want && !got) || (want && got && !strcmp(want, got)));
 }
-int main(void) {
+static void profile_test(const char *arg) {
+    setenv("XEMU_WASM_JIT_PROFILE", arg, 1);
+    unsigned flags = atoi(arg) & 3;
+    assert(wasm_jit_profile() == flags);
+    const char *names[] = {NULL, "rdtsc", "gvec_ssadd16", "fldl_ST0",
+                          "paddsw_mmx", "fxsave"};
+    const char *labels[] = {"jit:call", "jit:call", "jit:gvec", "jit:x87",
+                           "jit:mmx", "jit:fpu_state"};
+    for (int i = 0; i < 6; i++) {
+        TCGContext s = {0}; TCGHelperInfo info = {names[i]};
+        assert(!strcmp(wasm_callsite_phase_name(&info), labels[i]));
+        wasm_callsite_phase(&s, &info, false);
+        assert(s.count == !!(flags & 1));
+        wasm_callsite_phase(&s, &info, true);
+        assert(s.count == 1 + !!(flags & 1));
+        if (flags & 1) { assert(!strcmp(s.last, labels[i])); }
+        else { assert(!s.last); }
+        wasm_jit_phase(&s, 1, NULL);
+        assert(!s.last);
+        assert(s.count == 1 + 2 * !!(flags & 1));
+    }
+    TCGContext s = {0};
+    wasm_jit_phase(&s, 2, "jit:ld");
+    assert(s.count == !!(flags & 2));
+    if (flags & 2) { assert(!strcmp(s.last, "jit:ld")); }
+    wasm_jit_phase(&s, 2, NULL);
+    assert(!s.last && s.count == 2 * !!(flags & 2));
+    printf("PASS: generated phase mask=%u, call groups/reset/default gate\n",
+           flags);
+}
+int main(int argc, char **argv) {
+    if (argc == 2) { profile_test(argv[1]); return 0; }
     group(NULL, NULL);
     group("fadd_ST0_FT0", "x87");
     group("fmul_STN_ST0__soft", "x87");
@@ -136,7 +172,11 @@ def main():
     end = UI.index("static void phase_bump", start)
     code = (PREFIX + UI[start:end] + function(UI, "phase_bump") +
             function(UI, "xemu_wasm_phase_top") +
-            function(TCG, "wasm_helper_phase_name") + SUFFIX)
+            function(TCG, "wasm_helper_phase_name") +
+            function(TCG, "wasm_jit_profile") +
+            function(TCG, "wasm_jit_phase") +
+            function(TCG, "wasm_callsite_phase_name") +
+            function(TCG, "wasm_callsite_phase") + SUFFIX)
     with tempfile.TemporaryDirectory(prefix="test-wasm-phase-") as tmp:
         source = Path(tmp) / "test.c"
         exe = Path(tmp) / "test"
@@ -145,6 +185,8 @@ def main():
                         "-std=gnu11", "-O2", "-pthread", str(source),
                         "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True, timeout=30)
+        for flags in [0, 1, 2, 3, 7]:
+            subprocess.run([str(exe), str(flags)], check=True, timeout=10)
 
 
 if __name__ == "__main__":
