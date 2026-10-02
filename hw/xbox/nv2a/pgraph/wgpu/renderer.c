@@ -241,17 +241,18 @@ static void on_buffer_mapped(WGPUMapAsyncStatus status, WGPUStringView msg,
     *(bool *)u1 = status == WGPUMapAsyncStatus_Success;
 }
 
-void pgraph_wgpu_read_buffer_sync(PGRAPHWgpuState *r, WGPUBuffer buffer,
-                                  size_t offset, size_t size, void *dst)
+void pgraph_wgpu_read_buffer_sync_at(PGRAPHWgpuState *r, WGPUBuffer buffer,
+                                     size_t offset, size_t size, void *dst,
+                                     const char *where)
 {
     bool ok = false;
     XSTAT_INC(n_readback);
     XSTAT_T0();
-    pgraph_wgpu_wait(r, wgpuBufferMapAsync(
+    pgraph_wgpu_wait_at(r, wgpuBufferMapAsync(
         buffer, WGPUMapMode_Read, offset, size,
         (WGPUBufferMapCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
                                      .callback = on_buffer_mapped,
-                                     .userdata1 = &ok }));
+                                     .userdata1 = &ok }), where);
     if (ok) {
         const void *src = wgpuBufferGetConstMappedRange(buffer, offset, size);
         memcpy(dst, src, size);

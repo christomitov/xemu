@@ -135,8 +135,12 @@ WGPUShaderModule pgraph_wgpu_create_wgsl_module(PGRAPHWgpuState *r,
 /* Blocking readback: map buffer [offset, offset+size) for reading (it must
  * have WGPUBufferUsage_MapRead), copy into dst, unmap. The caller must have
  * submitted the commands that fill it (pgraph_wgpu_finish). */
-void pgraph_wgpu_read_buffer_sync(PGRAPHWgpuState *r, WGPUBuffer buffer,
-                                  size_t offset, size_t size, void *dst);
+void pgraph_wgpu_read_buffer_sync_at(PGRAPHWgpuState *r, WGPUBuffer buffer,
+                                     size_t offset, size_t size, void *dst,
+                                     const char *where);
+#define pgraph_wgpu_read_buffer_sync(r, buffer, offset, size, dst)          \
+    pgraph_wgpu_read_buffer_sync_at((r), (buffer), (offset), (size), (dst), \
+                                    __FILE__ ":" stringify(__LINE__))
 /* Wait until all submitted GPU work has completed. */
 void pgraph_wgpu_wait_queue_idle(PGRAPHWgpuState *r);
 
