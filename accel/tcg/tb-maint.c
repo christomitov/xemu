@@ -1406,6 +1406,7 @@ void tb_invalidate_phys_range(CPUState *cpu, tb_page_addr_t start,
 void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
                                    unsigned len, uintptr_t ra)
 {
+    XSMC_PROF_BEGIN("smc_bitmap");
     PageDesc *p = page_find(start >> TARGET_PAGE_BITS);
 
 #if defined(XBOX) && defined(EMSCRIPTEN)
@@ -1430,11 +1431,13 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
             p->smc_miss++;
             page_unlock(p);
             XSTAT_INC(n_smc_bitmap_miss);
+            XSMC_PROF_END();
             return;
         }
         page_unlock(p);
     }
 #endif
+    XSMC_PROF_SET("smc_invalidate");
     if (p) {
         ram_addr_t last = start + len - 1;
         struct page_collection *pages = page_collection_lock(start, last);
@@ -1443,6 +1446,7 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
                                               start, last, ra);
         page_collection_unlock(pages);
     }
+    XSMC_PROF_END();
 }
 
 #endif /* CONFIG_USER_ONLY */

@@ -14,7 +14,9 @@
 #ifndef QEMU_XEMU_WASM_STATS_H
 #define QEMU_XEMU_WASM_STATS_H
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #define XEMU_WASM_STATS_FIELDS(X)                                             \
     /* vCPU (TCG) */                                                         \
@@ -58,6 +60,7 @@
     X(n_slow_st_miss)    /*  ... TLB miss (victim hit or fill) */          \
     X(n_slow_st_notdirty) /* ... clean page (code / dirty tracking) */     \
     X(n_smc_bitmap_miss) /* ... code-page stores cleared by the code bitmap */ \
+    X(n_notdirty_fast_skip) /* opt-in: protected-page TLB cleanup elided */  \
     X(n_slow_st_mmio)    /*  ... MMIO */                                    \
     X(n_slow_st_watch)   /*  ... watchpoint / access callback */            \
     X(n_slow_ld)         /* loads taking the softmmu slow path */           \
@@ -162,7 +165,7 @@ extern __thread const char *xemu_wasm_last_count_key;
 /*
  * Sampling profile: each profiled thread publishes what it is doing now as a
  * static string (NULL = its default: "jit" for the vCPU, "pfifo" for the GPU
- * thread); the main loop samples both every iteration (~1 kHz) and the page
+ * thread); a dedicated sampler thread samples both (~1 kHz) and the page
  * reports the shares. Marks are one store each, so they can sit on hot paths.
  */
 #define XPHASE_VCPU 0
@@ -173,10 +176,40 @@ void xemu_wasm_phase_sample(void);
     const char *xphase_old_ = xemu_wasm_phase[t]; xemu_wasm_phase[t] = (name)
 #define XPHASE_POP(t) (xemu_wasm_phase[t] = xphase_old_)
 #define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
+
+/* JIT_PROFILE bit 4: C notdirty subphases, without per-store clocks. */
+static inline bool xemu_wasm_smc_profile_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_JIT_PROFILE");
+        enabled = e && (atoi(e) & 4);
+    }
+    return enabled;
+}
+
+#define XSMC_PROF_BEGIN(name) \
+    const bool xsmc_prof_ = xemu_wasm_smc_profile_enabled(); \
+    const char *xsmc_old_ = xsmc_prof_ ? xemu_wasm_phase[XPHASE_VCPU] : NULL; \
+    XSMC_PROF_SET(name)
+#define XSMC_PROF_SET(name) do { \
+    if (xsmc_prof_) { \
+        XPHASE_SET(XPHASE_VCPU, name); \
+    } \
+} while (0)
+#define XSMC_PROF_END() do { \
+    if (xsmc_prof_) { \
+        XPHASE_SET(XPHASE_VCPU, xsmc_old_); \
+    } \
+} while (0)
 #else
 #define XPHASE_PUSH(t, name) do { } while (0)
 #define XPHASE_POP(t) do { } while (0)
 #define XPHASE_SET(t, name) do { } while (0)
+#define XSMC_PROF_BEGIN(name) do { } while (0)
+#define XSMC_PROF_SET(name) do { } while (0)
+#define XSMC_PROF_END() do { } while (0)
 #define XSTAT_INC(f) do { } while (0)
 #define XSTAT_ADD(f, v) do { } while (0)
 #define XSTAT_T0() do { } while (0)
