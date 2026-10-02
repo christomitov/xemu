@@ -33,6 +33,12 @@
     X(n_tb_selfloop)     /* goto_tb to the same TB (wasm loop) */            \
     X(n_tb_gotoptr)      /* indirect: goto_ptr after lookup_tb_ptr */        \
     X(n_tb_linkmiss)     /* chained goto_tb whose link was missing/stale */  \
+    X(n_ic_direct_hit)   /* direct exits tail-called across modules */      \
+    X(n_ic_direct_miss)  /* direct exits returned to the dispatcher */      \
+    X(n_ic_indirect_hit) /* validated goto_ptr exits tail-called */         \
+    X(n_ic_indirect_miss) /* goto_ptr exits returned to the dispatcher */   \
+    X(n_ic_fill)         /* dispatcher updates to module cache tables */    \
+    X(n_ic_rewind)       /* Asyncify forwards to another module's globals */ \
     X(n_guest_insn)      /* guest insns in dispatched JIT TBs (not loops) */  \
     X(n_tb_invalidate)   /* TBs invalidated (SMC, page writes) */            \
     X(n_bind_group_create) /* WebGPU bind groups created (cache misses) */  \
