@@ -77,14 +77,14 @@ EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
 
 __thread WasmContext wasm_ctx;
 
-/* 0: off (default), 1: all exits, 2: validated goto_ptr exits only. */
+/* XEMU_WASM_IC: 0 off, 1 all exits, 2 (default) validated goto_ptr exits only. */
 static int wasm32_ic_mode(void)
 {
     static int mode = -1;
 
     if (mode < 0) {
         const char *e = getenv("XEMU_WASM_IC");
-        mode = e && *e == '1' ? 1 : e && *e == '2' ? 2 : 0;
+        mode = e && *e == '1' ? 1 : e && *e == '0' ? 0 : 2;
     }
     return mode;
 }
