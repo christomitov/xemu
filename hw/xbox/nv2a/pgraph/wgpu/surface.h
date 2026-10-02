@@ -167,6 +167,7 @@ void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size);
 /* Native linear byte reshaping; destination is distinct, tight BGRA8. */
 bool pgraph_wgpu_linear_reshape_enabled(void);
 bool pgraph_wgpu_is_linear_bgra(const SurfaceBinding *s);
+bool pgraph_wgpu_is_linear_bgra_src(const SurfaceBinding *s);
 void pgraph_wgpu_reshape_surface(PGRAPHState *pg, const SurfaceBinding *src,
                                  WGPUTextureView dst, hwaddr dst_addr,
                                  unsigned int width, unsigned int height,

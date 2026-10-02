@@ -1838,7 +1838,7 @@ static const char *surface_stitch_reject_reason(NV2AState *d,
         return "cpu-pending";
     }
     bool reshape = pgraph_wgpu_linear_reshape_enabled() &&
-                   pgraph_wgpu_is_linear_bgra(src) &&
+                   pgraph_wgpu_is_linear_bgra_src(src) &&
                    pgraph_wgpu_is_linear_bgra(dst);
     /* A prior tail materialization may leave a clean owner among the mips. */
     if (!src->draw_dirty && !reshape) {
