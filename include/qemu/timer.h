@@ -838,16 +838,25 @@ static inline int64_t get_clock(void)
 {
 #ifdef EMSCRIPTEN
     /*
-     * CLOCK_MONOTONIC under emscripten pthreads has a per-worker origin:
-     * a worker's monotonic reading starts near 0, while the main thread
-     * (and thus the clock offsets taken at init) use the process base.
-     * QEMU subtracts these values across threads (cpu_ticks_offset taken
-     * on main, virtual clock read on the vCPU thread), so any origin
-     * mismatch yields epoch-scale garbage timers. Use the wall clock,
-     * which emscripten backs with a shared epoch (Date.now()), on every
-     * thread.
+     * performance.now() alone has a per-worker origin, and QEMU subtracts
+     * clock values across threads, so it cannot be used directly. The wall
+     * clock (gettimeofday) shares an epoch but emscripten backs it with
+     * Date.now(): 1 ms steps, which quantized the virtual clock, every QEMU
+     * timer and the guest TSC (rdtsc) to 1 ms. emscripten_get_now() under
+     * pthreads is performance.timeOrigin + performance.now(): the same
+     * epoch on every thread at microsecond resolution.
+     * XEMU_WASM_COARSE_CLOCK=1 restores the old 1 ms clock.
      */
-    return get_clock_realtime();
+    extern double emscripten_get_now(void);
+    static int coarse = -1;
+    if (unlikely(coarse < 0)) {
+        const char *e = getenv("XEMU_WASM_COARSE_CLOCK");
+        coarse = e && *e == '1';
+    }
+    if (coarse) {
+        return get_clock_realtime();
+    }
+    return (int64_t)(emscripten_get_now() * 1e6);
 #else
     if (use_rt_clock) {
         struct timespec ts;
