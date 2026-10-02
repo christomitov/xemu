@@ -65,6 +65,12 @@
     X(n_jit_rewind)      /* Asyncify rewinds into JIT code (rewind fns) */   \
     X(n_region_compile)  /* region modules built */                          \
     X(n_region_members)  /* ... total member TBs in them */                  \
+    X(n_region_shared)   /* stable multi-entry region instances */           \
+    X(n_region_aliases)  /* additional headers sharing those instances */    \
+    X(n_region_cap)      /* shared entries rejected by final CFG/byte cap */ \
+    X(n_region_bytes_max) /* largest accepted shared entry function */       \
+    X(n_region_cfg_max)  /* largest accepted shared CFG score */             \
+    X(n_region_depth_max) /* largest accepted shared entry nesting */        \
     X(n_tb_region)       /* TB transitions branched inside a region */       \
     X(n_jc_lookup)       /* tb_lookup calls (jump cache probes) */           \
     X(n_jc_miss)         /* ... that missed and went to the QHT */          \
