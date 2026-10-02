@@ -677,6 +677,23 @@ int pgraph_method(NV2AState *d, unsigned int subchannel,
     int num_processed = 1;
 
     PGRAPHState *pg = &d->pgraph;
+#ifdef EMSCRIPTEN
+    /*
+     * 1-in-64 sample of the methods the GPU thread runs, per class and
+     * method ("pgm:97 1800"), for the report: which ones dominate a
+     * method-heavy frame. The class is the one bound before this call.
+     */
+    static unsigned pgm_sample;
+    if (!(++pgm_sample & 63)) {
+        char key[32];
+        snprintf(key, sizeof(key), "pgm:%x %04x",
+                 PG_GET_MASK(NV_PGRAPH_CTX_SWITCH1,
+                             NV_PGRAPH_CTX_SWITCH1_GRCLASS),
+                 method);
+        /* not xemu_wasm_count: keep waitms attributed to the last event */
+        xemu_wasm_count_add(g_intern_string(key), 1);
+    }
+#endif
 
     bool channel_valid =
         PG_GET_MASK(NV_PGRAPH_CTX_CONTROL, NV_PGRAPH_CTX_CONTROL_CHID);
