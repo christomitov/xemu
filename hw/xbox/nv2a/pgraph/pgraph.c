@@ -40,12 +40,37 @@
 
 NV2AState *g_nv2a;
 
+#ifdef EMSCRIPTEN
+/*
+ * vCPU PGRAPH register accesses wait for the GPU thread, which holds the
+ * lock while it runs methods: count each access and its wait in 0.1 ms
+ * units per register ("pgr:r 0x100" / "pgrwait:w 0x100") for the report.
+ */
+static void pgraph_count_access(char rw, hwaddr addr, int64_t t0)
+{
+    char key[40];
+    int64_t dt = xemu_wasm_stats_now_ns() - t0;
+    snprintf(key, sizeof(key), "pgr:%c 0x%x", rw, (unsigned)addr);
+    xemu_wasm_count(g_intern_string(key));
+    if (dt >= 100000) {
+        snprintf(key, sizeof(key), "pgrwait:%c 0x%x", rw, (unsigned)addr);
+        xemu_wasm_count_add(g_intern_string(key), (uint32_t)(dt / 100000));
+    }
+}
+#endif
+
 uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
 {
     NV2AState *d = (NV2AState *)opaque;
     PGRAPHState *pg = &d->pgraph;
 
+#ifdef EMSCRIPTEN
+    int64_t t0 = xemu_wasm_stats_now_ns();
+#endif
     qemu_mutex_lock(&pg->lock);
+#ifdef EMSCRIPTEN
+    pgraph_count_access('r', addr, t0);
+#endif
 
     uint64_t r = 0;
     switch (addr) {
@@ -88,8 +113,14 @@ void pgraph_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
 
     nv2a_reg_log_write(NV_PGRAPH, addr, size, val);
 
+#ifdef EMSCRIPTEN
+    int64_t t0 = xemu_wasm_stats_now_ns();
+#endif
     qemu_mutex_lock(&d->pfifo.lock); // FIXME: Factor out fifo lock here
     qemu_mutex_lock(&pg->lock);
+#ifdef EMSCRIPTEN
+    pgraph_count_access('w', addr, t0);
+#endif
 
     switch (addr) {
     case NV_PGRAPH_INTR:
