@@ -496,7 +496,8 @@ static int compile_tb(WasmTBHeader *h, int depth)
  * TCI GETPC positions, exits); a br_table loop selects the member to run,
  * and at every goto_tb/goto_ptr exit whose successor header is a member,
  * the exit branches to that member instead of returning to this dispatcher.
- * XEMU_WASM_REGION_SHARE=1 assigns one stable instance to every member, so
+ * By default (XEMU_WASM_REGION_SHARE=0: legacy) one stable instance serves
+ * every member, so
  * entries from different callers accumulate hotness on the same function.
  * It never steals owned members or grows/rebuilds an existing group. Legacy
  * mode publishes only the root and can copy already-owned successors.
@@ -1326,7 +1327,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                     region_enabled = 0;
                 }
                 const char *sh = getenv("XEMU_WASM_REGION_SHARE");
-                region_shared = region_enabled && sh && *sh == '1';
+                region_shared = region_enabled && !(sh && *sh == '0');
             }
             fidx = region_enabled ? compile_region(h) : 0;
             if (!fidx) {
