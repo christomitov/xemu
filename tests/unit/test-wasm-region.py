@@ -19,7 +19,7 @@ SOURCE = (ROOT / "tcg/wasm32.c").read_text()
 
 
 def function(name):
-    match = re.search(r"^static [^\n]*\b" + name + r"\(", SOURCE, re.M)
+    match = re.search(r"^(?:static )?[^\n]*\b" + name + r"\(", SOURCE, re.M)
     assert match, name
     brace = SOURCE.index("{", match.start())
     tokens = re.finditer(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
@@ -124,6 +124,13 @@ static void fixture(int id, int successor)
     bb_bytes(&sec, "\x60\x00\x01\x7f", 4);
     bb_bytes(&sec, "\x60\x02\x7f\x7f\x01\x7f", 6);
     bb_section(&mod, 1, &sec);
+    if (wasm32_tlb_hint_enabled()) {
+        /* Catch overlap between hint slots and the region's routing locals. */
+        bb_u8(&body, 0x41); bb_sleb(&body, 0xabcdef);
+        bb_u8(&body, 0x21); bb_uleb(&body, WASM_TLB_HINT_PTR_LOCAL);
+        bb_u8(&body, 0x41); bb_sleb(&body, 7);
+        bb_u8(&body, 0x21); bb_uleb(&body, WASM_TLB_HINT_MMU_LOCAL);
+    }
     bb_u8(&body, 0x03); bb_u8(&body, 0x40); /* own TB loop */
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
@@ -158,8 +165,10 @@ static uint32_t run(int id, int f)
     WasmContext ctx = { .tb_ptr = &headers[id], .do_init = 1 };
     return ((uint32_t (*)(WasmContext *))(uintptr_t)f)(&ctx);
 }
-int main(void)
+int main(int argc, char **argv)
 {
+    assert(argc == 2);
+    setenv("XEMU_WASM_TLB_HINT", argv[1], 1);
     for (int i = 0; i < 8; i++) fixture(i, i % 2 == 0 ? i + 1 : -1);
     int ab = compile_region(&headers[0]);
     int cd = compile_region(&headers[2]);
@@ -239,7 +248,8 @@ int main(void)
 
 def main():
     defines = "\n".join(re.findall(r"^#define REGION_[^\n]*", SOURCE, re.M))
-    names = ["bb_need", "bb_u8", "bb_bytes", "bb_uleb", "bb_sleb", "bb_name",
+    names = ["wasm32_tlb_hint_enabled", "bb_need", "bb_u8", "bb_bytes",
+             "bb_uleb", "bb_sleb", "bb_name",
              "bb_section", "rd_uleb", "tb_helper_types", "tb_link_target",
              "region_leb", "region_cfg", "region_member_ok", "bb_count",
              "region_guard", "region_shared_guard", "add_instance",
@@ -256,8 +266,9 @@ def main():
                         "-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction",
                         "-sEXIT_RUNTIME=1", str(src), "-o", str(out)],
                        check=True)
-        subprocess.run([*shlex.split(os.environ.get("NODE", "node")), str(out)],
-                       check=True, timeout=30)
+        for hint in [0, 1]:
+            subprocess.run([*shlex.split(os.environ.get("NODE", "node")),
+                            str(out), str(hint)], check=True, timeout=30)
 
 
 if __name__ == "__main__":
