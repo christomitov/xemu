@@ -76,10 +76,17 @@ typedef struct WgpuPipelineKey {
 } WgpuPipelineKey;
 
 typedef struct WgpuPipelineBinding WgpuPipelineBinding;
+typedef struct WgpuAsyncPipeline {
+    WGPURenderPipeline pipeline;
+    WGPUFuture future;
+    int status;                 /* 0 compiling, 1 ready, -1 failed */
+} WgpuAsyncPipeline;
+
 struct WgpuPipelineBinding {
     LruNode node;
     WgpuPipelineKey key;
     WGPURenderPipeline pipeline;
+    WgpuAsyncPipeline *async;   /* createRenderPipelineAsync in flight */
     unsigned int draw_time;
     WGPUColor blend_constant;
     uint32_t stencil_ref;

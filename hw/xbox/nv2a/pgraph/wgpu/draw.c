@@ -401,6 +401,7 @@ static void pipeline_cache_entry_init(Lru *lru, LruNode *node,
 {
     WgpuPipelineBinding *snode = container_of(node, WgpuPipelineBinding, node);
     snode->pipeline = NULL;
+    snode->async = NULL;
     snode->draw_time = 0;
     snode->cull_all = false;
     snode->stencil_ref = 0;
@@ -418,6 +419,13 @@ static void pipeline_cache_entry_post_evict(Lru *lru, LruNode *node)
     if (snode->pipeline) {
         wgpuRenderPipelineRelease(snode->pipeline);
         snode->pipeline = NULL;
+    }
+    if (snode->async) {
+        if (snode->async->status == 1) {
+            wgpuRenderPipelineRelease(snode->async->pipeline);
+            g_free(snode->async);
+        }   /* still compiling: the callback owns it (leaked on purpose) */
+        snode->async = NULL;
     }
     if (ds->pipeline_binding == snode) {
         ds->pipeline_binding = NULL;
@@ -720,6 +728,38 @@ static void init_pipeline_key(PGRAPHState *pg, WgpuPipelineKey *key,
     }
 }
 
+/* XEMU_WASM_ASYNC_PIPELINES=1: compile render pipelines in the background */
+static bool async_pipelines_enabled(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_ASYNC_PIPELINES");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static void on_pipeline_created(WGPUCreatePipelineAsyncStatus status,
+                                WGPURenderPipeline pipeline,
+                                WGPUStringView message, void *u1, void *u2)
+{
+    WgpuAsyncPipeline *a = u1;
+    if (status == WGPUCreatePipelineAsyncStatus_Success) {
+        a->pipeline = pipeline;
+        a->status = 1;
+    } else {
+        fprintf(stderr, "[wgpu] async pipeline failed: %.*s\n",
+                message.length == WGPU_STRLEN ? (int)strlen(message.data) :
+                                                (int)message.length,
+                message.data ? message.data : "");
+        a->status = -1;
+    }
+}
+
 static void create_pipeline(PGRAPHState *pg, uint32_t topology)
 {
     NV2AState *d = container_of(pg, NV2AState, pgraph);
@@ -753,6 +793,26 @@ static void create_pipeline(PGRAPHState *pg, uint32_t topology)
 
     LruNode *node = lru_lookup(&ds->pipeline_cache, hash, &key);
     WgpuPipelineBinding *snode = container_of(node, WgpuPipelineBinding, node);
+    bool force_sync = false;
+    if (!snode->pipeline && snode->async) {
+        WgpuAsyncPipeline *a = snode->async;
+        if (!a->status) {
+            WGPUFutureWaitInfo info = { .future = a->future };
+            wgpuInstanceWaitAny(r->instance, 1, &info, 0);
+        }
+        if (!a->status) {
+            /* still compiling off the GPU timeline: skip this draw */
+            ds->pipeline_binding = NULL;
+            return;
+        }
+        snode->async = NULL;
+        if (a->status == 1) {
+            snode->pipeline = a->pipeline;
+        } else {
+            force_sync = true;      /* failed in the background: retry inline */
+        }
+        g_free(a);
+    }
     if (snode->pipeline) {
         ds->pipeline_binding_changed = ds->pipeline_binding != snode;
         ds->pipeline_binding = snode;
@@ -978,8 +1038,26 @@ static void create_pipeline(PGRAPHState *pg, uint32_t topology)
         .fragment = &fragment,
     };
 
-    snode->pipeline = wgpuDeviceCreateRenderPipeline(r->device, &desc);
+    XSTAT_INC(n_pipeline_gen);
     snode->draw_time = pg->draw_time;
+    if (async_pipelines_enabled() && !force_sync) {
+        /*
+         * A first use of a new pipeline made Chrome compile it on the GPU
+         * timeline: every later readback waited for it (~30 ms each when a
+         * game fires its first shot). Compile in the background and skip
+         * the draws that need it until it is ready.
+         */
+        WgpuAsyncPipeline *a = g_new0(WgpuAsyncPipeline, 1);
+        a->future = wgpuDeviceCreateRenderPipelineAsync(
+            r->device, &desc,
+            (WGPUCreateRenderPipelineAsyncCallbackInfo){
+                .mode = WGPUCallbackMode_WaitAnyOnly,
+                .callback = on_pipeline_created, .userdata1 = a });
+        snode->async = a;
+        ds->pipeline_binding = NULL;
+        return;
+    }
+    snode->pipeline = wgpuDeviceCreateRenderPipeline(r->device, &desc);
 
     ds->pipeline_binding = snode;
     ds->pipeline_binding_changed = true;
