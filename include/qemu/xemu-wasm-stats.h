@@ -29,6 +29,16 @@
     X(n_jit_instances)   /* live wasm modules (gauge) */                     \
     X(n_jit_entries)     /* XEMU_WASM_JIT_ENTRY_PROF: dispatcher calls */     \
     X(n_jit_alias_entries) /* ... through a shared non-root member */        \
+    /* Same opt-in flag: generated returns, not internal TB transitions. */ \
+    X(n_jit_exit_direct) /* live goto_tb target outside self/region/IC */    \
+    X(n_jit_exit_ptr)    /* nonnull goto_ptr outside self/region/IC */       \
+    X(n_jit_exit_ptr_null) /* goto_ptr lookup failed: back to cpu-exec */    \
+    X(n_jit_exit_chain0) /* exit_tb with an unchained slot 0 */              \
+    X(n_jit_exit_chain1) /* exit_tb with an unchained slot 1 */              \
+    X(n_jit_exit_requested) /* exit_tb: icount/interrupt request */          \
+    X(n_jit_exit_plain)  /* exit_tb(NULL, 0), no chain proposed */           \
+    X(n_jit_exit_other)  /* unexpected exit_tb reason, still accounted */    \
+    X(n_jit_noreturn)    /* auxiliary: NO_RETURN helper calls, not returns */ \
     X(n_jit_evict)       /* modules dropped at the instance cap */           \
     X(n_jit_relink)      /* modules re-instantiated with fresh links */      \
     X(n_tb_linked)       /* TB transitions via a successor link */           \
