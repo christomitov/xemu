@@ -174,6 +174,7 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 
 /* Wasm opcodes */
 #define W_UNREACHABLE   0x00
+#define W_BLOCK         0x02
 #define W_LOOP          0x03
 #define W_IF            0x04
 #define W_ELSE          0x05
@@ -224,6 +225,7 @@ static WasmTBHeader *cur_hdr;   /* header of the TB being generated */
 #define W_I64_CONST     0x42
 #define W_I32_EQZ       0x45
 #define W_I32_EQ        0x46
+#define W_I32_LT_U      0x49
 #define W_I32_NE        0x47
 #define W_I64_EQZ       0x50
 #define W_I64_LE_U      0x58
@@ -368,9 +370,21 @@ static void wasm_uleb(TCGContext *s, uint32_t v)
     } while (v);
 }
 
-/* call imported helper @idx; helper indices get a patchable 5-byte LEB */
+/* No hint survives a C boundary, including nonsuspending helper calls. */
+static void wasm_tlb_hint_drop(TCGContext *s)
+{
+    if (wasm32_tlb_hint_enabled()) {
+        wasm8(s, W_I32_CONST);
+        wasm8(s, 0);
+        wasm8(s, W_LOCAL_SET);
+        wasm_uleb(s, WASM_TLB_HINT_MMU_LOCAL);
+    }
+}
+
+/* All ordinary imported calls use this path; helper LEBs are relocatable. */
 static void wasm_call_idx(TCGContext *s, int idx)
 {
+    wasm_tlb_hint_drop(s);
     wasm8(s, 0x10);             /* call */
     if (idx < HELPER_IDX_START) {
         wasm_uleb(s, idx);
@@ -1341,7 +1355,7 @@ static void gen_func_type(const TCGHelperInfo *info)
 /* If Asyncify is unwinding the stack, return from the TB function now. */
 static void wasm_handle_unwinding(TCGContext *s)
 {
-    wasm_var(s, W_CALL, CHECK_UNWINDING_IDX);
+    wasm_call_idx(s, CHECK_UNWINDING_IDX);
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     wasm_jit_phase(s, 1, NULL);
@@ -1659,6 +1673,26 @@ static bool wasm_tlb_fast(void)
 #endif
 }
 
+/* Expected tag, retaining the full original span/alignment check. */
+static void wasm_tlb_compare(TCGContext *s, unsigned a_mask, unsigned s_mask)
+{
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    if (a_mask < s_mask) {
+        wasm_i32_const(s, s_mask - a_mask);
+        wasm8(s, W_I32_ADD);
+    }
+    wasm_i32_const(s, (uint32_t)TARGET_PAGE_MASK | a_mask);
+    wasm8(s, W_I32_AND);
+}
+
+static void wasm_tlb_host(TCGContext *s)
+{
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBEntry, addend));
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm8(s, W_I32_ADD);
+}
+
 /*
  * Guest memory access: inline TLB lookup, helper call on a miss.
  *
@@ -1677,8 +1711,9 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     int table_ofs = fast_ofs + offsetof(CPUTLBDescFast, table);
     int cmp_ofs = is_ld ? offsetof(CPUTLBEntry, addr_read)
                         : offsetof(CPUTLBEntry, addr_write);
-    uint32_t compare_mask = (uint32_t)TARGET_PAGE_MASK | a_mask;
     bool fast = wasm_tlb_fast();
+    bool hint = wasm32_tlb_hint_enabled();
+    unsigned mmu_key = get_mmuidx(oi) + 1;
 
     QEMU_BUILD_BUG_ON(sizeof(((CPUTLBEntry *)0)->addr_read) != 4);
     QEMU_BUILD_BUG_ON(sizeof(vaddr) != 4);
@@ -1688,6 +1723,48 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
         wasm_i32_const(s, 0);
         wasm_var(s, W_LOCAL_SET, L32_1);
         return;
+    }
+
+    if (hint) {
+        /*
+         * Cache a location, never permissions or a translation. Table
+         * allocation/replacement is owner-vCPU work; every imported call
+         * drops the hint before that work could execute. Other threads
+         * can still revoke write permission, so the tag is always live.
+         */
+        wasm_get_r32(s, addr);
+        wasm_var(s, W_LOCAL_SET, L32_2);
+        wasm8(s, W_BLOCK);
+        wasm8(s, W_BLOCKTYPE_VOID);
+        wasm_var(s, W_LOCAL_GET, WASM_TLB_HINT_MMU_LOCAL);
+        wasm_i32_const(s, mmu_key);
+        wasm8(s, W_I32_EQ);
+        if (a_mask < s_mask) {
+            /*
+             * The full lookup hashes the START page, but compares against
+             * the adjusted END page. A hint might instead name that next
+             * page: require the entire access to fit before trying it.
+             */
+            wasm_var(s, W_LOCAL_GET, L32_2);
+            wasm_i32_const(s, ~(uint32_t)TARGET_PAGE_MASK);
+            wasm8(s, W_I32_AND);
+            wasm_i32_const(s, (1u << TARGET_PAGE_BITS) - s_mask);
+            wasm8(s, W_I32_LT_U);
+            wasm8(s, W_I32_AND);
+        }
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+        wasm_var(s, W_LOCAL_GET, WASM_TLB_HINT_PTR_LOCAL);
+        wasm_var(s, W_LOCAL_TEE, L32_0);
+        wasm_mem(s, W_I32_LOAD, cmp_ofs);
+        /* The span already fits; compare the start page and alignment. */
+        wasm_tlb_compare(s, a_mask, a_mask);
+        wasm8(s, W_I32_EQ);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+        wasm_tlb_host(s);
+        wasm_var(s, W_LOCAL_SET, L32_1);
+        wasm_br(s, 2); /* both ifs, then the lookup block */
+        wasm8(s, W_END);
+        wasm8(s, W_END);
     }
 
     if (fast) {
@@ -1746,24 +1823,24 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     wasm_var(s, W_LOCAL_TEE, L32_0);
     wasm_mem(s, W_I32_LOAD, cmp_ofs);
 
-    wasm_var(s, W_LOCAL_GET, L32_2);
-    if (a_mask < s_mask) {
-        wasm_i32_const(s, s_mask - a_mask);
-        wasm8(s, W_I32_ADD);
-    }
-    wasm_i32_const(s, compare_mask);
-    wasm8(s, W_I32_AND);
+    wasm_tlb_compare(s, a_mask, s_mask);
     wasm8(s, W_I32_EQ);
 
     wasm_if_hint(s, W_TYPE_I32, true);    /* TLB hit */
-    wasm_var(s, W_LOCAL_GET, L32_0);
-    wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBEntry, addend));
-    wasm_var(s, W_LOCAL_GET, L32_2);
-    wasm8(s, W_I32_ADD);
+    if (hint) {
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_var(s, W_LOCAL_SET, WASM_TLB_HINT_PTR_LOCAL);
+        wasm_i32_const(s, mmu_key);
+        wasm_var(s, W_LOCAL_SET, WASM_TLB_HINT_MMU_LOCAL);
+    }
+    wasm_tlb_host(s);
     wasm8(s, W_ELSE);
     wasm_i32_const(s, 0);
     wasm8(s, W_END);
     wasm_var(s, W_LOCAL_SET, L32_1);
+    if (hint) {
+        wasm8(s, W_END);
+    }
 }
 
 static const void *qemu_ld_helper_ptr(MemOp mop)
@@ -2083,6 +2160,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
 #ifdef EMSCRIPTEN
         wasm_count(s, &xemu_wasm_stats.n_tb_linked);
 #endif
+        wasm_tlb_hint_drop(s);
         wasm_var(s, W_LOCAL_GET, CTX_IDX);
         wasm8(s, W_RETURN_CALL);
         wasm_uleb(s, CHAIN_S0_IDX + slot);
@@ -3426,7 +3504,6 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 #define W_F32_REINTERPRET_I32 0xbe
 #define W_F64_REINTERPRET_I64 0xbf
 #define W_F64_CONST         0x44
-#define W_I32_LT_U          0x49
 
 #ifdef EMSCRIPTEN
 #define W_I32_LOAD8_U_   0x2d
@@ -4442,7 +4519,7 @@ static void tcg_out_tb_start(TCGContext *s)
 #endif
         wasm_var(s, W_LOCAL_GET, CTX_IDX);
         wasm_ctx_load_i32(s, WASM_CTX_REWIND_FUNC_OFF);
-        wasm_var(s, W_CALL, CHAIN_CALL_IDX);
+        wasm_call_idx(s, CHAIN_CALL_IDX);
         wasm8(s, W_RETURN);
         wasm8(s, W_END);
     } else if (wasm_link_enabled()) {
@@ -4458,7 +4535,7 @@ static void tcg_out_tb_start(TCGContext *s)
         wasm_ctx_load_i32(s, WASM_CTX_TB_PTR_OFF);
         wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
         wasm_mem(s, W_I32_LOAD, WASM_INSTANCE_FIDX_OFF);
-        wasm_var(s, W_CALL, CHAIN_CALL_IDX);
+        wasm_call_idx(s, CHAIN_CALL_IDX);
         wasm8(s, W_RETURN);
         wasm8(s, W_END);
     }
@@ -4473,6 +4550,9 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     pro_end_pos = wasm_code_len();
     wasm8(s, W_END);
+
+    /* Also runs for copied region-member entries and actual B rewinds. */
+    wasm_tlb_hint_drop(s);
 
     /* entering a TB: profile as "jit" (a self loop marks itself "spin") */
     wasm_phase(s, NULL);
@@ -4562,6 +4642,9 @@ static int tcg_out_tb_end(TCGContext *s)
     };
     uint8_t *sec, *body;
     int code_len;
+    bool tlb_hint = wasm32_tlb_hint_enabled();
+    const char *locals = tlb_hint ? WASM_TB_HINT_LOCALS : WASM_TB_LOCALS;
+    unsigned locals_len = WASM_TB_LOCALS_LEN + (tlb_hint ? 2 : 0);
 
     wasm8(s, W_END);            /* end $top */
     wasm8(s, W_UNREACHABLE);
@@ -4881,7 +4964,7 @@ static int tcg_out_tb_end(TCGContext *s)
                 mod_uleb(&w, nha);
                 for (int i = 0; i < nrel_a; i++) {
                     if (rel_a[i].kind == WASM_RELOC_HINT) {
-                        mod_uleb(&w, WASM_TB_LOCALS_LEN + rel_a[i].off);
+                        mod_uleb(&w, locals_len + rel_a[i].off);
                         mod_uleb(&w, 1);
                         mod8(&w, rel_a[i].arg);
                     }
@@ -4892,7 +4975,7 @@ static int tcg_out_tb_end(TCGContext *s)
                 mod_uleb(&w, nhb);
                 for (RelocNode *p = relocs; p; p = p->next) {
                     if (p->r.kind == WASM_RELOC_HINT) {
-                        mod_uleb(&w, WASM_TB_LOCALS_LEN + p->r.off);
+                        mod_uleb(&w, locals_len + p->r.off);
                         mod_uleb(&w, 1);
                         mod8(&w, p->r.arg);
                     }
@@ -4907,16 +4990,19 @@ static int tcg_out_tb_end(TCGContext *s)
     mod_uleb(&w, 2);
     /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
-    QEMU_BUILD_BUG_ON(sizeof("\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e") - 1 !=
-                      WASM_TB_LOCALS_LEN);
+    QEMU_BUILD_BUG_ON(sizeof(WASM_TB_LOCALS) - 1 != WASM_TB_LOCALS_LEN);
+    QEMU_BUILD_BUG_ON(sizeof(WASM_TB_HINT_LOCALS) - 1 !=
+                      WASM_TB_LOCALS_LEN + 2);
+    QEMU_BUILD_BUG_ON(WASM_TLB_HINT_PTR_LOCAL != LBLOCK + 1);
+    QEMU_BUILD_BUG_ON(WASM_TLB_HINT_MMU_LOCAL != LBLOCK + 2);
     body = mod_uleb5_placeholder(&w);
-    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", WASM_TB_LOCALS_LEN);
+    mod_bytes(&w, locals, locals_len);
     h->body_off = w.p - h->wasm_ptr;
     h->body_len = lenA - 1;             /* without the function's "end" */
     mod_bytes(&w, ca, lenA);
     mod_uleb5_patch(&w, body, w.p - (body + 5));
     body = mod_uleb5_placeholder(&w);
-    mod_bytes(&w, "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", WASM_TB_LOCALS_LEN);
+    mod_bytes(&w, locals, locals_len);
     h->body_b_off = w.p - h->wasm_ptr;
     h->body_b_len = lenB - 1;
     mod_bytes(&w, cb, lenB);

@@ -105,7 +105,11 @@ enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3,
        WASM_RELOC_RETCALL = 4,
        /* 5-byte IC operand: depth=0 slot, 1 header global, 2 countdown. */
        WASM_RELOC_IC = 5 };
-#define WASM_TB_LOCALS_LEN 9    /* locals declaration of a TB function */
+#define WASM_TB_LOCALS_LEN 9    /* without the optional TLB hint locals */
+#define WASM_TB_LOCALS "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e"
+#define WASM_TB_HINT_LOCALS "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e\x02\x7f"
+#define WASM_TLB_HINT_PTR_LOCAL 25
+#define WASM_TLB_HINT_MMU_LOCAL 26
 #define WASM_IC_SELF_GLOBAL 17 /* after registers and BLOCK_PTR */
 #define WASM_IC_HDR_GLOBAL  18 /* pairs of header/miss-countdown globals */
 typedef struct WasmReloc {
@@ -161,6 +165,7 @@ QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
 extern int wasm32_jit_threshold;
 bool wasm32_ic_enabled(void);
 bool wasm32_ic_for_exit(bool indirect);
+bool wasm32_tlb_hint_enabled(void);
 
 extern __thread WasmContext wasm_ctx;
 

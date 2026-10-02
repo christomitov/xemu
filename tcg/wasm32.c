@@ -94,6 +94,17 @@ bool wasm32_ic_enabled(void)
     return wasm32_ic_mode() != 0;
 }
 
+bool wasm32_tlb_hint_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_TLB_HINT");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+}
+
 bool wasm32_ic_for_exit(bool indirect)
 {
     int mode = wasm32_ic_mode();
@@ -530,8 +541,9 @@ static int compile_tb(WasmTBHeader *h, int depth)
 #define REGION_DEPTH_MAX    96
 #define REGION_NUM_GLOBALS  17      /* TCG regs + BLOCK_PTR (backend) */
 #define REGION_HELPER_START 4       /* HELPER_IDX_START (backend) */
-#define REGION_CUR_LOCAL    25      /* after the TB locals (backend) */
-#define REGION_INST_LOCAL   26      /* shared-region ownership probe */
+/* Optional invocation-local TLB hints precede the region-only locals. */
+#define REGION_CUR_LOCAL    (25 + (wasm32_tlb_hint_enabled() ? 2 : 0))
+#define REGION_INST_LOCAL   (REGION_CUR_LOCAL + 1)
 #define REGION_L32_0        1
 
 static int region_enabled = -1;
@@ -1009,8 +1021,11 @@ static int compile_region(WasmTBHeader *h)
     bb_section(&mod, 7, &sec);
 
     /* the function: TB locals + cur (+ ownership scratch for shared groups) */
+    bool tlb_hint = wasm32_tlb_hint_enabled();
     bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
-    bb_u8(&code, region_shared ? 2 : 1); bb_u8(&code, 0x7f);
+    bb_u8(&code, (region_shared ? 2 : 1) + (tlb_hint ? 2 : 0));
+    bb_u8(&code, 0x7f);
+    unsigned code_start = code.len;
     if (region_shared) {
         /*
          * Fresh calls were ownership-validated by the dispatcher/IC. During
@@ -1115,7 +1130,8 @@ static int compile_region(WasmTBHeader *h)
     bb_u8(&code, 0x0b);                             /* end func */
     if (region_shared &&
         (code.len > REGION_ENTRY_MAX ||
-         !region_cfg(code.p + 11, code.len - 12, &score, &max_depth))) {
+         !region_cfg(code.p + code_start, code.len - code_start - 1,
+                     &score, &max_depth))) {
         XSTAT_INC(n_region_cap);
         g_free(mod.p);
         g_free(sec.p);
@@ -1129,7 +1145,8 @@ static int compile_region(WasmTBHeader *h)
     for (int i = 0; i < n; i++) {
         const uint8_t *body = m[i]->wasm_ptr + m[i]->body_b_off;
         uint32_t pos = 0;
-        bb_bytes(&bcode[i], "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
+        bb_bytes(&bcode[i], tlb_hint ? WASM_TB_HINT_LOCALS : WASM_TB_LOCALS,
+                 WASM_TB_LOCALS_LEN + (tlb_hint ? 2 : 0));
         for (uint32_t r = 0; r < m[i]->reloc_b_count; r++) {
             const WasmReloc *rl = &m[i]->reloc_b_ptr[r];
             bb_bytes(&bcode[i], body + pos, rl->off - pos);
