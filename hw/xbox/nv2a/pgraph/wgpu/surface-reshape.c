@@ -36,26 +36,46 @@ bool pgraph_wgpu_is_linear_bgra(const SurfaceBinding *s)
 }
 
 /*
+ * A reshape source may pad its rows (pitch > width * 4): the padding was
+ * never rendered, so it stays CPU-current in the prefilled destination.
+ * E.g. Rainbow Six 3's 40x30 bloom target has a 192-byte pitch.
+ */
+bool pgraph_wgpu_is_linear_bgra_src(const SurfaceBinding *s)
+{
+    return s->color && !s->swizzle && s->width && s->height &&
+           s->host_fmt.format == WGPUTextureFormat_BGRA8Unorm &&
+           s->host_fmt.conv == WGPU_SURFACE_CONV_NONE &&
+           s->fmt.bytes_per_pixel == 4 &&
+           s->host_fmt.host_bytes_per_pixel == 4 &&
+           s->pitch % 4 == 0 && s->pitch >= (uint64_t)s->width * 4 &&
+           s->size == (uint64_t)s->pitch * s->height &&
+           s->size <= UINT32_MAX;
+}
+
+/*
  * Coordinates name guest words, not image positions. textureLoad + an
  * unblended BGRA8 render preserves all four UNORM8 bytes. Discard preserves
  * destination bytes outside the source interval (including partial rows).
  * p: source base, destination base, destination pitch, opaque alpha;
- * all addresses/pitches are in 32-bit guest words relative to a common base.
+ * q.x: source pitch (words); padding words past the image width discard.
+ * All addresses/pitches are in 32-bit guest words relative to a common base.
  */
 static const char reshape_wgsl[] =
     "@group(0) @binding(0) var src: texture_2d<f32>;\n"
-    "@group(0) @binding(1) var<uniform> p: vec4u;\n"
+    "struct P { p: vec4u, q: vec4u }\n"
+    "@group(0) @binding(1) var<uniform> u: P;\n"
     "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
     "    var v = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));\n"
     "    return vec4f(v[i], 0.0, 1.0);\n"
     "}\n"
     "@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {\n"
+    "    let p = u.p;\n"
     "    let dim = textureDimensions(src);\n"
     "    let a = p.y + u32(pos.y) * p.z + u32(pos.x);\n"
     "    if (a < p.x) { discard; }\n"
     "    let i = a - p.x;\n"
-    "    if (i >= dim.x * dim.y) { discard; }\n"
-    "    let xy = vec2u(i % dim.x, i / dim.x);\n"
+    "    let xy = vec2u(i % u.q.x, i / u.q.x);\n"
+    "    if (xy.x >= dim.x || xy.y >= dim.y) { discard; }\n"
     "    let c = textureLoad(src, vec2i(xy), 0);\n"
     "    return vec4f(c.rgb, select(c.a, 1.0, p.w != 0u));\n"
     "}\n";
@@ -71,7 +91,7 @@ static void init_reshape(PGRAPHWgpuState *r)
                        .viewDimension = WGPUTextureViewDimension_2D } },
         { .binding = 1, .visibility = WGPUShaderStage_Fragment,
           .buffer = { .type = WGPUBufferBindingType_Uniform,
-                      .minBindingSize = 16 } },
+                      .minBindingSize = 32 } },
     };
     r->surf.reshape_bgl = wgpuDeviceCreateBindGroupLayout(
         r->device, &(WGPUBindGroupLayoutDescriptor){
@@ -111,7 +131,8 @@ void pgraph_wgpu_reshape_surface(PGRAPHState *pg, const SurfaceBinding *src,
                                  bool opaque)
 {
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
-    assert(pg->surface_scale_factor == 1 && pgraph_wgpu_is_linear_bgra(src));
+    assert(pg->surface_scale_factor == 1 &&
+           pgraph_wgpu_is_linear_bgra_src(src));
     assert(width && height && src->view != dst);
     hwaddr base = MIN(src->vram_addr, dst_addr);
     assert((src->vram_addr - base) % 4 == 0 && (dst_addr - base) % 4 == 0);
@@ -132,8 +153,9 @@ void pgraph_wgpu_reshape_surface(PGRAPHState *pg, const SurfaceBinding *src,
      * of several reshapes in one encoder, but never overwrite earlier params.
      * Recorded commands retain buffers/bind groups after release, not destroy.
      */
-    uint32_t params[4] = {
+    uint32_t params[8] = {
         (uint32_t)src_start, (uint32_t)dst_start, width, opaque,
+        (uint32_t)(src->pitch / 4),
     };
     WGPUBuffer uniform = wgpuDeviceCreateBuffer(
         r->device, &(WGPUBufferDescriptor){
