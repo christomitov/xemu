@@ -725,6 +725,67 @@ static void wasm_phase(TCGContext *s, const char *name)
 #endif
 }
 
+/*
+ * Opt-in generated-code attribution: 1 = inline helpers/call-site glue,
+ * 2 = inline SoftMMU. Neither adds code when disabled. The extra stores can
+ * perturb optimization and region grouping: compare an uninstrumented run.
+ * Scopes also cover work inside self loops, replacing the heuristic "spin"
+ * tag. For overhead, compare throughput, not spin-subtracted phase busy time.
+ */
+static unsigned wasm_jit_profile(void)
+{
+#ifdef EMSCRIPTEN
+    static int flags = -1;
+
+    if (flags < 0) {
+        const char *e = getenv("XEMU_WASM_JIT_PROFILE");
+        flags = e ? atoi(e) & 3 : 0;
+    }
+    return flags;
+#else
+    return 0;
+#endif
+}
+
+static void wasm_jit_phase(TCGContext *s, unsigned mask, const char *name)
+{
+    if (wasm_jit_profile() & mask) {
+        wasm_phase(s, name);
+    }
+}
+
+static const char *wasm_callsite_phase_name(const TCGHelperInfo *info)
+{
+    const char *name = wasm_helper_phase_name(info);
+
+    if (name) {
+        if (!strcmp(name, "gvec")) {
+            return "jit:gvec";
+        }
+        if (!strcmp(name, "x87")) {
+            return "jit:x87";
+        }
+        if (!strcmp(name, "mmx")) {
+            return "jit:mmx";
+        }
+        if (!strcmp(name, "fpu_state")) {
+            return "jit:fpu_state";
+        }
+    }
+    return "jit:call";
+}
+
+/* @reset replaces an existing post-helper NULL store, even when disabled. */
+static void wasm_callsite_phase(TCGContext *s, const TCGHelperInfo *info,
+                                bool reset)
+{
+    if (wasm_jit_profile() & 1) {
+        wasm_phase(s, wasm_callsite_phase_name(info));
+    } else if (reset) {
+        wasm_phase(s, NULL);
+    }
+}
+
 /* a TB execution that never leaves generated code (self loop) */
 static void wasm_count_tb_exec(TCGContext *s)
 {
@@ -1282,6 +1343,7 @@ static void wasm_handle_unwinding(TCGContext *s)
     wasm_var(s, W_CALL, CHECK_UNWINDING_IDX);
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    wasm_jit_phase(s, 1, NULL);
     wasm_i32_const(s, 0);
     wasm8(s, W_RETURN);
     wasm8(s, W_END);
@@ -1405,6 +1467,7 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_count(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
 #endif
+    wasm_jit_phase(s, 1, "jit:i128");
     /* fast attempt */
     wasm_push_call_args(s, typemask, nargs);
     wasm_call_idx(s, fast_idx);
@@ -1415,12 +1478,13 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    wasm_callsite_phase(s, info, false);
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
     wasm_save_regs(s);
     wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
-    wasm_phase(s, NULL);
+    wasm_callsite_phase(s, info, true);
     if (!ld) {
         /* st_i128 returns nothing */
     }
@@ -1429,6 +1493,7 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
 
     /* both paths left the result at the call stack slots */
     wasm_call_results(s, typemask & 7);
+    wasm_jit_phase(s, 1, NULL);
     return true;
 }
 #endif
@@ -1478,6 +1543,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     if (may_suspend) {
         wasm_new_resumable_block(s);
     }
+    wasm_callsite_phase(s, info, false);
     wasm_set_tci_tb_ptr(s);
 
     wasm_push_call_args(s, typemask, nargs);
@@ -1493,11 +1559,12 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
 #endif
     wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
-    wasm_phase(s, NULL);
+    wasm_callsite_phase(s, info, true);
     wasm_call_results(s, rettype);
     if (may_suspend) {
         wasm_handle_unwinding(s);
     }
+    wasm_jit_phase(s, 1, NULL);
 }
 
 /* Push a helper call's arguments (and the i128 result pointer) from the
@@ -1734,6 +1801,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
         [MO_UQ] = W_I64_LOAD,
     };
 
+    wasm_jit_phase(s, 2, "jit:ld");
     wasm_tlb_load(s, addr, oi, true);
 
     /* fast path */
@@ -1743,6 +1811,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_mem(s, ld_op[mop & MO_SSIZE], 0);
     wasm_set_r(s, data);
     wasm8(s, W_END);
+    wasm_jit_phase(s, 2, NULL);
 
     /*
      * slow path, in its own region: a rewind re-enters here with the
@@ -1777,6 +1846,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
         [MO_64] = W_I64_STORE,
     };
 
+    wasm_jit_phase(s, 2, "jit:st");
     wasm_tlb_load(s, addr, oi, false);
 
     wasm_var(s, W_LOCAL_GET, L32_1);
@@ -1785,6 +1855,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_get_r(s, data);
     wasm_mem(s, st_op[mop & MO_SIZE], 0);
     wasm8(s, W_END);
+    wasm_jit_phase(s, 2, NULL);
 
     wasm_new_resumable_block(s);
     wasm_var(s, W_LOCAL_GET, L32_1);
@@ -3449,6 +3520,7 @@ static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
         dh_typecode_void) {
         return false;
     }
+    wasm_jit_phase(s, 1, "jit:shufps");
     sse_arg(s, 3);
     wasm_var(s, W_LOCAL_SET, L32_0);
     shufps_lane(s, 1, 0);
@@ -3467,7 +3539,9 @@ static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
             gen_func_type(info);
         }
         wasm_push_call_args(s, info->typemask, 4);
+        wasm_jit_phase(s, 1, wasm_helper_phase_name(info));
         wasm_call_idx(s, func_idx);
+        wasm_jit_phase(s, 1, "jit:shufps");
         wasm_count(s, &xemu_wasm_stats.n_sse_checked);
         for (int k = 0; k < 4; k++) {
             sse_arg(s, 0);
@@ -3486,6 +3560,7 @@ static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
         wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
         wasm_count(s, &xemu_wasm_stats.n_sse_mismatch);
         wasm8(s, W_END);
+        wasm_jit_phase(s, 1, NULL);
         return true;
     }
     sse_arg(s, 0);
@@ -3501,6 +3576,7 @@ static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
     wasm_var(s, W_LOCAL_GET, L64_0);
     wasm8(s, W_I32_WRAP_I64);
     wasm_mem(s, W_I32_STORE, 12);
+    wasm_jit_phase(s, 1, NULL);
     return true;
 }
 
@@ -3543,6 +3619,7 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
         gen_func_type(info);
     }
 
+    wasm_jit_phase(s, 1, "jit:cc");
     sse_arg(s, 3);
     wasm_var(s, W_LOCAL_SET, L32_0);
     sse_arg(s, 0);
@@ -3602,7 +3679,7 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_push_call_args(s, typemask, nargs);
     wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
-    wasm_phase(s, NULL);
+    wasm_phase(s, (wasm_jit_profile() & 1) ? "jit:cc" : NULL);
     while (nest--) {
         wasm8(s, W_END);
     }
@@ -3612,7 +3689,9 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
         wasm_var(s, W_LOCAL_SET, L32_1);
         wasm_count(s, &xemu_wasm_stats.n_sse_checked);
         wasm_push_call_args(s, typemask, nargs);
+        wasm_jit_phase(s, 1, wasm_helper_phase_name(info));
         wasm_call_idx(s, func_idx);
+        wasm_jit_phase(s, 1, "jit:cc");
         wasm_var(s, W_LOCAL_GET, L32_1);
         wasm8(s, W_I32_NE);
         wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
@@ -3621,6 +3700,7 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
         wasm_var(s, W_LOCAL_GET, L32_1);
     }
     wasm_call_results(s, typemask & 7);
+    wasm_jit_phase(s, 1, NULL);
     return true;
 }
 
@@ -3686,6 +3766,7 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_count(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
 
+    wasm_jit_phase(s, 1, "jit:sse");
     /* helper(env, d, v, s): d.s0 = v.s0 OP s.s0; d.s1..3 = v.s1..3 */
     wasm_i32_const(s, 0);
     wasm_var(s, W_LOCAL_SET, L32_1);
@@ -3840,6 +3921,7 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
     }
     wasm8(s, W_END);
 
+    wasm_jit_phase(s, 1, NULL);
     /* fallback: the original helper call */
     wasm_new_resumable_block(s);
     if (enabled == 2) {
@@ -3860,13 +3942,15 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
         wasm8(s, W_I32_EQZ);
     }
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    wasm_callsite_phase(s, info, false);
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
     wasm_save_regs(s);
     wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
-    wasm_phase(s, NULL);
+    wasm_callsite_phase(s, info, true);
     wasm_handle_unwinding(s);
+    wasm_jit_phase(s, 1, NULL);
     wasm8(s, W_END);
     if (enabled == 2) {
         wasm_var(s, W_LOCAL_GET, L32_1);
