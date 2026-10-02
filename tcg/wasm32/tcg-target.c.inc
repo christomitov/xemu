@@ -517,6 +517,12 @@ static void wasm_save_regs(TCGContext *s)
     in_snapshot = false;
     wasm_var(s, W_LOCAL_GET, LBLOCK);
     wasm_var(s, W_GLOBAL_SET, BLOCK_PTR_IDX);
+    if (wasm32_ic_enabled()) {
+        /* A region member's standalone instance need not own these globals. */
+        wasm_var(s, W_LOCAL_GET, CTX_IDX);
+        wasm_var(s, W_GLOBAL_GET, WASM_IC_SELF_GLOBAL);
+        wasm_mem(s, W_I32_STORE, WASM_CTX_REWIND_FUNC_OFF);
+    }
 }
 
 /* Push a host address: register @base (i32) plus @offset. */
@@ -1705,9 +1711,85 @@ static void wasm_exit_tb(TCGContext *s, uintptr_t arg)
     wasm8(s, W_RETURN);
 }
 
+/* Patchable positive i32 constant/global index for a module-local IC site. */
+static void wasm_ic_operand(TCGContext *s, uint8_t op, unsigned site,
+                            unsigned part)
+{
+    unsigned value = part ? WASM_IC_HDR_GLOBAL + 2 * site + part - 1 : site;
+
+    wasm8(s, op);
+    wasm_add_reloc(WASM_RELOC_IC, site, part);
+    for (int i = 0; i < 5; i++) {
+        wasm8(s, (value & 0x7f) | (i < 4 ? 0x80 : 0));
+        value >>= 7;
+    }
+}
+
+/*
+ * Cache the already validated successor, not an unchecked guest PC. Direct
+ * exits still read their live chain slot; indirect exits still run the full
+ * frontend lookup (PC/CS/flags/generation/breakpoints, including CF_PCREL).
+ * Eviction/relink clears incoming caches before recycling a function index.
+ * The dispatcher alone fills misses, after checking instance ownership.
+ */
+static void wasm_ic_exit(TCGContext *s, bool indirect)
+{
+    unsigned site = cur_hdr->ic_count++;
+
+    tcg_debug_assert(site < 256); /* WasmReloc.arg */
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_ic_operand(s, W_GLOBAL_GET, site, 1);
+    wasm8(s, W_I32_EQ);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, WASM_TB_INSTANCE_OFF);
+    wasm_i32_const(s, 1);
+    wasm_mem(s, W_I32_STORE, WASM_INSTANCE_USED_OFF);
+    wasm_count_tb_exec(s);
+#ifdef EMSCRIPTEN
+    wasm_count(s, indirect ? &xemu_wasm_stats.n_ic_indirect_hit :
+                            &xemu_wasm_stats.n_ic_direct_hit);
+#endif
+    wasm_var(s, W_LOCAL_GET, CTX_IDX);
+    wasm_ic_operand(s, W_I32_CONST, site, 0);
+    wasm8(s, W_RETURN_CALL_INDIRECT);
+    wasm_uleb(s, 0); /* (ctx) -> i32 */
+    wasm_uleb(s, 0); /* this module's small cache table, not the C table */
+    wasm8(s, W_END);
+#ifdef EMSCRIPTEN
+    wasm_count(s, indirect ? &xemu_wasm_stats.n_ic_indirect_miss :
+                            &xemu_wasm_stats.n_ic_direct_miss);
+#endif
+    if (indirect) {
+        /*
+         * Polymorphic sites must not pay a JS/table update on every miss.
+         * Retry once per 256 misses; stable targets still get an immediate
+         * initial fill. Direct chain targets need no replacement throttle.
+         */
+        wasm_ic_operand(s, W_GLOBAL_GET, site, 2);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, true);
+        wasm_ic_operand(s, W_GLOBAL_GET, site, 2);
+        wasm_i32_const(s, -1);
+        wasm8(s, W_I32_ADD);
+        wasm_ic_operand(s, W_GLOBAL_SET, site, 2);
+        wasm_i32_const(s, 0);
+        wasm8(s, W_RETURN);
+        wasm8(s, W_END);
+        wasm_i32_const(s, 255);
+        wasm_ic_operand(s, W_GLOBAL_SET, site, 2);
+    }
+    wasm_var(s, W_LOCAL_GET, CTX_IDX);
+    wasm_var(s, W_GLOBAL_GET, WASM_IC_SELF_GLOBAL);
+    wasm_mem(s, W_I32_STORE, WASM_CTX_IC_SOURCE_OFF);
+    wasm_var(s, W_LOCAL_GET, CTX_IDX);
+    wasm_ic_operand(s, W_I32_CONST, site, 0);
+    wasm_mem(s, W_I32_STORE, WASM_CTX_IC_SLOT_OFF);
+}
+
 /*
  * Continue with the TB whose header is in L32_0: loop if it is this one,
- * else return to the dispatcher. Nested inside @depth "if"s of the region.
+ * else try the module-local cache before returning to the dispatcher.
+ * Nested inside @depth "if"s of the region.
  */
 static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
 {
@@ -1734,7 +1816,10 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
     wasm_mem(s, W_I32_STORE, WASM_CTX_TB_PTR_OFF);
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 1);
 
-    if (slot >= 0 && wasm_link_enabled()) {
+    if (wasm32_ic_enabled()) {
+        wasm_ic_exit(s, slot < 0);
+    }
+    if (slot >= 0 && wasm_link_enabled() && !wasm32_ic_enabled()) {
         uint32_t lh = (uint32_t)(uintptr_t)cur_hdr + WASM_TB_LINK_HDR_OFF + 4 * slot;
         uint32_t lf = (uint32_t)(uintptr_t)cur_hdr + WASM_TB_LINK_FIDX_OFF + 4 * slot;
         /*
@@ -4102,7 +4187,25 @@ static void tcg_out_tb_start(TCGContext *s)
 #ifdef EMSCRIPTEN
     wasm_count(s, &xemu_wasm_stats.n_jit_rewind);
 #endif
-    if (wasm_link_enabled()) {
+    if (wasm32_ic_enabled()) {
+        /*
+         * Rewind the module that actually saved the registers, even when
+         * its interrupted TB also occurs in this module (region overlap).
+         * No instance management occurs while generated code is suspended.
+         */
+        wasm_ctx_load_i32(s, WASM_CTX_REWIND_FUNC_OFF);
+        wasm_var(s, W_GLOBAL_GET, WASM_IC_SELF_GLOBAL);
+        wasm8(s, W_I32_NE);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+#ifdef EMSCRIPTEN
+        wasm_count(s, &xemu_wasm_stats.n_ic_rewind);
+#endif
+        wasm_var(s, W_LOCAL_GET, CTX_IDX);
+        wasm_ctx_load_i32(s, WASM_CTX_REWIND_FUNC_OFF);
+        wasm_var(s, W_CALL, CHAIN_CALL_IDX);
+        wasm8(s, W_RETURN);
+        wasm8(s, W_END);
+    } else if (wasm_link_enabled()) {
         /*
          * The dispatcher re-calls the first TB of a chain; if a TB it linked
          * to (ctx.tb_ptr) is the one that unwound, rewind that one instead.
@@ -4315,7 +4418,16 @@ static int tcg_out_tb_end(TCGContext *s)
 
     /* import section: memory, helper.u, chain.s0/s1/call, helpers */
     sec = mod_section_begin(&w, 2);
-    mod_uleb(&w, 5 + helpers_num);
+    mod_uleb(&w, 5 + helpers_num + (h->ic_count != 0));
+    if (h->ic_count) {
+        mod_name(&w, "env");
+        mod_name(&w, "ic_table");
+        mod8(&w, 0x01); /* table */
+        mod8(&w, 0x70); /* funcref */
+        mod8(&w, 0x01); /* minimum and maximum */
+        mod_uleb(&w, h->ic_count);
+        mod_uleb(&w, h->ic_count);
+    }
     mod_name(&w, "env");
     mod_name(&w, "buffer");
     mod8(&w, 0x02);             /* memory */
@@ -4475,18 +4587,40 @@ static int tcg_out_tb_end(TCGContext *s)
 
     /* global section: mutable i64 = 0 */
     sec = mod_section_begin(&w, 6);
-    mod_uleb(&w, NUM_GLOBALS);
+    unsigned ic_globals = wasm32_ic_enabled() ? 1 + 2 * h->ic_count : 0;
+    QEMU_BUILD_BUG_ON(NUM_GLOBALS != WASM_IC_SELF_GLOBAL);
+    mod_uleb(&w, NUM_GLOBALS + ic_globals);
     for (int i = 0; i < NUM_GLOBALS; i++) {
         mod_bytes(&w, "\x7e\x01\x42\x00\x0b", 5);
+    }
+    if (ic_globals) {
+        mod_bytes(&w, "\x7f\x01\x41\x00\x0b", 5); /* self function ID */
+        for (unsigned i = 0; i < h->ic_count; i++) {
+            /* -1 cannot equal a TB header (nor the NULL lookup result). */
+            mod_bytes(&w, "\x7f\x01\x41\x7f\x0b", 5);
+            mod_bytes(&w, "\x7f\x01\x41\x00\x0b", 5); /* miss countdown */
+        }
     }
     mod_section_end(&w, sec);
 
     /* export section */
     sec = mod_section_begin(&w, 7);
-    mod_uleb(&w, 1);
+    mod_uleb(&w, 1 + (ic_globals ? 1 + h->ic_count : 0));
     mod_name(&w, "start");
     mod8(&w, 0x00);
     mod_uleb(&w, func_a);
+    if (ic_globals) {
+        mod_name(&w, "ic_self");
+        mod8(&w, 0x03); /* global */
+        mod_uleb(&w, WASM_IC_SELF_GLOBAL);
+        for (unsigned i = 0; i < h->ic_count; i++) {
+            char name[16];
+            snprintf(name, sizeof(name), "ic%u", i);
+            mod_name(&w, name);
+            mod8(&w, 0x03);
+            mod_uleb(&w, WASM_IC_HDR_GLOBAL + 2 * i);
+        }
+    }
     mod_section_end(&w, sec);
 
     /* branch hints (custom section, before the code section) */
