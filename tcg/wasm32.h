@@ -81,6 +81,9 @@ typedef struct WasmTBHeader {
     const struct WasmReloc *reloc_b_ptr;
     uint32_t reloc_b_count;
     uint32_t ic_count;          /* direct/indirect exit sites in this TB */
+    uint32_t instance_member;   /* index in the owning shared region */
+    uint16_t cfg_score;         /* cached entry-body control-flow size */
+    uint16_t cfg_depth;         /* cached entry-body nesting depth */
 } WasmTBHeader;
 
 /*
@@ -119,15 +122,30 @@ QEMU_BUILD_BUG_ON(sizeof(WasmTBHeader) % 8 != 0);
 
 /* shared with generated code that chains TBs (tcg-target.c.inc) */
 typedef struct WasmInstance {
-    void *tb;       /* the TB header this instance belongs to, or NULL */
+    void *tb;       /* root TB header of this instance, or NULL */
     int func_idx;   /* table index of its start function */
     int used;       /* entered since the last eviction sweep */
+    WasmTBHeader **members; /* shared-region headers, or NULL for one TB */
+    unsigned n_members;
 } WasmInstance;
+
+/* Header pointers can survive eviction; validate their member slot too. */
+static inline bool wasm_instance_owns(WasmInstance *e, WasmTBHeader *h)
+{
+    return e && (e->tb == h ||
+                 (h->instance_member < e->n_members && e->members &&
+                  e->members[h->instance_member] == h));
+}
 
 #define WASM_TB_INSTANCE_OFF    24
 #define WASM_INSTANCE_TB_OFF    0
 #define WASM_INSTANCE_FIDX_OFF  4
 #define WASM_INSTANCE_USED_OFF  8
+#define WASM_INSTANCE_MEMBERS_OFF 12
+#define WASM_TB_MEMBER_OFF      88
+QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, instance_member) !=
+                  WASM_TB_MEMBER_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmInstance, members) != WASM_INSTANCE_MEMBERS_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, instance) != WASM_TB_INSTANCE_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_hdr) != WASM_TB_LINK_HDR_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_fidx) != WASM_TB_LINK_FIDX_OFF);
