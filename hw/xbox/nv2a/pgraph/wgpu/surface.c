@@ -2047,6 +2047,16 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
                   pgraph_wgpu_is_linear_bgra(target) &&
                   pgraph_wgpu_is_linear_bgra(backing) &&
                   target->size <= backing->size;
+    /*
+     * A linear target may also start inside a retained owner's backing (its
+     * tail): Rainbow Six 3 binds 320x120 right after a 320x240 that took over
+     * a stitched 640x480. The backing holds every byte of that interval, so
+     * an offset-aware reshape rebuilds the target without a VRAM round trip.
+     */
+    bool tail = linear && src->backing && src->vram_addr != target->vram_addr &&
+                target->vram_addr >= backing->vram_addr &&
+                target->vram_addr + target->size <=
+                    backing->vram_addr + backing->size;
     if (!upload || !tcg_enabled() || pg->surface_scale_factor != 1 ||
         !src->initialized || !src->texture || !src->draw_dirty ||
         !src->access_cb || src->upload_pending || src->download_pending ||
@@ -2055,7 +2065,7 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
         src->shape.color_format != target->shape.color_format ||
         src->host_fmt.format != target->host_fmt.format ||
         src->fmt.bytes_per_pixel != target->fmt.bytes_per_pixel ||
-        src->vram_addr != target->vram_addr) {
+        (src->vram_addr != target->vram_addr && !tail)) {
         return NULL;
     }
     /* Deferred report writes must never land in a retained tail. */
@@ -2077,7 +2087,8 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
     SurfaceBinding *dst = allocate_surface_binding(d, target);
     assert(dst->texture != src->texture && dst->texture != backing->texture);
     pgraph_wgpu_merge_surface_backing(pg, src);
-    if (linear && backing->pitch != dst->pitch) {
+    if (linear && (backing->pitch != dst->pitch ||
+                   backing->vram_addr != dst->vram_addr)) {
         pgraph_wgpu_reshape_surface(pg, backing, dst->view, dst->vram_addr,
                                     dst->width, dst->height, false);
     } else {
@@ -2094,7 +2105,8 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
     char key[160];
     snprintf(key, sizeof(key),
              "dl:gpu-%s-rebind fmt%u %ux%u->%ux%u backing%ux%u",
-             linear ? "linear" : "swizzle", src->shape.color_format,
+             tail ? "tail" : linear ? "linear" : "swizzle",
+             src->shape.color_format,
              src->width, src->height,
              dst->width, dst->height, backing->width, backing->height);
     xemu_wasm_count(g_intern_string(key));
@@ -2553,6 +2565,19 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
 
         if (should_create) {
             if (!transferred) {
+                /* a target inside a retained owner's backing: GPU rebind */
+                surface = NULL;
+                SurfaceBinding *owner;
+                QTAILQ_FOREACH(owner, &r->surf.surfaces, entry) {
+                    if (owner->backing && owner->color && color &&
+                        check_surfaces_overlap(owner, &target)) {
+                        surface = try_rebind_surface_prefix(d, owner, &target,
+                                                            upload);
+                        break;
+                    }
+                }
+            }
+            if (!transferred && !surface) {
                 surface = try_stitch_surfaces_gpu(d, &target, upload);
                 if (!surface) {
                     surface = allocate_surface_binding(d, &target);
