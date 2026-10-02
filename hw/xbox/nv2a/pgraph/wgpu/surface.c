@@ -280,7 +280,8 @@ static bool check_surface_overlaps_range(const SurfaceBinding *surface,
            !(surface->vram_addr >= range_end || range_start >= surface_end);
 }
 
-static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size);
+static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size,
+                           const char *why);
 static void wb_poll(NV2AState *d);
 
 void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
@@ -289,7 +290,8 @@ void pgraph_wgpu_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
     SurfaceBinding *surface;
 
-    wb_flush_range(container_of(pg, NV2AState, pgraph), start, size);
+    wb_flush_range(container_of(pg, NV2AState, pgraph), start, size,
+                   "tex/vtx");
 
     QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
         if (check_surface_overlaps_range(surface, start, size)) {
@@ -698,11 +700,16 @@ static void wb_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 }
 
 /* GPU thread, pgraph.lock held: write @wb's bytes to VRAM and drop it. */
-static void wb_apply(NV2AState *d, PendingWriteback *wb)
+static void wb_apply(NV2AState *d, PendingWriteback *wb, const char *why)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
 
     if (*wb->status == 0) {
+#ifdef EMSCRIPTEN
+        char key[64];
+        snprintf(key, sizeof(key), "wb:wait %s", why);
+        xemu_wasm_count(g_intern_string(key));
+#endif
         pgraph_wgpu_wait(r, wb->future);
     }
     if (*wb->status == 1) {
@@ -729,7 +736,8 @@ static void wb_apply(NV2AState *d, PendingWriteback *wb)
  * Apply every pending write-back overlapping [start, start+size), oldest
  * first, together with all older ones (they may overlap each other).
  */
-static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size)
+static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size,
+                           const char *why)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
     PendingWriteback *wb, *last = NULL;
@@ -745,7 +753,7 @@ static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size)
     while (last) {
         PendingWriteback *first = QTAILQ_FIRST(&r->surf.pending_wb);
         bool done = first == last;
-        wb_apply(d, first);
+        wb_apply(d, first, why);
         if (done) {
             break;
         }
@@ -756,7 +764,7 @@ static void wb_flush_all(NV2AState *d)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
     while (!QTAILQ_EMPTY(&r->surf.pending_wb)) {
-        wb_apply(d, QTAILQ_FIRST(&r->surf.pending_wb));
+        wb_apply(d, QTAILQ_FIRST(&r->surf.pending_wb), "all");
     }
 }
 
@@ -774,7 +782,7 @@ static void wb_poll(NV2AState *d)
         if (*wb->status == 0) {
             break;
         }
-        wb_apply(d, wb);
+        wb_apply(d, wb, "poll");
     }
 }
 
@@ -790,7 +798,8 @@ static bool wb_defer(NV2AState *d, SurfaceBinding *image)
         return false;
     }
     /* an older pending copy of these bytes must land first */
-    wb_flush_range(d, image->vram_addr, image->pitch * image->height);
+    wb_flush_range(d, image->vram_addr, image->pitch * image->height,
+                   "redefer");
 
     PendingWriteback *wb = g_new0(PendingWriteback, 1);
     wb->stride = ROUND_UP(image->width * image->host_fmt.host_bytes_per_pixel,
@@ -852,7 +861,8 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
     // FIXME: Respect write enable at last TOU?
 
     if (!wb_defer(d, image)) {
-        wb_flush_range(d, image->vram_addr, image->pitch * image->height);
+        wb_flush_range(d, image->vram_addr, image->pitch * image->height,
+                       "download");
         download_surface_to_buffer(d, image, d->vram_ptr + image->vram_addr);
 
         memory_region_set_client_dirty(d->vram, image->vram_addr,
@@ -1647,7 +1657,7 @@ void pgraph_wgpu_materialize_retained(NV2AState *d, hwaddr addr, hwaddr size,
     SurfaceBinding *surface;
 
     /* raw VRAM readers/writers (blit, display, palettes, semaphores) */
-    wb_flush_range(d, addr, size);
+    wb_flush_range(d, addr, size, "raw");
     if (!r->surf.num_retained || !size) {
         return;
     }
@@ -1677,7 +1687,7 @@ void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size)
      */
     if (!QTAILQ_EMPTY(&r->surf.pending_wb)) {
         qemu_mutex_lock(&d->pgraph.lock);
-        wb_flush_range(d, addr, size);
+        wb_flush_range(d, addr, size, "cmd");
         qemu_mutex_unlock(&d->pgraph.lock);
     }
     if (!r->surf.num_retained) {
@@ -1706,7 +1716,7 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     }
     /* the VRAM this upload reads may still have a copy on its way */
     wb_flush_range(d, surface->vram_addr,
-                   pgraph_wgpu_surface_memory_size(surface));
+                   pgraph_wgpu_surface_memory_size(surface), "upload");
 
     if (surface->backing) {
         /* Preserve tails before any forced upload / pending CPU handover. */
@@ -2541,7 +2551,7 @@ static SurfaceBinding *try_transfer_zeta_color_gpu(NV2AState *d,
                                            DIRTY_MEMORY_NV2A_TEX);
         }
     } else {
-        wb_flush_range(d, src->vram_addr, row * dst->height);
+        wb_flush_range(d, src->vram_addr, row * dst->height, "zeta");
         WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
         pgraph_wgpu_zeta_from_color(pg, dst, src, enc,
                                     d->vram_ptr + src->vram_addr +
