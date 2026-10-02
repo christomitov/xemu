@@ -2579,6 +2579,157 @@ static SurfaceBinding *try_transfer_zeta_color_gpu(NV2AState *d,
     return dst;
 }
 
+/*
+ * Queue a write-back of @len guest-linear bytes at @addr from @src (GPU
+ * buffer at @offset, rows of @pitch bytes). Unlike wb_defer() it does not
+ * depend on wb_defer_ok: it is only used for bytes no surface owns any more.
+ */
+static void wb_defer_bytes(NV2AState *d, WGPUBuffer src, size_t offset,
+                           hwaddr addr, size_t len, size_t pitch)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+
+    wb_flush_range(d, addr, len, "redefer");
+    PendingWriteback *wb = g_new0(PendingWriteback, 1);
+    wb->stride = pitch;
+    wb->size = len;
+    wb->buf = wgpuDeviceCreateBuffer(
+        r->device, &(WGPUBufferDescriptor){
+                       .label = { "deferred writeback", WGPU_STRLEN },
+                       .usage = WGPUBufferUsage_MapRead |
+                                WGPUBufferUsage_CopyDst,
+                       .size = len });
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    wgpuCommandEncoderCopyBufferToBuffer(enc, src, offset, wb->buf, 0, len);
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+    pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
+    wb->status = g_new0(int, 1);
+    wb->future = wgpuBufferMapAsync(
+        wb->buf, WGPUMapMode_Read, 0, len,
+        (WGPUBufferMapCallbackInfo){ .mode = WGPUCallbackMode_WaitAnyOnly,
+                                     .callback = on_eager_mapped,
+                                     .userdata1 = wb->status });
+    /* a raw byte image: rows of @pitch bytes, no conversion */
+    wb->snap.width = pitch;
+    wb->snap.height = len / pitch;
+    wb->snap.pitch = pitch;
+    wb->snap.size = len;
+    wb->snap.fmt.bytes_per_pixel = 1;
+    wb->snap.host_fmt.host_bytes_per_pixel = 1;
+    wb->snap.host_fmt.conv = WGPU_SURFACE_CONV_NONE;
+    wb->addr = addr;
+    wb->len = len;
+    wb->cb = mem_access_callback_insert(qemu_get_cpu(0), d->vram, addr, len,
+                                        &wb_access_callback, d);
+    QTAILQ_INSERT_TAIL(&r->surf.pending_wb, wb, entry);
+}
+
+/*
+ * A GPU-dirty Z16 surface whose memory is rebound as a linear 32-bit color
+ * target at the same address (Rainbow Six 3: a 1024x1024 shadow map reused
+ * as a 640x480 target every other frame). Z16 is Depth16Unorm on the host,
+ * so its depth-aspect copy is the guest bytes: copy texture -> buffer at the
+ * zeta pitch and buffer -> color texture at the color pitch, all on the GPU.
+ * The zeta bytes beyond the color target go back to VRAM asynchronously.
+ * XEMU_WASM_Z16_COLOR_GPU=0 disables.
+ */
+static SurfaceBinding *try_transfer_z16_color_gpu(NV2AState *d,
+                                                 SurfaceBinding *src,
+                                                 const SurfaceBinding *target,
+                                                 bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_Z16_COLOR_GPU");
+        enabled = !(e && *e == '0');
+    }
+    if (!enabled || !upload || !tcg_enabled() ||
+        pg->surface_scale_factor != 1 || src->color || !target->color ||
+        src->swizzle || src->shape.anti_aliasing || src->backing ||
+        src->host_fmt.format != WGPUTextureFormat_Depth16Unorm ||
+        src->fmt.bytes_per_pixel != 2 ||
+        src->pitch != (uint64_t)src->width * 2 || src->pitch % 256 ||
+        !zeta_color_compatible(target) ||
+        src->vram_addr != target->vram_addr || target->size > src->size ||
+        !src->initialized || !src->texture || !src->draw_dirty ||
+        src->upload_pending || src->download_pending) {
+        return NULL;
+    }
+    WgpuQueryReport *report;
+    QSIMPLEQ_FOREACH(report, &r->draw.report_queue, entry) {
+        if (!report->clear) {
+            return NULL;
+        }
+    }
+    if (overlaps_active_pushbuffer(d, src) ||
+        overlaps_active_pushbuffer(d, target)) {
+        return NULL;
+    }
+    SurfaceBinding *other;
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (other != src && (check_surfaces_overlap(target, other) ||
+                             check_surfaces_overlap(src, other))) {
+            return NULL;
+        }
+    }
+
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    assert(dst->texture != src->texture);
+    WGPUBuffer bytes = wgpuDeviceCreateBuffer(
+        r->device, &(WGPUBufferDescriptor){
+                       .label = { "z16 -> color bytes", WGPU_STRLEN },
+                       .usage = WGPUBufferUsage_CopyDst |
+                                WGPUBufferUsage_CopySrc,
+                       .size = src->size });
+    WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
+    wgpuCommandEncoderCopyTextureToBuffer(
+        enc,
+        &(WGPUTexelCopyTextureInfo){ .texture = src->texture,
+                                     .aspect = WGPUTextureAspect_DepthOnly },
+        &(WGPUTexelCopyBufferInfo){
+            .layout = { .offset = 0, .bytesPerRow = src->pitch,
+                        .rowsPerImage = src->height },
+            .buffer = bytes },
+        &(WGPUExtent3D){ src->width, src->height, 1 });
+    wgpuCommandEncoderCopyBufferToTexture(
+        enc,
+        &(WGPUTexelCopyBufferInfo){
+            .layout = { .offset = 0, .bytesPerRow = dst->pitch,
+                        .rowsPerImage = dst->height },
+            .buffer = bytes },
+        &(WGPUTexelCopyTextureInfo){ .texture = dst->texture,
+                                     .aspect = WGPUTextureAspect_All },
+        &(WGPUExtent3D){ dst->width, dst->height, 1 });
+    pgraph_wgpu_end_nondraw_commands(pg, enc);
+    size_t covered = dst->pitch * dst->height;
+    if (src->size > covered) {
+        wb_defer_bytes(d, bytes, covered, src->vram_addr + covered,
+                       src->size - covered, src->pitch);
+    }
+    wgpuBufferRelease(bytes);   /* recorded copies keep it alive */
+
+    dst->initialized = true;
+    dst->upload_pending = false;
+    dst->download_pending = false;
+    dst->draw_dirty = true;     /* VRAM is stale where @src was drawn */
+    src->draw_dirty = false;
+#ifdef EMSCRIPTEN
+    {
+        char key[96];
+        snprintf(key, sizeof(key), "dl:gpu-z16-color Z%ux%u->C%ux%u",
+                 src->width, src->height, dst->width, dst->height);
+        xemu_wasm_count(g_intern_string(key));
+    }
+#endif
+    invalidate_surface(d, src);
+    surface_put(d, dst);
+    return dst;
+}
+
 static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
                                                 SurfaceBinding *src,
                                                 const SurfaceBinding *target,
@@ -2592,6 +2743,10 @@ static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
         return prefix;
     }
     prefix = try_transfer_zeta_color_gpu(d, src, target, upload);
+    if (prefix) {
+        return prefix;
+    }
+    prefix = try_transfer_z16_color_gpu(d, src, target, upload);
     if (prefix) {
         return prefix;
     }
