@@ -704,17 +704,25 @@ static struct {
     uint32_t n;
 } count_tab[COUNT_SLOTS];
 
-void xemu_wasm_count(const char *key)
+__thread const char *xemu_wasm_last_count_key;
+
+void xemu_wasm_count_add(const char *key, uint32_t n)
 {
     uintptr_t h = ((uintptr_t)key >> 3) * 2654435761u;
     for (unsigned i = 0; i < COUNT_SLOTS; i++) {
         unsigned slot = (h + i) & (COUNT_SLOTS - 1);
         if (count_tab[slot].key == key || !count_tab[slot].key) {
             count_tab[slot].key = key;
-            count_tab[slot].n++;
+            count_tab[slot].n += n;
             return;
         }
     }
+}
+
+void xemu_wasm_count(const char *key)
+{
+    xemu_wasm_last_count_key = key;
+    xemu_wasm_count_add(key, 1);
 }
 
 /* "key=n;..." top 60, cumulative */
