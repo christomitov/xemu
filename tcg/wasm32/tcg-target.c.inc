@@ -1643,6 +1643,22 @@ static void wasm_call_results(TCGContext *s, int rettype)
     }
 }
 
+/* Opt-in smaller lookup; no cached translations or mutable TLB fields. */
+static bool wasm_tlb_fast(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_TLB_FAST");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 /*
  * Guest memory access: inline TLB lookup, helper call on a miss.
  *
@@ -1662,6 +1678,7 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     int cmp_ofs = is_ld ? offsetof(CPUTLBEntry, addr_read)
                         : offsetof(CPUTLBEntry, addr_write);
     uint32_t compare_mask = (uint32_t)TARGET_PAGE_MASK | a_mask;
+    bool fast = wasm_tlb_fast();
 
     QEMU_BUILD_BUG_ON(sizeof(((CPUTLBEntry *)0)->addr_read) != 4);
     QEMU_BUILD_BUG_ON(sizeof(vaddr) != 4);
@@ -1673,6 +1690,19 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
         return;
     }
 
+    if (fast) {
+        /*
+         * One descriptor address, not two env-relative addresses. Both
+         * fields are still loaded each time: helpers may resize the TLB.
+         * The descriptor is within the CPU object, so its field offsets
+         * cannot wrap the wasm32 address space.
+         */
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_i32_const(s, fast_ofs);
+        wasm8(s, W_I32_ADD);
+        wasm_var(s, W_LOCAL_SET, L32_3);
+    }
+
     /* L32_2 = addr; L32_0 = entry */
     wasm_get_r32(s, addr);
     wasm_var(s, W_LOCAL_TEE, L32_2);
@@ -1680,20 +1710,38 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     wasm_var(s, W_LOCAL_GET, L32_2);
     wasm_i32_const(s, 12);
     wasm8(s, W_I32_SHR_U);
-    wasm_i32_const(s, 0xff000);
-    wasm8(s, W_I32_AND);
+    /*
+     * For a 32-bit address the fold has at most 20 bits. After shifting,
+     * the omitted low 12 bits fall entirely below CPU_TLB_ENTRY_BITS when
+     * PAGE_BITS >= 12. The live mask (entries - 1) << ENTRY_BITS removes
+     * them anyway. Keep the original expression on smaller-page targets.
+     */
+    if (!fast || TARGET_PAGE_BITS < 12) {
+        wasm_i32_const(s, 0xff000);
+        wasm8(s, W_I32_AND);
+    }
     wasm8(s, W_I32_XOR);
     wasm_i32_const(s, TARGET_PAGE_BITS - CPU_TLB_ENTRY_BITS);
     wasm8(s, W_I32_SHR_U);
-    wasm_get_r32(s, TCG_AREG0);
-    wasm_i32_const(s, mask_ofs);
-    wasm8(s, W_I32_ADD);
-    wasm_mem(s, W_I32_LOAD, 0);
+    if (fast) {
+        wasm_var(s, W_LOCAL_GET, L32_3);
+        wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBDescFast, mask));
+    } else {
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_i32_const(s, mask_ofs);
+        wasm8(s, W_I32_ADD);
+        wasm_mem(s, W_I32_LOAD, 0);
+    }
     wasm8(s, W_I32_AND);
-    wasm_get_r32(s, TCG_AREG0);
-    wasm_i32_const(s, table_ofs);
-    wasm8(s, W_I32_ADD);
-    wasm_mem(s, W_I32_LOAD, 0);
+    if (fast) {
+        wasm_var(s, W_LOCAL_GET, L32_3);
+        wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBDescFast, table));
+    } else {
+        wasm_get_r32(s, TCG_AREG0);
+        wasm_i32_const(s, table_ofs);
+        wasm8(s, W_I32_ADD);
+        wasm_mem(s, W_I32_LOAD, 0);
+    }
     wasm8(s, W_I32_ADD);
     wasm_var(s, W_LOCAL_TEE, L32_0);
     wasm_mem(s, W_I32_LOAD, cmp_ofs);
