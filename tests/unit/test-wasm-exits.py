@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
     const char *mode = argc == 3 ? argv[2] : "unset";
     if (strcmp(mode, "unset")) { setenv("XEMU_WASM_IC", mode, 1); }
     else { unsetenv("XEMU_WASM_IC"); }
-    bool all = mode[0] == '1', indirect = all || mode[0] == '2';
+    bool all = mode[0] == '1', indirect = mode[0] != '0';
     assert(wasm32_ic_enabled() == indirect);
     assert(wasm32_ic_for_exit(false) == all);
     assert(wasm32_ic_for_exit(true) == indirect);
@@ -194,7 +194,7 @@ with tempfile.TemporaryDirectory(prefix="test-wasm-exits-") as directory:
                    ["-std=gnu11", "-O2", str(p / "emit.c"),
                     "-o", str(p / "emit")],
                    check=True, timeout=30)
-    for mode in ["unset", "0", "1", "2", "3", "invalid"]:
+    for mode in ["unset", "", "0", "1", "2", "3", "invalid"]:
         subprocess.run([str(p / "emit"), "0", mode], check=True,
                        stdout=subprocess.DEVNULL, timeout=10)
     print("PASS: IC default/off/all/indirect-only/invalid mode policies")
