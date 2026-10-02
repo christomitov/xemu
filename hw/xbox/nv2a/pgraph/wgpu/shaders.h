@@ -67,7 +67,17 @@ typedef struct ShaderResourceInfo {
 typedef struct ShaderModuleInfo {
     int refcnt;
     int stage;
-    WGPUShaderModule module; /* NULL if translation failed */
+    WGPUShaderModule module; /* NULL if translation failed or still pending */
+    /*
+     * Async translation (cache miss): the worker fills async_wgsl and sets
+     * async_done; the GPU thread then creates the module. Draws needing a
+     * pending module are skipped instead of stalling the frame.
+     */
+    bool pending;
+    int async_done;
+    char *async_glsl;
+    char *async_wgsl;
+    const char *label;
     ShaderResourceInfo resources;
     ShaderUniformBlock uniforms;
 } ShaderModuleInfo;
@@ -219,6 +229,9 @@ WGPUShaderModule pgraph_wgpu_create_shader_module_from_glsl(
 /* glsl.c internals */
 void pgraph_wgpu_init_glsl_compiler(void);
 char *pgraph_wgpu_glsl_to_wgsl(int stage, const char *glsl);
+char *pgraph_wgpu_wgsl_cache_lookup(int stage, const char *glsl);
+void pgraph_wgpu_wgsl_cache_store(int stage, const char *glsl, const char *wgsl);
+char *pgraph_wgpu_translate_glsl(int stage, const char *glsl, char **err);
 void pgraph_wgpu_reflect_wgsl(const char *wgsl, ShaderResourceInfo *info);
 
 #endif

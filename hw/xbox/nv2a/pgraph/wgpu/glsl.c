@@ -78,6 +78,44 @@ static char *wgsl_cache_path(int stage, const char *glsl)
                            stage, sum);
 }
 
+/* The persistent WGSL cache: NULL on a miss. */
+char *pgraph_wgpu_wgsl_cache_lookup(int stage, const char *glsl)
+{
+    g_autofree char *cache = wgsl_cache_path(stage, glsl);
+    g_autofree char *hit = NULL;
+    if (cache && g_file_get_contents(cache, &hit, NULL, NULL) && hit[0]) {
+        XSTAT_INC(n_wgsl_cache_hit);
+        return strdup(hit);
+    }
+    return NULL;
+}
+
+void pgraph_wgpu_wgsl_cache_store(int stage, const char *glsl, const char *wgsl)
+{
+    g_autofree char *cache = wgsl_cache_path(stage, glsl);
+    if (cache && wgsl) {
+        g_file_set_contents(cache, wgsl, -1, NULL);
+    }
+}
+
+/*
+ * glslang + Tint without the cache. Serialized: the GPU thread and the async
+ * translation worker (shaders.c) both call it; glslang keeps process state.
+ */
+char *pgraph_wgpu_translate_glsl(int stage, const char *glsl, char **err)
+{
+    static QemuMutex lock;
+    static gsize once;
+    if (g_once_init_enter(&once)) {
+        qemu_mutex_init(&lock);
+        g_once_init_leave(&once, 1);
+    }
+    qemu_mutex_lock(&lock);
+    char *wgsl = xemu_glsl_to_wgsl(stage, glsl, err);
+    qemu_mutex_unlock(&lock);
+    return wgsl;
+}
+
 char *pgraph_wgpu_glsl_to_wgsl(int stage, const char *glsl)
 {
     char *err = NULL;
@@ -99,7 +137,7 @@ char *pgraph_wgpu_glsl_to_wgsl(int stage, const char *glsl)
             fclose(f);
         }
     }
-    char *wgsl = xemu_glsl_to_wgsl(stage, glsl, &err);
+    char *wgsl = pgraph_wgpu_translate_glsl(stage, glsl, &err);
     if (wgsl && cache) {
         g_file_set_contents(cache, wgsl, -1, NULL);
     }

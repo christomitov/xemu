@@ -128,6 +128,95 @@ static void uniform_block_store(ShaderUniformBlock *block, const void *values)
 
 /* ---- shader modules ---- */
 
+/*
+ * Async GLSL -> WGSL translation. A cache miss used to translate on the GPU
+ * thread (up to ~0.7 s for a burst of new shaders), stalling the whole
+ * emulator while the vCPU waited on that thread. Misses now go to a worker;
+ * the GPU thread skips the draws that need them and picks the result up at
+ * the next bind. XEMU_WASM_ASYNC_SHADERS=0 restores synchronous translation.
+ */
+static bool async_translate_enabled(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_ASYNC_SHADERS");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static GAsyncQueue *async_queue;
+static GPtrArray *async_pending;     /* GPU thread only: ref'd infos */
+
+static void *async_translate_thread(void *opaque)
+{
+    for (;;) {
+        ShaderModuleInfo *info = g_async_queue_pop(async_queue);
+        char *err = NULL;
+        char *wgsl = pgraph_wgpu_translate_glsl(info->stage, info->async_glsl,
+                                                &err);
+        if (!wgsl) {
+            fprintf(stderr, "[wgpu] async GLSL -> WGSL failed (stage %d): %s\n",
+                    info->stage, err ? err : "(no message)");
+        }
+        free(err);
+        info->async_wgsl = wgsl;
+        qatomic_store_release(&info->async_done, 1);
+    }
+    return NULL;
+}
+
+static void ref_shader_module(ShaderModuleInfo *info);
+static void unref_shader_module(ShaderModuleInfo *info);
+
+static void async_translate_submit(PGRAPHWgpuState *r, ShaderModuleInfo *info)
+{
+    if (!async_queue) {
+        static QemuThread thread;
+        async_queue = g_async_queue_new();
+        async_pending = g_ptr_array_new();
+        qemu_thread_create(&thread, "wgsl-translate", async_translate_thread,
+                           NULL, QEMU_THREAD_DETACHED);
+    }
+    info->refcnt++;     /* the pending list's reference */
+    g_ptr_array_add(async_pending, info);
+    g_async_queue_push(async_queue, info);
+}
+
+/* GPU thread: create the modules of finished translations. */
+static bool async_translate_poll(PGRAPHWgpuState *r)
+{
+    bool any = false;
+    for (guint i = 0; async_pending && i < async_pending->len;) {
+        ShaderModuleInfo *info = g_ptr_array_index(async_pending, i);
+        if (!qatomic_load_acquire(&info->async_done)) {
+            i++;
+            continue;
+        }
+        g_ptr_array_remove_index_fast(async_pending, i);
+        if (info->async_wgsl) {
+            pgraph_wgpu_wgsl_cache_store(info->stage, info->async_glsl,
+                                         info->async_wgsl);
+            pgraph_wgpu_reflect_wgsl(info->async_wgsl, &info->resources);
+            info->module = pgraph_wgpu_create_wgsl_module(r, info->label,
+                                                          info->async_wgsl);
+            free(info->async_wgsl);
+            info->async_wgsl = NULL;
+        }
+        g_free(info->async_glsl);
+        info->async_glsl = NULL;
+        info->pending = false;
+        XSTAT_INC(n_shader_gen);
+        any = true;
+        unref_shader_module(info);
+    }
+    return any;
+}
+
 static ShaderModuleInfo *create_shader_module(PGRAPHWgpuState *r,
                                               const ShaderModuleCacheKey *key)
 {
@@ -153,7 +242,21 @@ static ShaderModuleInfo *create_shader_module(PGRAPHWgpuState *r,
     }
 
     int64_t t1 = g_get_monotonic_time();
-    char *wgsl = pgraph_wgpu_glsl_to_wgsl(key->stage, mstring_get_str(code));
+    char *wgsl = NULL;
+    if (async_translate_enabled()) {
+        wgsl = pgraph_wgpu_wgsl_cache_lookup(key->stage, mstring_get_str(code));
+        if (!wgsl) {
+            /* translate off the GPU thread; draws wait for it, not frames */
+            info->pending = true;
+            info->label = label;
+            info->async_glsl = g_strdup(mstring_get_str(code));
+            mstring_unref(code);
+            async_translate_submit(r, info);
+            return info;
+        }
+    } else {
+        wgsl = pgraph_wgpu_glsl_to_wgsl(key->stage, mstring_get_str(code));
+    }
     int64_t t2 = g_get_monotonic_time();
 
     if (wgsl) {
@@ -881,6 +984,10 @@ void pgraph_wgpu_bind_shaders(PGRAPHState *pg)
 
     r->shader_bindings_changed = false;
 
+    if (async_translate_enabled()) {
+        async_translate_poll(r);
+    }
+
     if (!s->shader_binding ||
         pgraph_glsl_check_shader_state_dirty(pg, &s->shader_binding->state)) {
         ShaderState new_state = pgraph_glsl_get_shader_state(pg);
@@ -891,6 +998,15 @@ void pgraph_wgpu_bind_shaders(PGRAPHState *pg)
         }
     } else {
         nv2a_profile_inc_counter(NV2A_PROF_SHADER_BIND_NOTDIRTY);
+    }
+
+    /* a pending module may have finished since the binding was made */
+    ShaderBinding *b = s->shader_binding;
+    if ((!b->vsh_module && b->vsh.module_info->module) ||
+        (!b->psh_module && b->psh.module_info->module)) {
+        b->vsh_module = b->vsh.module_info->module;
+        b->psh_module = b->psh.module_info->module;
+        r->shader_bindings_changed = true;
     }
 
     /* texture sample types may change the layout (see shaders.h) */
