@@ -93,7 +93,9 @@ void helper_rdtsc(CPUX86State *env)
             const char *e = getenv("XEMU_WASM_FAST_RDTSC");
             fast = e && *e == '1';
         }
-        if (fast && (++n & 63)) {
+        if (!fast) {
+            val = cpu_get_tsc(env) + env->tsc_offset;
+        } else if (++n & 63) {
             val = ++last;
         } else {
             val = cpu_get_tsc(env) + env->tsc_offset;
