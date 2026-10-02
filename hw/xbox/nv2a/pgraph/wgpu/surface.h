@@ -122,6 +122,15 @@ typedef struct PGRAPHWgpuSurfaceState {
     QTAILQ_HEAD(, PendingWriteback) pending_wb;
     bool wb_flush_requested;
 
+    /*
+     * pgraph_wgpu_pre_read_command() runs for every pushbuffer word; the
+     * range it last found clean of deferred write-backs and retained
+     * backings, valid until cmd_gen changes (bumped, on the PFIFO/GPU
+     * thread, whenever either gains an entry).
+     */
+    uint32_t cmd_gen, cmd_checked_gen;
+    hwaddr cmd_checked_lo, cmd_checked_hi;
+
     WgpuSurfaceFormatInfo kelvin_surface_zeta_map[3];
 
     /* host readback staging (CopyDst|MapRead), grown on demand */

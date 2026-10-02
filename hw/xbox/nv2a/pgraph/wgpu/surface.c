@@ -827,6 +827,7 @@ static bool wb_defer(NV2AState *d, SurfaceBinding *image)
     wb->cb = mem_access_callback_insert(qemu_get_cpu(0), d->vram, wb->addr,
                                         wb->len, &wb_access_callback, d);
     QTAILQ_INSERT_TAIL(&r->surf.pending_wb, wb, entry);
+    r->surf.cmd_gen++;
     XSTAT_INC(n_surf_download);
     XSTAT_ADD(b_surf_download, wb->size);
 #ifdef EMSCRIPTEN
@@ -1680,6 +1681,18 @@ void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size)
 {
     PGRAPHWgpuState *r = d->pgraph.wgpu_renderer_state;
 
+    static int cache = -1;
+    if (cache < 0) {
+        const char *e = getenv("XEMU_WASM_CMD_CHECK_CACHE");
+        cache = !(e && *e == '0');
+    }
+    /* the next word of a command buffer already found clean */
+    if (cache && r->surf.cmd_checked_gen == r->surf.cmd_gen &&
+        addr >= r->surf.cmd_checked_lo &&
+        addr + size <= r->surf.cmd_checked_hi) {
+        return;
+    }
+
     /*
      * Same PFIFO worker owns the list/geometry (CPU callbacks only change
      * flags). Avoid another PGRAPH lock for unrelated command buffers. Reset
@@ -1690,19 +1703,22 @@ void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size)
         wb_flush_range(d, addr, size, "cmd");
         qemu_mutex_unlock(&d->pgraph.lock);
     }
-    if (!r->surf.num_retained) {
-        return;
-    }
-    SurfaceBinding *surface;
-    QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
-        if (surface->backing &&
-            check_surface_overlaps_range(surface, addr, size)) {
-            qemu_mutex_lock(&d->pgraph.lock);
-            pgraph_wgpu_materialize_retained(d, addr, size, false);
-            qemu_mutex_unlock(&d->pgraph.lock);
-            return;
+    if (r->surf.num_retained) {
+        SurfaceBinding *surface;
+        QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
+            if (surface->backing &&
+                check_surface_overlaps_range(surface, addr, size)) {
+                qemu_mutex_lock(&d->pgraph.lock);
+                pgraph_wgpu_materialize_retained(d, addr, size, false);
+                qemu_mutex_unlock(&d->pgraph.lock);
+                break;
+            }
         }
     }
+    /* flushed/materialized above: [addr, addr + size) is clean now */
+    r->surf.cmd_checked_gen = r->surf.cmd_gen;
+    r->surf.cmd_checked_lo = addr;
+    r->surf.cmd_checked_hi = addr + size;
 }
 
 void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
@@ -2227,6 +2243,7 @@ static SurfaceBinding *try_stitch_surfaces_gpu(NV2AState *d,
     }
     copy_surface_rect(pg, backing, dst, dst->width, dst->height, 0, 0);
     dst->backing = backing;
+    r->surf.cmd_gen++;
     dst->initialized = true;
     dst->upload_pending = false;
     dst->draw_dirty = true;
@@ -2317,6 +2334,7 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
     }
 
     dst->backing = backing;
+    r->surf.cmd_gen++;
     dst->initialized = true;
     dst->upload_pending = false;
     dst->draw_dirty = true;
@@ -2649,6 +2667,7 @@ static void wb_defer_bytes(NV2AState *d, WGPUBuffer src, size_t offset,
     wb->cb = mem_access_callback_insert(qemu_get_cpu(0), d->vram, addr, len,
                                         &wb_access_callback, d);
     QTAILQ_INSERT_TAIL(&r->surf.pending_wb, wb, entry);
+    r->surf.cmd_gen++;
 }
 
 /*
