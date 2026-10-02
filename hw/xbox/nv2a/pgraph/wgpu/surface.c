@@ -2468,6 +2468,24 @@ static bool zeta_color_compatible(const SurfaceBinding *s)
  * VRAM rows below them into the depth/stencil texture with no readback.
  * XEMU_WASM_ZETA_COLOR_GPU=0 disables.
  */
+/*
+ * Write the tail rows of a zeta -> color transfer back asynchronously
+ * (Rainbow Six 3: ~1.8 ms of GPU-thread stall per frame when synchronous).
+ * XEMU_WASM_ZETA_TAIL_DEFER=0 reads them back synchronously.
+ */
+static void wb_defer_bytes(NV2AState *d, WGPUBuffer src, size_t offset,
+                           hwaddr addr, size_t len, size_t pitch);
+
+static bool zeta_tail_defer_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_ZETA_TAIL_DEFER");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+}
+
 static SurfaceBinding *try_transfer_zeta_color_gpu(NV2AState *d,
                                                    SurfaceBinding *src,
                                                    const SurfaceBinding *target,
@@ -2530,14 +2548,22 @@ static SurfaceBinding *try_transfer_zeta_color_gpu(NV2AState *d,
             enc, &from, &to, &(WGPUExtent3D){ dst->width, dst->height, 1 });
         size_t tail = row * (src->height - dst->height);
         WGPUBuffer staging = NULL;
-        if (tail) {
+        bool defer_tail = tail && zeta_tail_defer_enabled();
+        if (tail && !defer_tail) {
             staging = ensure_staging_dst(r, tail);
             wgpuCommandEncoderCopyBufferToBuffer(enc, r->surf.compute.pack_dst,
                                                  row * dst->height, staging, 0,
                                                  tail);
         }
         pgraph_wgpu_end_nondraw_commands(pg, enc);
-        if (tail) {
+        if (defer_tail) {
+            /*
+             * The zeta rows the color surface does not cover go to VRAM
+             * asynchronously; any access before they land waits for them.
+             */
+            wb_defer_bytes(d, r->surf.compute.pack_dst, row * dst->height,
+                           src->vram_addr + row * dst->height, tail, row);
+        } else if (tail) {
             /* the zeta rows the color surface does not cover go to VRAM */
             hwaddr at = src->vram_addr + row * dst->height;
             pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
