@@ -80,8 +80,9 @@ bool wasm32_ic_enabled(void)
     static int enabled = -1;
 
     if (enabled < 0) {
+        /* opt-in (XEMU_WASM_IC=1) until it has run clean in the browser */
         const char *e = getenv("XEMU_WASM_IC");
-        enabled = !(e && *e == '0');
+        enabled = e && *e == '1';
     }
     return enabled;
 }
