@@ -75,6 +75,17 @@ EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
 
 __thread WasmContext wasm_ctx;
 
+bool wasm32_ic_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_IC");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+}
+
 /*
  * Compile and instantiate a TB module; returns the table index of its start
  * function. helper.u is called by the generated code after every helper
@@ -82,7 +93,7 @@ __thread WasmContext wasm_ctx;
  */
 EM_JS(int, wasm32_instantiate, (const uint8_t *wasm_begin, int wasm_size,
                                 const uint32_t *import_vec, int import_count,
-                                int s0, int s1),
+                                int s0, int s1, int ic_count),
 {
     const J = Module.__wasm32_jit;
     const helper = {};
@@ -93,16 +104,7 @@ EM_JS(int, wasm32_instantiate, (const uint8_t *wasm_begin, int wasm_size,
     /* compile from a copy: the code buffer is shared memory */
     const bytes = HEAPU8.slice(wasm_begin, wasm_begin + wasm_size);
     const mod = new WebAssembly.Module(bytes);
-    const inst = new WebAssembly.Instance(mod, {
-        "env": { "buffer": wasmMemory },
-        "helper": helper,
-        "chain": { "s0": s0 ? wasmTable.get(s0) : J.dummy,
-                   "s1": s1 ? wasmTable.get(s1) : J.dummy, "call": J.call },
-    });
-    J.registry.register(inst, 0);
-    const f = addFunction(inst.exports.start, 'ii');
-    J.mods.set(f, { mod, helper });   /* for cheap relinks */
-    return f;
+    return J.install(mod, helper, s0, s1, ic_count);
 });
 
 /*
@@ -116,42 +118,104 @@ EM_JS(int, wasm32_relink, (int old, int s0, int s1),
     if (!rec) {
         return 0;
     }
-    const inst = new WebAssembly.Instance(rec.mod, {
-        "env": { "buffer": wasmMemory },
-        "helper": rec.helper,
-        "chain": { "s0": s0 ? wasmTable.get(s0) : J.dummy,
-                   "s1": s1 ? wasmTable.get(s1) : J.dummy, "call": J.call },
-    });
-    J.registry.register(inst, 0);
-    const f = addFunction(inst.exports.start, 'ii');
-    J.mods.delete(old);
-    removeFunction(old);
-    J.mods.set(f, rec);
+    const f = J.install(rec.mod, rec.helper, s0, s1, rec.links.length);
+    J.remove(old);
     return f;
 });
 
 EM_JS(void, wasm32_remove_function, (int idx), {
-    Module.__wasm32_jit.mods.delete(idx);
-    removeFunction(idx);
+    Module.__wasm32_jit.remove(idx);
 });
 
 EM_JS(void, wasm32_js_init, (int *collected), {
-    Module.__wasm32_jit = {
+    const J = Module.__wasm32_jit = {
         /* counts instances reclaimed by the GC */
         registry: new FinalizationRegistry(() => {
             Atomics.add(HEAP32, collected >> 2, 1);
         }),
-        /* table index -> { compiled module, helper imports } */
         mods: new Map(),
-        /* placeholder for an unlinked successor (never called: the
-         * generated guard checks link_hdr/link_fidx first) */
+        incoming: new Map(),
         dummy: (ctx) => 0,
-        /* Asyncify rewind of a linked TB (rare): call it by table index */
         call: (ctx, f) => wasmTable.get(f)(ctx),
+    };
+    J.unlink = (link) => {
+        if (link.target) {
+            const incoming = J.incoming.get(link.target);
+            incoming.delete(link);
+            if (!incoming.size) {
+                J.incoming.delete(link.target);
+            }
+            link.target = 0;
+        }
+        link.header.value = -1;
+        link.table.set(link.slot, null);
+    };
+    J.remove = (f) => {
+        const rec = J.mods.get(f);
+        if (rec) {
+            /* Clear incoming guards before table-index/instance-slot reuse. */
+            const incoming = J.incoming.get(f);
+            if (incoming) {
+                for (const link of incoming) {
+                    J.unlink(link);
+                }
+            }
+            /* Drop outgoing references too: never retain an evicted graph. */
+            for (const link of rec.links) {
+                J.unlink(link);
+            }
+            J.mods.delete(f);
+        }
+        removeFunction(f);
+    };
+    J.install = (mod, helper, s0, s1, count) => {
+        /* Importing the huge C function table into every TB is expensive. */
+        const table = count ? new WebAssembly.Table({
+            element: 'anyfunc', initial: count, maximum: count,
+        }) : undefined;
+        const inst = new WebAssembly.Instance(mod, {
+            "env": { "buffer": wasmMemory, "ic_table": table },
+            "helper": helper,
+            "chain": { "s0": s0 ? wasmTable.get(s0) : J.dummy,
+                       "s1": s1 ? wasmTable.get(s1) : J.dummy, "call": J.call },
+        });
+        J.registry.register(inst, 0);
+        const f = addFunction(inst.exports.start, 'ii');
+        if (inst.exports.ic_self) {
+            inst.exports.ic_self.value = f;
+        }
+        const links = [];
+        for (let i = 0; i < count; i++) {
+            links.push({ header: inst.exports['ic' + i], table,
+                         slot: i, target: 0 });
+        }
+        J.mods.set(f, { mod, helper, links });
+        return f;
     };
 });
 
 EM_JS_DEPS(wasm32_jit, "$addFunction,$removeFunction,$wasmTable");
+
+/* Called only by the dispatcher, with a currently owned target instance. */
+EM_JS(void, wasm32_ic_fill, (int source, unsigned slot,
+                            const WasmTBHeader *header, int target), {
+    const J = Module.__wasm32_jit;
+    const rec = J.mods.get(source);
+    const link = rec && rec.links[slot];
+    if (!link) {
+        return; /* source was relinked/evicted before its miss was resolved */
+    }
+    J.unlink(link);
+    link.table.set(slot, wasmTable.get(target));
+    link.target = target;
+    let incoming = J.incoming.get(target);
+    if (!incoming) {
+        incoming = new Set();
+        J.incoming.set(target, incoming);
+    }
+    incoming.add(link);
+    link.header.value = header;
+});
 
 /*
  * Max number of instances alive at the same time. Games' hot code needs more
@@ -390,15 +454,18 @@ static bool compute_links(WasmTBHeader *h, int depth, int fidx[2])
 
 static int compile_tb(WasmTBHeader *h, int depth)
 {
-    int links[2];
+    int links[2] = { 0 };
     int fidx;
 
-    compute_links(h, depth, links);
+    /* ICs are mutable; don't also retain unused immutable chain imports. */
+    if (!wasm32_ic_enabled()) {
+        compute_links(h, depth, links);
+    }
     XPHASE_SET(XPHASE_VCPU, "jit_compile");
     double t0 = emscripten_get_now();
     fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
                               h->import_ptr, h->import_size / 4,
-                              links[0], links[1]);
+                              links[0], links[1], h->ic_count);
     double t1 = emscripten_get_now();
     XPHASE_SET(XPHASE_VCPU, "dispatch");
     jit_debt_ms += t1 - t0;
@@ -604,6 +671,7 @@ static int compile_region(WasmTBHeader *h)
     const uint8_t *hty[256];
     int htylen[256];
     int nh = 0;
+    unsigned ic_base[REGION_MAX], ic_count = 0;
     ByteBuf mod = { 0 }, sec = { 0 }, code = { 0 }, hints = { 0 };
     int nhints = 0;
     int fidx;
@@ -634,6 +702,8 @@ static int compile_region(WasmTBHeader *h)
     /* per member: its helper k -> union index */
     uint8_t map[REGION_MAX][256];
     for (int i = 0; i < n; i++) {
+        ic_base[i] = ic_count;
+        ic_count += m[i]->ic_count;
         const uint8_t *ty[256];
         int tylen[256];
         int cnt = m[i]->import_size / 4;
@@ -669,7 +739,12 @@ static int compile_region(WasmTBHeader *h)
     }
     bb_section(&mod, 1, &sec);
     /* imports: same layout as a TB module */
-    bb_uleb(&sec, 5 + nh);
+    bb_uleb(&sec, 5 + nh + (ic_count != 0));
+    if (ic_count) {
+        bb_name(&sec, "env"); bb_name(&sec, "ic_table");
+        bb_u8(&sec, 0x01); bb_u8(&sec, 0x70); bb_u8(&sec, 0x01);
+        bb_uleb(&sec, ic_count); bb_uleb(&sec, ic_count);
+    }
     bb_name(&sec, "env"); bb_name(&sec, "buffer");
     bb_u8(&sec, 0x02); bb_u8(&sec, 0x03); bb_uleb(&sec, 0); bb_uleb(&sec, 65536);
     bb_name(&sec, "helper"); bb_name(&sec, "u"); bb_u8(&sec, 0); bb_uleb(&sec, 1);
@@ -689,13 +764,33 @@ static int compile_region(WasmTBHeader *h)
         bb_uleb(&sec, 0);
     }
     bb_section(&mod, 3, &sec);
-    bb_uleb(&sec, REGION_NUM_GLOBALS);
+    unsigned ic_globals = wasm32_ic_enabled() ? 1 + 2 * ic_count : 0;
+    QEMU_BUILD_BUG_ON(REGION_NUM_GLOBALS != WASM_IC_SELF_GLOBAL);
+    bb_uleb(&sec, REGION_NUM_GLOBALS + ic_globals);
     for (int i = 0; i < REGION_NUM_GLOBALS; i++) {
         bb_bytes(&sec, "\x7e\x01\x42\x00\x0b", 5);
     }
+    if (ic_globals) {
+        bb_bytes(&sec, "\x7f\x01\x41\x00\x0b", 5);
+        for (unsigned i = 0; i < ic_count; i++) {
+            bb_bytes(&sec, "\x7f\x01\x41\x7f\x0b", 5);
+            bb_bytes(&sec, "\x7f\x01\x41\x00\x0b", 5);
+        }
+    }
     bb_section(&mod, 6, &sec);
-    bb_uleb(&sec, 1); bb_name(&sec, "start"); bb_u8(&sec, 0);
+    bb_uleb(&sec, 1 + (ic_globals ? 1 + ic_count : 0));
+    bb_name(&sec, "start"); bb_u8(&sec, 0);
     bb_uleb(&sec, REGION_HELPER_START + nh);
+    if (ic_globals) {
+        bb_name(&sec, "ic_self"); bb_u8(&sec, 3);
+        bb_uleb(&sec, WASM_IC_SELF_GLOBAL);
+        for (unsigned i = 0; i < ic_count; i++) {
+            char name[16];
+            snprintf(name, sizeof(name), "ic%u", i);
+            bb_name(&sec, name); bb_u8(&sec, 3);
+            bb_uleb(&sec, WASM_IC_HDR_GLOBAL + 2 * i);
+        }
+    }
     bb_section(&mod, 7, &sec);
 
     /* the function: TB locals + cur */
@@ -733,6 +828,16 @@ static int compile_region(WasmTBHeader *h)
             pos = rl->off;
             if (rl->kind == WASM_RELOC_CALL) {
                 uint32_t idx = REGION_HELPER_START + map[i][rl->arg];
+                for (int k = 0; k < 5; k++) {
+                    bb_u8(&code, (idx & 0x7f) | (k < 4 ? 0x80 : 0));
+                    idx >>= 7;
+                }
+                pos += 5;
+            } else if (rl->kind == WASM_RELOC_IC) {
+                uint32_t idx = ic_base[i] + rl->arg;
+                if (rl->depth) {
+                    idx = WASM_IC_HDR_GLOBAL + 2 * idx + rl->depth - 1;
+                }
                 for (int k = 0; k < 5; k++) {
                     bb_u8(&code, (idx & 0x7f) | (k < 4 ? 0x80 : 0));
                     idx >>= 7;
@@ -794,6 +899,16 @@ static int compile_region(WasmTBHeader *h)
                     idx >>= 7;
                 }
                 pos += 5;
+            } else if (rl->kind == WASM_RELOC_IC) {
+                uint32_t idx = ic_base[i] + rl->arg;
+                if (rl->depth) {
+                    idx = WASM_IC_HDR_GLOBAL + 2 * idx + rl->depth - 1;
+                }
+                for (int k = 0; k < 5; k++) {
+                    bb_u8(&bcode[i], (idx & 0x7f) | (k < 4 ? 0x80 : 0));
+                    idx >>= 7;
+                }
+                pos += 5;
             } else if (rl->kind == WASM_RELOC_HINT && region_hints) {
                 bb_uleb(&bhints[i], bcode[i].len);
                 bb_uleb(&bhints[i], 1);
@@ -837,7 +952,7 @@ static int compile_region(WasmTBHeader *h)
     bb_section(&mod, 10, &sec);
 
     XPHASE_SET(XPHASE_VCPU, "jit_compile");
-    fidx = wasm32_instantiate(mod.p, mod.len, hq, nh, 0, 0);
+    fidx = wasm32_instantiate(mod.p, mod.len, hq, nh, 0, 0, ic_count);
     double t0 = t_start, t1 = emscripten_get_now();
     XPHASE_SET(XPHASE_VCPU, "dispatch");
     jit_debt_ms += t1 - t0;     /* incl. region assembly */
@@ -895,11 +1010,15 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
 
     wasm_ctx.env = env;
     wasm_ctx.tb_ptr = (void *)v_tb_ptr;
+    wasm_ctx.ic_source = 0;
     for (;;) {
         WasmTBHeader *h = wasm_ctx.tb_ptr;
         uintptr_t res;
         int fidx;
+        uint32_t ic_source = wasm_ctx.ic_source;
+        uint32_t ic_slot = wasm_ctx.ic_slot;
 
+        wasm_ctx.ic_source = 0;
         trysleep();
         if (!first) {
             XSTAT_INC(n_tb_exec);
@@ -909,6 +1028,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         wasm32_cur_tb = h;
         fidx = get_instance(h);
         if (fidx > 0) {
+            if (ic_source) {
+                XSTAT_INC(n_ic_fill);
+                wasm32_ic_fill(ic_source, ic_slot, h, fidx);
+            }
             XSTAT_ADD(n_guest_insn, h->icount);
             wasm_ctx.do_init = 1;
             XPHASE_SET(XPHASE_VCPU, NULL);
@@ -951,6 +1074,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 wasm32_jit_debug--;
                 fprintf(stderr, "[jit] instantiate tb=%p size=%u imports=%u "
                         "fidx=%d\n", h, h->wasm_size, h->import_size / 4, fidx);
+            }
+            if (ic_source) {
+                XSTAT_INC(n_ic_fill);
+                wasm32_ic_fill(ic_source, ic_slot, h, fidx);
             }
             wasm_ctx.do_init = 1;
             XPHASE_SET(XPHASE_VCPU, NULL);

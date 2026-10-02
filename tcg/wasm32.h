@@ -28,6 +28,9 @@ typedef struct WasmContext {
     uintptr_t *tci_tb_ptr;  /* 12: &tci_tb_ptr, the helper return address */
     uint32_t do_init;       /* 16: 1 = start the block from its entry */
     void *relink;           /* 20: TB header whose successor links went stale */
+    uint32_t rewind_func;   /* 24: module that saved the Asyncify registers */
+    uint32_t ic_source;     /* 28: pending miss: source module's function */
+    uint32_t ic_slot;       /* 32: pending miss: table slot in that module */
 } WasmContext;
 
 #define WASM_CTX_ENV_OFF        0
@@ -36,6 +39,9 @@ typedef struct WasmContext {
 #define WASM_CTX_TCI_TB_PTR_OFF 12
 #define WASM_CTX_DO_INIT_OFF    16
 #define WASM_CTX_RELINK_OFF     20
+#define WASM_CTX_REWIND_FUNC_OFF 24
+#define WASM_CTX_IC_SOURCE_OFF 28
+#define WASM_CTX_IC_SLOT_OFF   32
 
 typedef struct WasmTBHeader {
     const uint32_t *tci_ptr;    /* TCI bytecode entry */
@@ -74,7 +80,7 @@ typedef struct WasmTBHeader {
     uint32_t body_b_len;
     const struct WasmReloc *reloc_b_ptr;
     uint32_t reloc_b_count;
-    uint32_t pad3;
+    uint32_t ic_count;          /* direct/indirect exit sites in this TB */
 } WasmTBHeader;
 
 /*
@@ -93,8 +99,12 @@ typedef struct WasmTBHeader {
  * function's tail call to its rewind function (entry body only).
  */
 enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3,
-       WASM_RELOC_RETCALL = 4 };
+       WASM_RELOC_RETCALL = 4,
+       /* 5-byte IC operand: depth=0 slot, 1 header global, 2 countdown. */
+       WASM_RELOC_IC = 5 };
 #define WASM_TB_LOCALS_LEN 9    /* locals declaration of a TB function */
+#define WASM_IC_SELF_GLOBAL 17 /* after registers and BLOCK_PTR */
+#define WASM_IC_HDR_GLOBAL  18 /* pairs of header/miss-countdown globals */
 typedef struct WasmReloc {
     uint32_t off;
     uint8_t kind;
@@ -122,11 +132,16 @@ QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, instance) != WASM_TB_INSTANCE_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_hdr) != WASM_TB_LINK_HDR_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmTBHeader, link_fidx) != WASM_TB_LINK_FIDX_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmContext, relink) != WASM_CTX_RELINK_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmContext, rewind_func) !=
+                  WASM_CTX_REWIND_FUNC_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmContext, ic_source) != WASM_CTX_IC_SOURCE_OFF);
+QEMU_BUILD_BUG_ON(offsetof(WasmContext, ic_slot) != WASM_CTX_IC_SLOT_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, func_idx) != WASM_INSTANCE_FIDX_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
 
 /* Blocks run by the interpreter this many times get compiled to wasm. */
 extern int wasm32_jit_threshold;
+bool wasm32_ic_enabled(void);
 
 extern __thread WasmContext wasm_ctx;
 
