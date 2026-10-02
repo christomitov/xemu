@@ -105,6 +105,8 @@ struct SurfaceBinding {
     bool initialized;
 };
 
+typedef struct PendingWriteback PendingWriteback;
+
 typedef struct PGRAPHWgpuSurfaceState {
     /* required by core (renderer.c process_pending / savevm) */
     bool downloads_pending;
@@ -115,6 +117,10 @@ typedef struct PGRAPHWgpuSurfaceState {
     QTAILQ_HEAD(, SurfaceBinding) surfaces;
     QTAILQ_HEAD(, SurfaceBinding) invalid_surfaces;
     unsigned int num_retained;
+
+    /* evicted surfaces whose VRAM copy is still on its way (surface.c) */
+    QTAILQ_HEAD(, PendingWriteback) pending_wb;
+    bool wb_flush_requested;
 
     WgpuSurfaceFormatInfo kelvin_surface_zeta_map[3];
 
