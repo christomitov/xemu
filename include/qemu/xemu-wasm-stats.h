@@ -27,6 +27,8 @@
     X(ns_jit_compile)                                                        \
     X(n_jit_threshold)   /* current adaptive JIT threshold (gauge) */        \
     X(n_jit_instances)   /* live wasm modules (gauge) */                     \
+    X(n_jit_entries)     /* XEMU_WASM_JIT_ENTRY_PROF: dispatcher calls */     \
+    X(n_jit_alias_entries) /* ... through a shared non-root member */        \
     X(n_jit_evict)       /* modules dropped at the instance cap */           \
     X(n_jit_relink)      /* modules re-instantiated with fresh links */      \
     X(n_tb_linked)       /* TB transitions via a successor link */           \

@@ -617,6 +617,37 @@ EMSCRIPTEN_KEEPALIVE void xemu_wasm_helper_prof_dump(void)
 }
 #endif
 
+/*
+ * Group helper bodies without adding per-call probes or JS wrappers.
+ * Keep individual names in the separate helper-count profiler.
+ */
+static const char *wasm_helper_phase_name(const TCGHelperInfo *info)
+{
+    const char *n = info->name;
+
+    if (!n) {
+        return NULL;
+    }
+    if (g_str_has_prefix(n, "gvec_")) {
+        return "gvec";
+    }
+#ifdef XBOX
+    if (g_str_has_suffix(n, "_mmx") || !strcmp(n, "emms") ||
+        !strcmp(n, "femms")) {
+        return "mmx";
+    }
+    if (!strcmp(n, "fxsave") || !strcmp(n, "fxrstor") ||
+        g_str_has_prefix(n, "xsave") || g_str_has_prefix(n, "xrstor")) {
+        return "fpu_state";
+    }
+    /* Other current i386 f* helpers are x87, except the TLB flush helper. */
+    if (n[0] == 'f' && !g_str_has_prefix(n, "flush_")) {
+        return "x87";
+    }
+#endif
+    return n;
+}
+
 /* publish what the vCPU is doing for the sampling profile (NULL = jit) */
 static void wasm_phase(TCGContext *s, const char *name)
 {
@@ -1320,7 +1351,7 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
     wasm_save_regs(s);
-    wasm_phase(s, info->name);
+    wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     if (!ld) {
@@ -1387,7 +1418,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     if (may_suspend) {
         wasm_save_regs(s);
     }
-    wasm_phase(s, info->name);
+    wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     wasm_call_results(s, rettype);
@@ -3493,7 +3524,7 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_count_helper(s, func, info);
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
-    wasm_phase(s, info->name);
+    wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     while (nest--) {
@@ -3756,7 +3787,7 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
     wasm_save_regs(s);
-    wasm_phase(s, info->name);
+    wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
     wasm_handle_unwinding(s);
