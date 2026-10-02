@@ -15,20 +15,21 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = (ROOT / "tcg/wasm32/tcg-target.c.inc").read_text()
+DRIVER = (ROOT / "tcg/wasm32.c").read_text()
 HEADER = (ROOT / "include/qemu/xemu-wasm-stats.h").read_text()
 FIELDS = re.findall(r"\bX\((\w+)\)", HEADER)
 
 
-def function(name):
-    match = re.search(r"(?m)^static [^\n;]*\b" + name +
-                      r"\([^;]*?\)\n\{", SOURCE)
+def function(name, source=SOURCE):
+    match = re.search(r"(?m)^(?:static )?[^\n;]*\b" + name +
+                      r"\([^;]*?\)\n\{", source)
     assert match, name
     depth = 1
     pos = match.end()
     while depth:
-        depth += (SOURCE[pos] == "{") - (SOURCE[pos] == "}")
+        depth += (source[pos] == "{") - (source[pos] == "}")
         pos += 1
-    return SOURCE[match.start():pos]
+    return source[match.start():pos]
 
 
 C = r"""
@@ -37,6 +38,7 @@ C = r"""
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #define EMSCRIPTEN 1
 #define TB_EXIT_MASK 3
 #define TB_EXIT_IDX0 0
@@ -89,10 +91,19 @@ C += "typedef struct {\n" + "\n".join(
 for name in ["wasm_ctx_store_i32_const", "wasm_count", "wasm_profile_exits",
              "wasm_count_exit_tb", "wasm_count_goto_exit", "wasm_exit_tb"]:
     C += function(name) + "\n"
+for name in ["wasm32_ic_mode", "wasm32_ic_enabled", "wasm32_ic_for_exit"]:
+    C += function(name, DRIVER) + "\n"
 C += r"""
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 2 || argc == 3);
     setenv("XEMU_WASM_JIT_ENTRY_PROF", argv[1], 1);
+    const char *mode = argc == 3 ? argv[2] : "unset";
+    if (strcmp(mode, "unset")) { setenv("XEMU_WASM_IC", mode, 1); }
+    else { unsetenv("XEMU_WASM_IC"); }
+    bool all = mode[0] == '1', indirect = all || mode[0] == '2';
+    assert(wasm32_ic_enabled() == indirect);
+    assert(wasm32_ic_for_exit(false) == all);
+    assert(wasm32_ic_for_exit(true) == indirect);
     const unsigned args[] = {0, 0x100, 0x101, 0x103, 0x102};
     for (unsigned i = 0; i < 7; i++) {
         TCGContext s = {0};
@@ -183,6 +194,10 @@ with tempfile.TemporaryDirectory(prefix="test-wasm-exits-") as directory:
                    ["-std=gnu11", "-O2", str(p / "emit.c"),
                     "-o", str(p / "emit")],
                    check=True, timeout=30)
+    for mode in ["unset", "0", "1", "2", "3", "invalid"]:
+        subprocess.run([str(p / "emit"), "0", mode], check=True,
+                       stdout=subprocess.DEVNULL, timeout=10)
+    print("PASS: IC default/off/all/indirect-only/invalid mode policies")
     for enabled in [0, 1]:
         lines = subprocess.check_output([str(p / "emit"), str(enabled)],
                                         text=True, timeout=10).splitlines()

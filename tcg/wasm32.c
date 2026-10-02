@@ -77,16 +77,28 @@ EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
 
 __thread WasmContext wasm_ctx;
 
+/* 0: off (default), 1: all exits, 2: validated goto_ptr exits only. */
+static int wasm32_ic_mode(void)
+{
+    static int mode = -1;
+
+    if (mode < 0) {
+        const char *e = getenv("XEMU_WASM_IC");
+        mode = e && *e == '1' ? 1 : e && *e == '2' ? 2 : 0;
+    }
+    return mode;
+}
+
 bool wasm32_ic_enabled(void)
 {
-    static int enabled = -1;
+    return wasm32_ic_mode() != 0;
+}
 
-    if (enabled < 0) {
-        /* opt-in (XEMU_WASM_IC=1) until it has run clean in the browser */
-        const char *e = getenv("XEMU_WASM_IC");
-        enabled = e && *e == '1';
-    }
-    return enabled;
+bool wasm32_ic_for_exit(bool indirect)
+{
+    int mode = wasm32_ic_mode();
+
+    return mode == 1 || (mode == 2 && indirect);
 }
 
 /*
