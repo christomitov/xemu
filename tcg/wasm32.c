@@ -59,6 +59,7 @@ static void jit_budget_update(double now)
 #endif
 }
 static int wasm32_jit_debug;
+static bool jit_entry_profile;
 static bool region_shared; /* opt-in stable multi-entry ownership */
 
 /*
@@ -407,6 +408,8 @@ static void wasm32_init(void)
     if (env) {
         wasm32_jit_debug = atoi(env);
     }
+    env = getenv("XEMU_WASM_JIT_ENTRY_PROF");
+    jit_entry_profile = env && *env == '1';
     exec_thread = pthread_self();
     wasm32_vcpu_tb_ptr = (void *volatile *)&wasm_ctx.tb_ptr;
     wasm_ctx.stack = g_malloc0(TCG_STATIC_CALL_ARGS_SIZE +
@@ -1258,6 +1261,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
 {
     static bool initdone;
     bool first = true;
+    bool profile;
 
     if (unlikely(!initdone)) {
         wasm32_init();
@@ -1269,6 +1273,8 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         abort();
     }
 
+    /* Keep the diagnostic gate loop-invariant; counters can be very hot. */
+    profile = jit_entry_profile;
     wasm_ctx.env = env;
     wasm_ctx.tb_ptr = (void *)v_tb_ptr;
     wasm_ctx.ic_source = 0;
@@ -1294,6 +1300,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 wasm32_ic_fill(ic_source, ic_slot, h, fidx);
             }
             XSTAT_ADD(n_guest_insn, h->icount);
+            if (profile) {
+                XSTAT_INC(n_jit_entries);
+                XSTAT_ADD(n_jit_alias_entries, h->instance_member != 0);
+            }
             wasm_ctx.do_init = 1;
             XPHASE_SET(XPHASE_VCPU, NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
@@ -1341,6 +1351,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             if (ic_source) {
                 XSTAT_INC(n_ic_fill);
                 wasm32_ic_fill(ic_source, ic_slot, h, fidx);
+            }
+            if (profile) {
+                XSTAT_INC(n_jit_entries);
+                XSTAT_ADD(n_jit_alias_entries, h->instance_member != 0);
             }
             wasm_ctx.do_init = 1;
             XPHASE_SET(XPHASE_VCPU, NULL);

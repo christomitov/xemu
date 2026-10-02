@@ -606,29 +606,35 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
 }
 
 /*
- * Sampling profile (see xemu-wasm-stats.h): the main loop calls
- * xemu_wasm_phase_sample() every iteration; xemu_wasm_phase_top() returns
- * and resets the counts since its last call.
+ * Sampling profile (see xemu-wasm-stats.h): a dedicated thread calls
+ * xemu_wasm_phase_sample(); xemu_wasm_phase_top() returns and resets the
+ * counts since its last call.
  */
 const char *volatile xemu_wasm_phase[2];
 
-#define PHASE_SLOTS 128
+#define PHASE_SLOTS 512
 static struct {
     const char *name;
     uint32_t n;
 } phase_prof[2][PHASE_SLOTS];
+static uint32_t phase_overflow[2];
 
 static void phase_bump(int t, const char *name)
 {
     uintptr_t h = ((uintptr_t)name >> 2) * 2654435761u;
     for (unsigned i = 0; i < PHASE_SLOTS; i++) {
         unsigned slot = (h + i) & (PHASE_SLOTS - 1);
-        if (phase_prof[t][slot].name == name || !phase_prof[t][slot].name) {
-            phase_prof[t][slot].name = name;
-            phase_prof[t][slot].n++;
+        const char *old = qatomic_read(&phase_prof[t][slot].name);
+        if (old == name || !old) {
+            /* Single sampler writer; publish before incrementing the count. */
+            if (!old) {
+                qatomic_set(&phase_prof[t][slot].name, name);
+            }
+            qatomic_inc(&phase_prof[t][slot].n);
             return;
         }
     }
+    qatomic_inc(&phase_overflow[t]);
 }
 
 /*
@@ -653,35 +659,64 @@ void xemu_wasm_phase_sample(void)
     }
 }
 
-/* "vcpu|name=n;name=n;...\ngpu|..." busiest first, counts since last call */
+/*
+ * "vcpu|name=n;name=n;...\ngpu|...", counts since last call. Keep the full
+ * denominator: top-24 omissions are "phase_other", new-name overflow is
+ * "phase_overflow".
+ * Otherwise many small helper phases silently inflate the reported jit share.
+ */
 EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_phase_top(void)
 {
-    static char buf[2048];
+    static char buf[8192];
     static const char *const label[2] = { "vcpu", "gpu" };
     int len = 0;
 
     for (int t = 0; t < 2; t++) {
-        bool used[PHASE_SLOTS] = { false };
+        uint32_t counts[PHASE_SLOTS];
+        const char *names[PHASE_SLOTS];
+        uint64_t other = 0;
+        uint32_t overflow = qatomic_xchg(&phase_overflow[t], 0);
+        /* Reserve each thread's tail and the following thread's output. */
+        int limit = (t + 1) * sizeof(buf) / 2 - 96;
+
+        for (int i = 0; i < PHASE_SLOTS; i++) {
+            /* Do not lose samples to a concurrent reset/increment race. */
+            counts[i] = qatomic_xchg(&phase_prof[t][i].n, 0);
+            names[i] = qatomic_read(&phase_prof[t][i].name);
+            other += counts[i];
+        }
         len += snprintf(buf + len, sizeof(buf) - len, "%s|", label[t]);
         for (int k = 0; k < 24; k++) {
-            int best = -1;
+            int best = -1, n;
             for (int i = 0; i < PHASE_SLOTS; i++) {
-                if (!used[i] && phase_prof[t][i].n &&
-                    (best < 0 || phase_prof[t][i].n > phase_prof[t][best].n)) {
+                if (counts[i] && names[i] &&
+                    (best < 0 || counts[i] > counts[best])) {
                     best = i;
                 }
             }
-            if (best < 0 || len > (int)sizeof(buf) - 100) {
+            if (best < 0 || len >= limit) {
                 break;
             }
-            used[best] = true;
-            len += snprintf(buf + len, sizeof(buf) - len, "%s=%u;",
-                            phase_prof[t][best].name, phase_prof[t][best].n);
+            n = snprintf(buf + len, limit - len, "%s=%u;",
+                         names[best], counts[best]);
+            if (n < 0 || n >= limit - len) {
+                /* Replace any partial name with the accounted tail below. */
+                buf[len] = 0;
+                break;
+            }
+            len += n;
+            other -= counts[best];
+            counts[best] = 0;
+        }
+        if (other) {
+            len += snprintf(buf + len, sizeof(buf) - len,
+                            "phase_other=%" PRIu64 ";", other);
+        }
+        if (overflow) {
+            len += snprintf(buf + len, sizeof(buf) - len,
+                            "phase_overflow=%u;", overflow);
         }
         len += snprintf(buf + len, sizeof(buf) - len, "\n");
-        for (int i = 0; i < PHASE_SLOTS; i++) {
-            phase_prof[t][i].n = 0;
-        }
     }
     return buf;
 }
