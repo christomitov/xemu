@@ -2629,6 +2629,18 @@ void pgraph_wgpu_surface_update(NV2AState *d, bool upload, bool color_write,
         }
 
         if (pg->surface_color.buffer_dirty) {
+            /*
+             * Shape changes unbind here, before update_surface_part: start
+             * the outgoing target's early copy now too (e.g. a bloom chain
+             * stepping 40x30 -> 80x30 just before the CPU reads 40x30).
+             */
+            SurfaceBinding *out = r->color_binding;
+            if (out && out->draw_dirty && eager_is_hot(out) &&
+                (size_t)out->width * out->height <= 128 * 128 &&
+                !(out->eager_buf && out->eager_epoch == out->gpu_epoch)) {
+                pgraph_wgpu_ensure_not_in_render_pass(pg);
+                eager_readback_schedule(d, out);
+            }
             unbind_surface(d, true);
         }
 
