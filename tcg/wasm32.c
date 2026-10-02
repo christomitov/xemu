@@ -59,6 +59,7 @@ static void jit_budget_update(double now)
 #endif
 }
 static int wasm32_jit_debug;
+static bool region_shared; /* opt-in stable multi-entry ownership */
 
 /*
  * For the page's hot-code sampler / test harnesses: the TB being run. That
@@ -267,7 +268,10 @@ static void add_instance(WasmTBHeader *h, int func_idx)
     e->tb = h;
     e->func_idx = func_idx;
     e->used = 1;
+    e->members = NULL;
+    e->n_members = 0;
     h->instance = e;
+    h->instance_member = 0;
     instances_alive++;
 
     /*
@@ -290,7 +294,7 @@ static int get_instance(WasmTBHeader *h)
     if (e == NULL) {
         return 0;
     }
-    if (e->tb != h) {
+    if (!wasm_instance_owns(e, h)) {
         /* dropped (or its slot reused): recompile at the next chance */
         XSTAT_INC(n_tci_dropped);
         h->instance = NULL;
@@ -326,6 +330,9 @@ static void remove_instances(void)
         }
         wasm32_remove_function(e->func_idx);
         e->tb = NULL;
+        e->n_members = 0;
+        g_clear_pointer(&e->members, g_free);
+        /* Do not touch old headers: a TB flush may have reused their bytes. */
         free_slots[n_free++] = e - instances;
         removed++;
     }
@@ -459,7 +466,7 @@ static int compile_tb(WasmTBHeader *h, int depth)
     int fidx;
 
     /* ICs are mutable; don't also retain unused immutable chain imports. */
-    if (!wasm32_ic_enabled()) {
+    if (!wasm32_ic_enabled() && !region_shared) {
         compute_links(h, depth, links);
     }
     XPHASE_SET(XPHASE_VCPU, "jit_compile");
@@ -482,22 +489,33 @@ static int compile_tb(WasmTBHeader *h, int depth)
 }
 
 /*
- * Region modules (on by default; XEMU_WASM_REGION=0 disables): a hot TB and its hot, currently
- * chained successors are merged into one wasm function. Each member keeps
- * its own body unchanged (prologue with the gen_tb_start interrupt check,
+ * Region modules (on by default; XEMU_WASM_REGION=0 disables): a hot TB and
+ * its hot, currently chained successors are merged into one wasm function.
+ * Each member keeps its own body unchanged (prologue with the gen_tb_start
+ * interrupt check,
  * TCI GETPC positions, exits); a br_table loop selects the member to run,
  * and at every goto_tb/goto_ptr exit whose successor header is a member,
  * the exit branches to that member instead of returning to this dispatcher.
- * Entry is only through the entry TB's (freshly initialised) header; the
- * guards compare runtime successor headers, so unlinked/invalidated
- * successors fall through to the normal exit. tb_flush cannot happen while
- * a region runs or is Asyncify-suspended (single vCPU thread).
+ * XEMU_WASM_REGION_SHARE=1 assigns one stable instance to every member, so
+ * entries from different callers accumulate hotness on the same function.
+ * It never steals owned members or grows/rebuilds an existing group. Legacy
+ * mode publishes only the root and can copy already-owned successors.
+ * Guards still validate live successor headers; unlinked/invalidated targets
+ * fall through to the normal exit. tb_flush cannot happen while a region
+ * runs or is Asyncify-suspended (single vCPU thread).
  */
-#define REGION_MAX          16
+#define REGION_MAX          32
+#define REGION_LEGACY_MAX   16
 #define REGION_MAX_BYTES    (128 * 1024) /* member entry + rewind bodies */
+/* Shared groups have bounded entry functions, not arbitrarily wide traces. */
+#define REGION_ENTRY_INPUT_MAX (16 * 1024)
+#define REGION_ENTRY_MAX    (32 * 1024)
+#define REGION_CFG_MAX      1024
+#define REGION_DEPTH_MAX    96
 #define REGION_NUM_GLOBALS  17      /* TCG regs + BLOCK_PTR (backend) */
 #define REGION_HELPER_START 4       /* HELPER_IDX_START (backend) */
 #define REGION_CUR_LOCAL    25      /* after the TB locals (backend) */
+#define REGION_INST_LOCAL   26      /* shared-region ownership probe */
 #define REGION_L32_0        1
 
 static int region_enabled = -1;
@@ -623,11 +641,127 @@ static WasmTBHeader *tb_link_target(TranslationBlock *tb, int n)
     return NULL;
 }
 
+/*
+ * Decode only the scalar instruction set emitted by this backend. Unknown
+ * extensions decline aggregation rather than weakening the CFG bound.
+ */
+static bool region_leb(const uint8_t **p, const uint8_t *end,
+                       unsigned max, uint32_t *out)
+{
+    uint32_t v = 0;
+
+    for (unsigned i = 0; i < max && *p < end; i++) {
+        uint8_t c = *(*p)++;
+        if (i < 5) {
+            v |= (uint32_t)(c & 127) << (7 * i);
+        }
+        if (!(c & 128)) {
+            *out = v;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * Bodies exclude locals and their final function end. Score counts structured
+ * controls, branch edges and returns; depth is actual lexical nesting.
+ */
+static bool region_cfg(const uint8_t *p, size_t len,
+                       unsigned *score_out, unsigned *depth_out)
+{
+    const uint8_t *end = p + len;
+    unsigned depth = 0, peak = 0, score = 0;
+    uint32_t v;
+
+    while (p < end) {
+        uint8_t op = *p++;
+        unsigned imms = 0;
+        if (op >= 2 && op <= 4) {
+            depth++;
+            peak = MAX(peak, depth);
+            score++;
+            imms = 1;
+        } else if (op == 0x0b) {
+            if (!depth) {
+                return false;
+            }
+            depth--;
+        } else if (op == 0x0c || op == 0x0d || op == 0x12) {
+            score++;
+            imms = 1;
+        } else if (op == 0x0e) {
+            if (!region_leb(&p, end, 5, &v) || v >= end - p) {
+                return false;
+            }
+            score += v + 1;
+            imms = v + 1;
+        } else if (op == 0x0f) {
+            score++;
+        } else if (op == 0x10 || (op >= 0x20 && op <= 0x24) ||
+                   op == 0x3f || op == 0x40 || op == 0x41) {
+            imms = 1;
+        } else if (op == 0x11 || op == 0x13 ||
+                   (op >= 0x28 && op <= 0x3e)) {
+            score += op == 0x13;
+            imms = 2;
+        } else if (op == 0x42) {
+            if (!region_leb(&p, end, 10, &v)) {
+                return false;
+            }
+        } else if (op == 0x43 || op == 0x44) {
+            unsigned n = op == 0x43 ? 4 : 8;
+            if (end - p < n) {
+                return false;
+            }
+            p += n;
+        } else if (op == 0xfc) {
+            if (!region_leb(&p, end, 5, &v) || v > 7) {
+                return false;
+            }
+        } else if (!(op == 0 || op == 1 || op == 5 || op == 0x1a ||
+                     op == 0x1b || (op >= 0x45 && op <= 0xc4))) {
+            return false;
+        }
+        for (unsigned i = 0; i < imms; i++) {
+            if (!region_leb(&p, end, 5, &v)) {
+                return false;
+            }
+        }
+        if (score > REGION_CFG_MAX || peak > REGION_DEPTH_MAX) {
+            return false;
+        }
+    }
+    *score_out = score;
+    *depth_out = peak;
+    return depth == 0;
+}
+
 static bool region_member_ok(WasmTBHeader *c)
 {
-    return c->wasm_ptr && c->body_len && c->reloc_ptr && c->reloc_b_ptr &&
-           c->counter != INT32_MIN &&
-           (c->counter >= wasm32_jit_threshold / 4 || c->instance);
+    if (!c->wasm_ptr || !c->body_len || !c->reloc_ptr || !c->reloc_b_ptr ||
+        c->counter == INT32_MIN ||
+        (c->counter < wasm32_jit_threshold / 4 && !c->instance)) {
+        return false;
+    }
+    if (region_shared) {
+        unsigned score, depth;
+        /* Never steal a live member or replace an already warming function. */
+        if (wasm_instance_owns(c->instance, c)) {
+            return false;
+        }
+        if (!c->cfg_score) {
+            if (!region_cfg(c->wasm_ptr + c->body_off, c->body_len,
+                            &score, &depth)) {
+                c->cfg_score = UINT16_MAX;
+            } else {
+                c->cfg_score = MAX(1, score);
+                c->cfg_depth = depth;
+            }
+        }
+        return c->cfg_score <= REGION_CFG_MAX;
+    }
+    return true;
 }
 
 /* i32.const addr; i64.load; +1; i64.store (a stats counter) */
@@ -663,6 +797,54 @@ static void region_guard(ByteBuf *b, WasmTBHeader *t_hdr, int t, int br_depth)
     bb_u8(b, 0x0b);
 }
 
+/*
+ * A validated indirect target belongs to this function iff its instance has
+ * our function ID AND its indexed member pointer matches. The latter rejects
+ * old header aliases after eviction/slot reuse. No linear search on hot rets.
+ */
+static void region_shared_guard(ByteBuf *b, int n, int br_depth)
+{
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+    bb_u8(b, 0x04); bb_u8(b, 0x40);              /* target != NULL */
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+    bb_u8(b, 0x28); bb_u8(b, 2); bb_uleb(b, WASM_TB_INSTANCE_OFF);
+    bb_u8(b, 0x22); bb_uleb(b, REGION_INST_LOCAL);
+    bb_u8(b, 0x04); bb_u8(b, 0x40);              /* instance != NULL */
+    bb_u8(b, 0x20); bb_uleb(b, REGION_INST_LOCAL);
+    bb_u8(b, 0x28); bb_u8(b, 2); bb_uleb(b, WASM_INSTANCE_FIDX_OFF);
+    bb_u8(b, 0x23); bb_uleb(b, WASM_IC_SELF_GLOBAL);
+    bb_u8(b, 0x46);
+    bb_u8(b, 0x04); bb_u8(b, 0x40);              /* this region */
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+    bb_u8(b, 0x28); bb_u8(b, 2); bb_uleb(b, WASM_TB_MEMBER_OFF);
+    bb_u8(b, 0x22); bb_uleb(b, REGION_CUR_LOCAL);
+    bb_u8(b, 0x41); bb_sleb(b, n);
+    bb_u8(b, 0x49);                              /* i32.lt_u */
+    bb_u8(b, 0x04); bb_u8(b, 0x40);
+    bb_u8(b, 0x20); bb_uleb(b, REGION_INST_LOCAL);
+    bb_u8(b, 0x28); bb_u8(b, 2); bb_uleb(b, WASM_INSTANCE_MEMBERS_OFF);
+    bb_u8(b, 0x20); bb_uleb(b, REGION_CUR_LOCAL);
+    bb_u8(b, 0x41); bb_sleb(b, 2);
+    bb_u8(b, 0x74);                              /* i32.shl */
+    bb_u8(b, 0x6a);                              /* i32.add */
+    bb_u8(b, 0x28); bb_u8(b, 2); bb_u8(b, 0);
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+    bb_u8(b, 0x46);
+    bb_u8(b, 0x04); bb_u8(b, 0x40);              /* live member slot */
+    bb_u8(b, 0x20); bb_u8(b, 0);
+    bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+    bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_TB_PTR_OFF);
+    bb_u8(b, 0x20); bb_u8(b, 0);
+    bb_u8(b, 0x41); bb_u8(b, 1);
+    bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_DO_INIT_OFF);
+    bb_count(b, &xemu_wasm_stats.n_tb_exec);
+    bb_count(b, &xemu_wasm_stats.n_tb_region);
+    bb_u8(b, 0x0c); bb_uleb(b, br_depth + 5);
+    for (int i = 0; i < 5; i++) {
+        bb_u8(b, 0x0b);
+    }
+}
+
 /* Compile @h as a region with its hot chained successors; 0 if not worth it. */
 static int compile_region(WasmTBHeader *h)
 {
@@ -679,20 +861,35 @@ static int compile_region(WasmTBHeader *h)
 
     double t_start = emscripten_get_now();
     uint32_t bytes = h->body_len + h->body_b_len;
+    uint32_t entry_bytes = h->body_len;
+    unsigned score = 0, max_depth = 0;
+    int limit = region_shared ? REGION_MAX : REGION_LEGACY_MAX;
 
+    if (!region_member_ok(h)) {
+        return 0;
+    }
+    score = h->cfg_score;
+    max_depth = h->cfg_depth;
     m[n++] = h;
-    for (int i = 0; i < n && n < REGION_MAX; i++) {
+    for (int i = 0; i < n && n < limit; i++) {
         TranslationBlock *tb = tcg_tb_lookup((uintptr_t)m[i]);
-        for (int s = 0; s < 2 && n < REGION_MAX; s++) {
+        for (int s = 0; s < 2 && n < limit; s++) {
             WasmTBHeader *c = tb_link_target(tb, s);
             bool dup = false;
             for (int j = 0; j < n; j++) {
                 dup |= m[j] == c;
             }
             if (c && !dup && region_member_ok(c) &&
-                bytes + c->body_len + c->body_b_len <= REGION_MAX_BYTES) {
+                bytes + c->body_len + c->body_b_len <= REGION_MAX_BYTES &&
+                (!region_shared ||
+                 (entry_bytes + c->body_len <= REGION_ENTRY_INPUT_MAX &&
+                  score + c->cfg_score + 16 * (n + 1) < REGION_CFG_MAX &&
+                  MAX(max_depth, c->cfg_depth) + n + 6 < REGION_DEPTH_MAX))) {
                 m[n++] = c;
                 bytes += c->body_len + c->body_b_len;
+                entry_bytes += c->body_len;
+                score += c->cfg_score;
+                max_depth = MAX(max_depth, c->cfg_depth);
             }
         }
     }
@@ -765,7 +962,8 @@ static int compile_region(WasmTBHeader *h)
         bb_uleb(&sec, 0);
     }
     bb_section(&mod, 3, &sec);
-    unsigned ic_globals = wasm32_ic_enabled() ? 1 + 2 * ic_count : 0;
+    unsigned ic_globals = (wasm32_ic_enabled() || region_shared) ?
+                          1 + 2 * ic_count : 0;
     QEMU_BUILD_BUG_ON(REGION_NUM_GLOBALS != WASM_IC_SELF_GLOBAL);
     bb_uleb(&sec, REGION_NUM_GLOBALS + ic_globals);
     for (int i = 0; i < REGION_NUM_GLOBALS; i++) {
@@ -794,9 +992,22 @@ static int compile_region(WasmTBHeader *h)
     }
     bb_section(&mod, 7, &sec);
 
-    /* the function: TB locals + cur */
-    bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e\x01\x7f", 11);
-    for (int j = 1; j < n; j++) {         /* resume/entry at member j */
+    /* the function: TB locals + cur (+ ownership scratch for shared groups) */
+    bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
+    bb_u8(&code, region_shared ? 2 : 1); bb_u8(&code, 0x7f);
+    if (region_shared) {
+        /*
+         * Fresh calls were ownership-validated by the dispatcher/IC. During
+         * rewind, the group's membership cannot change (single vCPU).
+         */
+        bb_u8(&code, 0x20); bb_u8(&code, 0);
+        bb_u8(&code, 0x28); bb_u8(&code, 2);
+        bb_uleb(&code, WASM_CTX_TB_PTR_OFF);
+        bb_u8(&code, 0x28); bb_u8(&code, 2); bb_uleb(&code, WASM_TB_MEMBER_OFF);
+        bb_u8(&code, 0x21); bb_uleb(&code, REGION_CUR_LOCAL);
+    }
+    /* Legacy resume/entry at member j. */
+    for (int j = 1; !region_shared && j < n; j++) {
         bb_u8(&code, 0x20); bb_uleb(&code, 0);
         bb_u8(&code, 0x28); bb_u8(&code, 2); bb_uleb(&code, WASM_CTX_TB_PTR_OFF);
         bb_u8(&code, 0x41); bb_sleb(&code, (int32_t)(uintptr_t)m[j]);
@@ -864,8 +1075,12 @@ static int compile_region(WasmTBHeader *h)
                 /* depth from here to top: TB loop, body level, blocks */
                 int d = rl->depth + 1 + top;
                 if (rl->arg == 0xff) {
-                    for (int t = 0; t < n; t++) {
-                        region_guard(&code, m[t], t, d);
+                    if (region_shared) {
+                        region_shared_guard(&code, n, d);
+                    } else {
+                        for (int t = 0; t < n; t++) {
+                            region_guard(&code, m[t], t, d);
+                        }
                     }
                 } else {
                     WasmTBHeader *c = tb_link_target(tb, rl->arg);
@@ -882,6 +1097,16 @@ static int compile_region(WasmTBHeader *h)
     bb_u8(&code, 0x0b);                             /* end loop */
     bb_u8(&code, 0x00);                             /* unreachable */
     bb_u8(&code, 0x0b);                             /* end func */
+    if (region_shared &&
+        (code.len > REGION_ENTRY_MAX ||
+         !region_cfg(code.p + 11, code.len - 12, &score, &max_depth))) {
+        XSTAT_INC(n_region_cap);
+        g_free(mod.p);
+        g_free(sec.p);
+        g_free(code.p);
+        g_free(hints.p);
+        return 0;
+    }
     /* members' rewind functions: B bodies with their helper calls remapped */
     ByteBuf bcode[REGION_MAX] = { 0 }, bhints[REGION_MAX] = { 0 };
     int nbh[REGION_MAX] = { 0 };
@@ -961,6 +1186,16 @@ static int compile_region(WasmTBHeader *h)
     XSTAT_INC(n_jit_compile);
     XSTAT_INC(n_region_compile);
     XSTAT_ADD(n_region_members, n);
+    if (region_shared) {
+        XSTAT_INC(n_region_shared);
+        XSTAT_ADD(n_region_aliases, n - 1);
+        xemu_wasm_stats.n_region_bytes_max =
+            MAX(xemu_wasm_stats.n_region_bytes_max, code.len);
+        xemu_wasm_stats.n_region_cfg_max =
+            MAX(xemu_wasm_stats.n_region_cfg_max, score);
+        xemu_wasm_stats.n_region_depth_max =
+            MAX(xemu_wasm_stats.n_region_depth_max, max_depth);
+    }
     XSTAT_ADD(ns_jit_compile, (t1 - t0) * 1e6);
     g_free(mod.p);
     g_free(sec.p);
@@ -971,6 +1206,30 @@ static int compile_region(WasmTBHeader *h)
         h->icount = tb ? tb->icount : 0;
     }
     add_instance(h, fidx);
+    if (region_shared) {
+        WasmInstance *e = h->instance;
+        /*
+         * Check before installing the table: a stale header may still point
+         * at this just-reused instance slot and its old index may match.
+         */
+        for (int i = 1; i < n; i++) {
+            g_assert(!wasm_instance_owns(m[i]->instance, m[i]));
+        }
+        e->members = g_memdup2(m, n * sizeof(m[0]));
+        e->n_members = n;
+        for (int i = 1; i < n; i++) {
+            /*
+             * Publish only after successful instantiation. Members become
+             * stable aliases, never overlapping independent region roots.
+             */
+            m[i]->instance_member = i;
+            m[i]->instance = e;
+            if (!m[i]->icount) {
+                TranslationBlock *tb = tcg_tb_lookup((uintptr_t)m[i]);
+                m[i]->icount = tb ? tb->icount : 0;
+            }
+        }
+    }
     return fidx;
 }
 
@@ -1066,6 +1325,8 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                     warn_report("wasm32 regions disabled by XEMU_WASM_LINK=1");
                     region_enabled = 0;
                 }
+                const char *sh = getenv("XEMU_WASM_REGION_SHARE");
+                region_shared = region_enabled && sh && *sh == '1';
             }
             fidx = region_enabled ? compile_region(h) : 0;
             if (!fidx) {
