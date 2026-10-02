@@ -124,7 +124,11 @@ typedef struct PGRAPHWgpuState {
 } PGRAPHWgpuState;
 
 /* ---- core: renderer.c ---- */
-void pgraph_wgpu_wait(PGRAPHWgpuState *r, WGPUFuture future);
+void pgraph_wgpu_wait_at(PGRAPHWgpuState *r, WGPUFuture future,
+                         const char *where);
+/* where: call site, for the waitms:* report counters */
+#define pgraph_wgpu_wait(r, future) \
+    pgraph_wgpu_wait_at((r), (future), __FILE__ ":" stringify(__LINE__))
 WGPUShaderModule pgraph_wgpu_create_wgsl_module(PGRAPHWgpuState *r,
                                                const char *label,
                                                const char *wgsl);
