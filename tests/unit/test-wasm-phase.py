@@ -12,6 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 UI = (ROOT / "ui/xemu-wasm.c").read_text()
 TCG = (ROOT / "tcg/wasm32/tcg-target.c.inc").read_text()
+STATS = (ROOT / "include/qemu/xemu-wasm-stats.h").read_text()
 
 
 def function(source, name):
@@ -43,6 +44,9 @@ PREFIX = r'''
 #define EMSCRIPTEN_KEEPALIVE
 #define EMSCRIPTEN 1
 #define XBOX 1
+#define XPHASE_VCPU 0
+static const char *volatile xemu_wasm_phase[2];
+#define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
 #define qatomic_read(p) __atomic_load_n(p, __ATOMIC_SEQ_CST)
 #define qatomic_set(p,v) __atomic_store_n(p, v, __ATOMIC_SEQ_CST)
 #define qatomic_inc(p) __atomic_fetch_add(p, 1, __ATOMIC_SEQ_CST)
@@ -88,10 +92,34 @@ static void group(const char *in, const char *want) {
     const char *got = wasm_helper_phase_name(&info);
     assert((!want && !got) || (want && got && !strcmp(want, got)));
 }
+static void smc_nested(bool early) {
+    const char *before = xemu_wasm_phase[0];
+    bool enabled = xemu_wasm_smc_profile_enabled();
+    XSMC_PROF_BEGIN("smc_bitmap");
+    assert(!strcmp(xemu_wasm_phase[0], enabled ? "smc_bitmap" : before));
+    if (early) {
+        XSMC_PROF_END(); assert(xemu_wasm_phase[0] == before); return;
+    }
+    XSMC_PROF_SET("smc_invalidate");
+    assert(!strcmp(xemu_wasm_phase[0], enabled ? "smc_invalidate" : before));
+    XSMC_PROF_END();
+    assert(xemu_wasm_phase[0] == before);
+}
 static void profile_test(const char *arg) {
     setenv("XEMU_WASM_JIT_PROFILE", arg, 1);
     unsigned flags = atoi(arg) & 3;
     assert(wasm_jit_profile() == flags);
+    bool smc = !!(atoi(arg) & 4);
+    assert(xemu_wasm_smc_profile_enabled() == smc);
+    const char *outer = "mem_slow_st";
+    xemu_wasm_phase[0] = outer;
+    XSMC_PROF_BEGIN("notdirty");
+    smc_nested(true); smc_nested(false);
+    XSMC_PROF_SET("notdirty_dirty");
+    assert(!strcmp(xemu_wasm_phase[0], smc ? "notdirty_dirty" : outer));
+    XSMC_PROF_SET("notdirty_tlb");
+    XSMC_PROF_END();
+    assert(xemu_wasm_phase[0] == outer);
     const char *names[] = {NULL, "rdtsc", "gvec_ssadd16", "fldl_ST0",
                           "paddsw_mmx", "fxsave"};
     const char *labels[] = {"jit:call", "jit:call", "jit:gvec", "jit:x87",
@@ -170,7 +198,10 @@ int main(int argc, char **argv) {
 def main():
     start = UI.index("#define PHASE_SLOTS")
     end = UI.index("static void phase_bump", start)
-    code = (PREFIX + UI[start:end] + function(UI, "phase_bump") +
+    smc_start = STATS.index("/* JIT_PROFILE bit 4")
+    smc_end = STATS.index("#else\n#define XPHASE_PUSH", smc_start)
+    code = (PREFIX + STATS[smc_start:smc_end] + UI[start:end] +
+            function(UI, "phase_bump") +
             function(UI, "xemu_wasm_phase_top") +
             function(TCG, "wasm_helper_phase_name") +
             function(TCG, "wasm_jit_profile") +
@@ -185,7 +216,7 @@ def main():
                         "-std=gnu11", "-O2", "-pthread", str(source),
                         "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True, timeout=30)
-        for flags in [0, 1, 2, 3, 7]:
+        for flags in [0, 1, 2, 3, 4, 7]:
             subprocess.run([str(exe), str(flags)], check=True, timeout=10)
 
 

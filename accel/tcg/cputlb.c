@@ -1450,9 +1450,35 @@ static bool victim_tlb_hit(CPUState *cpu, size_t mmu_idx, size_t index,
     return false;
 }
 
+/*
+ * A protected code page cannot become fully dirty. Check that mandatory bit
+ * first instead of querying all five clients in physical_memory_is_clean().
+ * Keep the normal query when it is set. If another thread unprotects a page
+ * after the precheck, retaining NOTDIRTY for an extra store is conservative.
+ * Dirty-client writes/barriers, code invalidation and guest stores are intact.
+ */
+static bool notdirty_skip_tlb_cleanup(ram_addr_t ram_addr)
+{
+#if defined(XBOX) && defined(EMSCRIPTEN)
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_NOTDIRTY_FAST");
+        enabled = e && *e == '1';
+    }
+    if (enabled &&
+        !physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
+        XSTAT_INC(n_notdirty_fast_skip);
+        return true;
+    }
+#endif
+    return false;
+}
+
 static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
                            CPUTLBEntryFull *full, uintptr_t retaddr)
 {
+    XSMC_PROF_BEGIN("notdirty");
     ram_addr_t ram_addr = mem_vaddr + full->xlat_section;
 
     trace_memory_notdirty_write_access(mem_vaddr, ram_addr, size);
@@ -1499,13 +1525,17 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
      * Set both VGA and migration bits for simplicity and to remove
      * the notdirty callback faster.
      */
+    XSMC_PROF_SET("notdirty_dirty");
     physical_memory_set_dirty_range(ram_addr, size, DIRTY_CLIENTS_NOCODE);
 
+    XSMC_PROF_SET("notdirty_tlb");
     /* We remove the notdirty callback only if the code has been flushed. */
-    if (!physical_memory_is_clean(ram_addr)) {
+    if (!notdirty_skip_tlb_cleanup(ram_addr) &&
+        !physical_memory_is_clean(ram_addr)) {
         trace_memory_notdirty_set_dirty(mem_vaddr);
         tlb_set_dirty(cpu, mem_vaddr);
     }
+    XSMC_PROF_END();
 }
 
 static int probe_access_internal(CPUState *cpu, vaddr addr,

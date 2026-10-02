@@ -727,7 +727,8 @@ static void wasm_phase(TCGContext *s, const char *name)
 
 /*
  * Opt-in generated-code attribution: 1 = inline helpers/call-site glue,
- * 2 = inline SoftMMU. Neither adds code when disabled. The extra stores can
+ * 2 = inline SoftMMU (bit 4 selects C notdirty subphases in accel/tcg).
+ * Neither adds generated code when disabled. The extra stores can
  * perturb optimization and region grouping: compare an uninstrumented run.
  * Scopes also cover work inside self loops, replacing the heuristic "spin"
  * tag. For overhead, compare throughput, not spin-subtracted phase busy time.
