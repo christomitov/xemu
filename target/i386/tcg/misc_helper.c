@@ -82,14 +82,16 @@ void helper_rdtsc(CPUX86State *env)
          * the vCPU in Rainbow Six 3). Read it on every 64th call and step
          * the last value by one cycle in between: strictly increasing, and
          * resynchronized at least every 64 reads.
-         * XEMU_WASM_FAST_RDTSC=0 reads the clock every time.
+         * Opt-in (XEMU_WASM_FAST_RDTSC=1): Rainbow Six 3's mission load
+         * takes over twice as long with it, so some guest timing depends on
+         * rdtsc tracking real time between reads.
          */
         static int fast = -1;
         static unsigned int n;
         static uint64_t last;
         if (unlikely(fast < 0)) {
             const char *e = getenv("XEMU_WASM_FAST_RDTSC");
-            fast = !(e && *e == '0');
+            fast = e && *e == '1';
         }
         if (fast && (++n & 63)) {
             val = ++last;
