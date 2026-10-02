@@ -563,6 +563,73 @@ static void wasm_count(TCGContext *s, uint64_t *ctr)
     wasm_mem(s, W_I64_STORE, 0);
 }
 
+/* No extra generated instructions unless entry/exit profiling is enabled. */
+static bool wasm_profile_exits(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_JIT_ENTRY_PROF");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+/* Normal returns only; Asyncify unwind/forward returns are not C exits. */
+static void wasm_count_exit_tb(TCGContext *s, uintptr_t arg)
+{
+#ifdef EMSCRIPTEN
+    uint64_t *counter;
+
+    if (!wasm_profile_exits()) {
+        return;
+    }
+    if (!arg) {
+        counter = &xemu_wasm_stats.n_jit_exit_plain;
+    } else {
+        switch (arg & TB_EXIT_MASK) {
+        case TB_EXIT_IDX0:
+            counter = &xemu_wasm_stats.n_jit_exit_chain0;
+            break;
+        case TB_EXIT_IDX1:
+            counter = &xemu_wasm_stats.n_jit_exit_chain1;
+            break;
+        case TB_EXIT_REQUESTED:
+            counter = &xemu_wasm_stats.n_jit_exit_requested;
+            break;
+        default:
+            counter = &xemu_wasm_stats.n_jit_exit_other;
+            break;
+        }
+    }
+    wasm_count(s, counter);
+#endif
+}
+
+/* Insert after all self/region/IC/link guards, including IC throttle exits. */
+static void wasm_count_goto_exit(TCGContext *s, bool indirect)
+{
+#ifdef EMSCRIPTEN
+    if (!wasm_profile_exits()) {
+        return;
+    }
+    if (indirect) {
+        wasm_var(s, W_LOCAL_GET, L32_0);
+        wasm_if(s, W_BLOCKTYPE_VOID);
+        wasm_count(s, &xemu_wasm_stats.n_jit_exit_ptr);
+        wasm8(s, W_ELSE);
+        wasm_count(s, &xemu_wasm_stats.n_jit_exit_ptr_null);
+        wasm8(s, W_END);
+    } else {
+        wasm_count(s, &xemu_wasm_stats.n_jit_exit_direct);
+    }
+#endif
+}
+
 #ifdef EMSCRIPTEN
 /*
  * XEMU_WASM_HELPER_PROF=1: count calls per helper (by function pointer);
@@ -1418,6 +1485,12 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     if (may_suspend) {
         wasm_save_regs(s);
     }
+#ifdef EMSCRIPTEN
+    if (wasm_profile_exits() && (info->flags & TCG_CALL_NO_RETURN)) {
+        /* Auxiliary attempts: faults inside other helpers can also longjmp. */
+        wasm_count(s, &xemu_wasm_stats.n_jit_noreturn);
+    }
+#endif
     wasm_phase(s, wasm_helper_phase_name(info));
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
@@ -1737,6 +1810,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
 
 static void wasm_exit_tb(TCGContext *s, uintptr_t arg)
 {
+    wasm_count_exit_tb(s, arg);
     wasm_ctx_store_i32_const(s, WASM_CTX_TB_PTR_OFF, 0);
     wasm_i32_const(s, (int32_t)arg);
     wasm8(s, W_RETURN);
@@ -1803,6 +1877,7 @@ static void wasm_ic_exit(TCGContext *s, bool indirect)
         wasm_i32_const(s, -1);
         wasm8(s, W_I32_ADD);
         wasm_ic_operand(s, W_GLOBAL_SET, site, 2);
+        wasm_count_goto_exit(s, true);
         wasm_i32_const(s, 0);
         wasm8(s, W_RETURN);
         wasm8(s, W_END);
@@ -1901,6 +1976,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
         wasm_count(s, &xemu_wasm_stats.n_tb_linkmiss);
 #endif
     }
+    wasm_count_goto_exit(s, slot < 0);
     wasm_i32_const(s, 0);
     wasm8(s, W_RETURN);
 }
