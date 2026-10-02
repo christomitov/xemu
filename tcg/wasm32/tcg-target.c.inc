@@ -1993,7 +1993,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
     wasm_mem(s, W_I32_STORE, WASM_CTX_TB_PTR_OFF);
     wasm_ctx_store_i32_const(s, WASM_CTX_DO_INIT_OFF, 1);
 
-    if (wasm32_ic_enabled()) {
+    if (wasm32_ic_for_exit(slot < 0)) {
         wasm_ic_exit(s, slot < 0);
     }
     if (slot >= 0 && wasm_link_enabled() && !wasm32_ic_enabled()) {

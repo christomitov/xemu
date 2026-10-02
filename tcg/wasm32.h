@@ -160,6 +160,7 @@ QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
 /* Blocks run by the interpreter this many times get compiled to wasm. */
 extern int wasm32_jit_threshold;
 bool wasm32_ic_enabled(void);
+bool wasm32_ic_for_exit(bool indirect);
 
 extern __thread WasmContext wasm_ctx;
 
