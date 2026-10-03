@@ -20,10 +20,29 @@
 #include "qemu/coroutine-tls.h"
 #include "qemu/cutils.h"
 #include "block/aio.h"
+#include "qemu/xemu-wasm-stats.h"
 
 enum {
     COROUTINE_POOL_BATCH_MAX_SIZE = 128,
 };
+
+static unsigned int coroutine_pool_batch_max_size(void)
+{
+#ifdef EMSCRIPTEN
+    static unsigned int cached;
+    unsigned int size = qatomic_read(&cached);
+
+    if (!size) {
+        const char *e = getenv("XEMU_WASM_CO_POOL");
+        /* =0 restores the memory-hungry native policy for comparisons. */
+        size = e && *e == '0' ? COROUTINE_POOL_BATCH_MAX_SIZE : 8;
+        qatomic_set(&cached, size);
+    }
+    return size;
+#else
+    return COROUTINE_POOL_BATCH_MAX_SIZE;
+#endif
+}
 
 /*
  * Coroutine creation and deletion is expensive so a pool of unused coroutines
@@ -83,6 +102,9 @@ static void coroutine_pool_batch_delete(CoroutinePoolBatch *batch)
 
     QSLIST_FOREACH_SAFE(co, &batch->list, pool_next, tmp) {
         QSLIST_REMOVE_HEAD(&batch->list, pool_next);
+#ifdef EMSCRIPTEN
+        qatomic_dec(&xemu_wasm_stats.n_co_pooled);
+#endif
         qemu_coroutine_delete(co);
     }
     g_free(batch);
@@ -124,6 +146,9 @@ static Coroutine *coroutine_pool_get_local(void)
     co = QSLIST_FIRST(&batch->list);
     QSLIST_REMOVE_HEAD(&batch->list, pool_next);
     batch->size--;
+#ifdef EMSCRIPTEN
+    qatomic_dec(&xemu_wasm_stats.n_co_pooled);
+#endif
 
     if (batch->size == 0) {
         QSLIST_REMOVE_HEAD(local_pool, next);
@@ -160,6 +185,12 @@ static void coroutine_pool_put_global(CoroutinePoolBatch *batch)
         unsigned int max = MIN(global_pool_max_size,
                                global_pool_hard_max_size);
 
+#ifdef EMSCRIPTEN
+        /* Each idle fiber owns ~2 MiB of the fixed Wasm linear heap. */
+        if (coroutine_pool_batch_max_size() == 8) {
+            max = MIN(max, 16);
+        }
+#endif
         if (global_pool_size < max) {
             QSLIST_INSERT_HEAD(&global_pool, batch, next);
 
@@ -197,7 +228,7 @@ static void coroutine_pool_put(Coroutine *co)
         local_pool_cleanup_init_once();
     }
 
-    if (unlikely(batch->size >= COROUTINE_POOL_BATCH_MAX_SIZE)) {
+    if (unlikely(batch->size >= coroutine_pool_batch_max_size())) {
         CoroutinePoolBatch *next = QSLIST_NEXT(batch, next);
 
         /* Is the local pool full? */
@@ -212,6 +243,9 @@ static void coroutine_pool_put(Coroutine *co)
 
     QSLIST_INSERT_HEAD(&batch->list, co, pool_next);
     batch->size++;
+#ifdef EMSCRIPTEN
+    qatomic_inc(&xemu_wasm_stats.n_co_pooled);
+#endif
 }
 
 Coroutine *qemu_coroutine_create(CoroutineEntry *entry, void *opaque)

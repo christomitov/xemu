@@ -22,6 +22,7 @@
 #include "qemu/osdep.h"
 #include "qemu/coroutine_int.h"
 #include "qemu/coroutine-tls.h"
+#include "qemu/xemu-wasm-stats.h"
 
 #include <emscripten/fiber.h>
 
@@ -78,6 +79,19 @@ Coroutine *qemu_coroutine_new(void)
                           co->stack, co->stack_size, co->asyncify_stack,
                           co->asyncify_stack_size);
 
+    uint64_t live = qatomic_fetch_inc(&xemu_wasm_stats.n_co_live) + 1;
+    uint64_t peak = qatomic_read(&xemu_wasm_stats.n_co_peak);
+
+    qatomic_inc(&xemu_wasm_stats.n_co_allocated);
+    qatomic_add(&xemu_wasm_stats.b_co_live,
+                sizeof(*co) + co->stack_size + co->asyncify_stack_size);
+    while (live > peak) {
+        uint64_t old = qatomic_cmpxchg(&xemu_wasm_stats.n_co_peak, peak, live);
+        if (old == peak) {
+            break;
+        }
+        peak = old;
+    }
     return &co->base;
 }
 
@@ -85,9 +99,14 @@ void qemu_coroutine_delete(Coroutine *co_)
 {
     CoroutineEmscripten *co = DO_UPCAST(CoroutineEmscripten, base, co_);
 
+    size_t bytes = sizeof(*co) + co->stack_size + co->asyncify_stack_size;
+
     qemu_free_stack(co->stack, co->stack_size);
     g_free(co->asyncify_stack);
     g_free(co);
+    qatomic_inc(&xemu_wasm_stats.n_co_freed);
+    qatomic_dec(&xemu_wasm_stats.n_co_live);
+    qatomic_sub(&xemu_wasm_stats.b_co_live, bytes);
 }
 
 CoroutineAction qemu_coroutine_switch(Coroutine *from_, Coroutine *to_,
@@ -178,6 +197,9 @@ Coroutine *qemu_coroutine_self(void)
             leaderp->stack_size =
                 leaderp->fiber.stack_base - leaderp->fiber.stack_limit;
             set_leader(leaderp);
+            qatomic_inc(&xemu_wasm_stats.n_co_leaders);
+            qatomic_add(&xemu_wasm_stats.b_co_leader,
+                        sizeof(*leaderp) + leaderp->asyncify_stack_size);
         }
         self = &leaderp->base;
         set_current(self);

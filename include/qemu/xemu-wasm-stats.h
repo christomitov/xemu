@@ -29,6 +29,14 @@
     X(ns_jit_compile)                                                        \
     X(n_jit_threshold)   /* current adaptive JIT threshold (gauge) */        \
     X(n_jit_instances)   /* live wasm modules (gauge) */                     \
+    X(n_co_allocated)    /* allocated Wasm coroutine fibers */              \
+    X(n_co_freed)        /* deleted Wasm coroutine fibers */                \
+    X(n_co_live)         /* allocated fibers, including idle pool (gauge) */ \
+    X(n_co_peak)         /* peak allocated fibers (gauge) */                \
+    X(n_co_pooled)       /* idle fibers across all pools (gauge) */         \
+    X(b_co_live)         /* fiber structs + two stacks (bytes gauge) */     \
+    X(n_co_leaders)      /* per-thread coroutine leaders (gauge) */         \
+    X(b_co_leader)       /* leader structs + Asyncify stacks (gauge) */     \
     X(n_jit_entries)     /* XEMU_WASM_JIT_ENTRY_PROF: dispatcher calls */     \
     X(n_jit_alias_entries) /* ... through a shared non-root member */        \
     /* Same opt-in flag: generated returns, not internal TB transitions. */ \
