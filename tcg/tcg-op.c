@@ -299,6 +299,11 @@ void tcg_gen_wasm_phase(unsigned mask, const char *name)
 {
     tcg_gen_op2(INDEX_op_wasm_phase, TCG_TYPE_I32, mask, (uintptr_t)name);
 }
+
+void tcg_gen_wasm_lookup(const void *layout, uint32_t cflags)
+{
+    tcg_gen_op2(INDEX_op_wasm_lookup, TCG_TYPE_I32, (uintptr_t)layout, cflags);
+}
 #endif
 
 void tcg_gen_mb(TCGBar mb_type)

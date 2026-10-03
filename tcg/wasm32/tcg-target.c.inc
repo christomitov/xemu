@@ -179,6 +179,7 @@ static const char *const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #define W_IF            0x04
 #define W_ELSE          0x05
 #define W_END           0x0b
+#define W_BR_IF         0x0d
 #define W_BR            0x0c
 #define W_RETURN        0x0f
 #define W_CALL          0x10
@@ -232,6 +233,7 @@ static WasmTBHeader *cur_hdr;   /* header of the TB being generated */
 #define W_I32_CLZ       0x67
 #define W_I32_CTZ       0x68
 #define W_I32_ADD       0x6a
+#define W_I32_MUL       0x6c
 #define W_I32_DIV_S     0x6d
 #define W_I32_DIV_U     0x6e
 #define W_I32_REM_S     0x6f
@@ -1513,6 +1515,141 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
 }
 #endif
 
+/* Used only by the next marked helper call during code generation. */
+static __thread const WasmLookupLayout *wasm_lookup_layout;
+static __thread uint32_t wasm_lookup_cflags;
+
+static void wasm_lookup_env(TCGContext *s, int32_t offset)
+{
+    int ofs = wasm_addr(s, TCG_AREG0, offset);
+    wasm_mem(s, W_I32_LOAD, ofs);
+}
+
+static void wasm_lookup_fail_if(TCGContext *s)
+{
+    wasm8(s, W_BR_IF);
+    wasm_uleb(s, 0);
+}
+
+/*
+ * Exact counterpart of the frontend jump-cache probe, expressed in i32
+ * rather than lowered through i64 TCG temporaries. No translation, tag,
+ * permission, epoch or pointer is cached between calls. L32_1 is zero on
+ * every decline, or the live TB's code pointer on success.
+ */
+static void wasm_lookup_probe(TCGContext *s, const WasmLookupLayout *d,
+                              uint32_t cflags)
+{
+    wasm_jit_phase(s, 8, "jit:lookup");
+    wasm_i32_const(s, 0);
+    wasm_var(s, W_LOCAL_SET, L32_1);
+    wasm8(s, W_BLOCK);
+    wasm8(s, W_BLOCKTYPE_VOID);
+
+    wasm_lookup_env(s, d->env_bps);
+    wasm_lookup_fail_if(s);
+
+    wasm_lookup_env(s, d->env_cs);
+    wasm_lookup_env(s, d->env_eip);
+    wasm8(s, W_I32_ADD);
+    wasm_var(s, W_LOCAL_SET, L32_2);
+    wasm_lookup_env(s, d->env_jc);
+    wasm_var(s, W_LOCAL_TEE, L32_3);
+    wasm_mem(s, W_I32_LOAD, d->jc_gen);
+    wasm8(s, W_I64_EXTEND_I32_U);
+    wasm_var(s, W_LOCAL_SET, L64_0);
+
+    /* The same tb_jmp_cache_hash_func(), with 32-bit wrapping. */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, d->hash_shift);
+    wasm8(s, W_I32_SHR_U);
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm8(s, W_I32_XOR);
+    wasm_var(s, W_LOCAL_TEE, L32_0);
+    wasm_i32_const(s, d->hash_shift);
+    wasm8(s, W_I32_SHR_U);
+    wasm_i32_const(s, d->hash_page_mask);
+    wasm8(s, W_I32_AND);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_i32_const(s, d->hash_addr_mask);
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_I32_OR);
+    wasm_i32_const(s, d->entry_size);
+    wasm8(s, W_I32_MUL);
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    wasm8(s, W_I32_ADD);
+    wasm_var(s, W_LOCAL_SET, L32_3);
+
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    wasm_mem(s, W_I32_LOAD, d->entry_tb);
+    wasm_var(s, W_LOCAL_TEE, L32_0);
+    wasm8(s, W_I32_EQZ);
+    wasm_lookup_fail_if(s);
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    wasm_mem(s, W_I32_LOAD, d->entry_pc);
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm8(s, W_I32_NE);
+    wasm_lookup_fail_if(s);
+    wasm_var(s, W_LOCAL_GET, L32_3);
+    wasm_mem(s, W_I32_LOAD, d->entry_gen);
+    wasm_var(s, W_LOCAL_GET, L64_0);
+    wasm8(s, W_I32_WRAP_I64);
+    wasm8(s, W_I32_NE);
+    wasm_lookup_fail_if(s);
+
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, d->tb_cs);
+    wasm_lookup_env(s, d->env_cs);
+    wasm8(s, W_I32_NE);
+    wasm_lookup_fail_if(s);
+    wasm_lookup_env(s, d->env_eflags);
+    wasm_i32_const(s, d->flags_mask);
+    wasm8(s, W_I32_AND);
+    wasm_lookup_env(s, d->env_hflags);
+    wasm8(s, W_I32_OR);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, d->tb_flags);
+    wasm8(s, W_I32_NE);
+    wasm_lookup_fail_if(s);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, d->tb_cflags);
+    wasm_i32_const(s, cflags);
+    wasm8(s, W_I32_NE);
+    wasm_lookup_fail_if(s);
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, d->tb_ptr);
+    wasm_var(s, W_LOCAL_SET, L32_1);
+    wasm8(s, W_END);
+    wasm_jit_phase(s, 8, NULL);
+}
+
+static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
+                      const TCGHelperInfo *info);
+
+static bool wasm_call_lookup_fast(TCGContext *s, const tcg_insn_unit *func,
+                                  const TCGHelperInfo *info)
+{
+    const WasmLookupLayout *d = wasm_lookup_layout;
+
+    wasm_lookup_layout = NULL;
+    if (!d || !info->name || strcmp(info->name, "lookup_tb_ptr") ||
+        wasm_helper_may_suspend(info)) {
+        return false;
+    }
+    /* A marker is emitted only for the frontend's original eligible sites. */
+    wasm_lookup_probe(s, d, wasm_lookup_cflags);
+    wasm_var(s, W_LOCAL_GET, L32_1);
+    wasm8(s, W_I32_EQZ);
+    wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
+    /* Generator recursion only: unchanged helper ABI/GETPC/fallback body. */
+    wasm_call(s, func, info);
+    wasm8(s, W_ELSE);
+    wasm_var(s, W_LOCAL_GET, L32_1);
+    wasm_call_results(s, info->typemask & 7);
+    wasm8(s, W_END);
+    return true;
+}
+
 #ifdef EMSCRIPTEN
 static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
                                const TCGHelperInfo *info);
@@ -1525,6 +1662,9 @@ static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
                       const TCGHelperInfo *info)
 {
+    if (wasm_call_lookup_fast(s, func, info)) {
+        return;
+    }
 #ifdef EMSCRIPTEN
     if (wasm_call_i128_fast(s, func, info)) {
         return;
@@ -4465,6 +4605,7 @@ static void tcg_out_tb_start(TCGContext *s)
     has_backward_label = false;
     used_regs = 0;
     snapshot_sites = NULL;
+    wasm_lookup_layout = NULL;
     block_idx = 0;
     helpers = helpers_last = NULL;
     helpers_num = 0;
