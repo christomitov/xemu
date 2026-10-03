@@ -8,6 +8,7 @@
  */
 #include "qemu/osdep.h"
 #include <unistd.h>
+#include <malloc.h>
 #include "qemu/xemu-wasm-stats.h"
 #include "hw/core/cpu.h"
 #include "qemu/main-loop.h"
@@ -796,6 +797,13 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
 EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_used_mb(void)
 {
     return (uint32_t)((uintptr_t)sbrk(0) >> 20);
+}
+
+/* bytes malloc has handed out and not freed (MiB): live use under the top */
+EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_live_mb(void)
+{
+    struct mallinfo mi = mallinfo();
+    return (uint32_t)((size_t)mi.uordblks >> 20);
 }
 
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
