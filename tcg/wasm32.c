@@ -495,13 +495,13 @@ static int compile_tb(WasmTBHeader *h, int depth)
     if (!wasm32_ic_enabled() && !region_shared) {
         compute_links(h, depth, links);
     }
-    XPHASE_SET(XPHASE_VCPU, "jit_compile");
+    XTBPHASE_SET("jit_compile");
     double t0 = emscripten_get_now();
     fidx = wasm32_instantiate(h->wasm_ptr, h->wasm_size,
                               h->import_ptr, h->import_size / 4,
                               links[0], links[1], h->ic_count);
     double t1 = emscripten_get_now();
-    XPHASE_SET(XPHASE_VCPU, "dispatch");
+    XTBPHASE_SET("dispatch");
     jit_debt_ms += t1 - t0;
     jit_budget_update(t1);
     XSTAT_INC(n_jit_compile);
@@ -796,6 +796,10 @@ static bool region_member_ok(WasmTBHeader *c)
 static void bb_count(ByteBuf *b, uint64_t *ctr)
 {
     int32_t a = (int32_t)(uintptr_t)ctr;
+
+    if (!xemu_wasm_tb_stats_enabled()) {
+        return;
+    }
     bb_u8(b, 0x41); bb_sleb(b, a);
     bb_u8(b, 0x41); bb_sleb(b, a);
     bb_u8(b, 0x29); bb_u8(b, 3); bb_u8(b, 0);       /* i64.load */
@@ -1210,10 +1214,10 @@ static int compile_region(WasmTBHeader *h)
     }
     bb_section(&mod, 10, &sec);
 
-    XPHASE_SET(XPHASE_VCPU, "jit_compile");
+    XTBPHASE_SET("jit_compile");
     fidx = wasm32_instantiate(mod.p, mod.len, hq, nh, 0, 0, ic_count);
     double t0 = t_start, t1 = emscripten_get_now();
-    XPHASE_SET(XPHASE_VCPU, "dispatch");
+    XTBPHASE_SET("dispatch");
     jit_debt_ms += t1 - t0;     /* incl. region assembly */
     jit_budget_update(t1);
     XSTAT_INC(n_jit_compile);
@@ -1317,7 +1321,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         wasm_ctx.ic_source = 0;
         trysleep();
         if (!first) {
-            XSTAT_INC(n_tb_exec);
+            XTBSTAT_INC(n_tb_exec);
         }
         first = false;
 
@@ -1325,31 +1329,31 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         fidx = get_instance(h);
         if (fidx > 0) {
             if (ic_source) {
-                XSTAT_INC(n_ic_fill);
+                XTBSTAT_INC(n_ic_fill);
                 wasm32_ic_fill(ic_source, ic_slot, h, fidx);
             }
-            XSTAT_ADD(n_guest_insn, h->icount);
+            XTBSTAT_ADD(n_guest_insn, h->icount);
             if (profile) {
                 XSTAT_INC(n_jit_entries);
                 XSTAT_ADD(n_jit_alias_entries, h->instance_member != 0);
             }
             wasm_ctx.do_init = 1;
-            XPHASE_SET(XPHASE_VCPU, NULL);
+            XTBPHASE_SET(NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
-            XPHASE_SET(XPHASE_VCPU, "dispatch");
+            XTBPHASE_SET("dispatch");
         } else if (h->counter < wasm32_jit_threshold) {
             h->counter++;
-            XSTAT_INC(n_tci_exec);
-            XPHASE_SET(XPHASE_VCPU, "tci");
+            XTBSTAT_INC(n_tci_exec);
+            XTBPHASE_SET("tci");
             res = tci_exec_tb(env, h->tci_ptr);
-            XPHASE_SET(XPHASE_VCPU, "dispatch");
+            XTBPHASE_SET("dispatch");
         } else if (!can_add_instance()) {
-            XPHASE_SET(XPHASE_VCPU, "jit_evict");
+            XTBPHASE_SET("jit_evict");
             remove_instances();
             check_instances_collected();
-            XPHASE_SET(XPHASE_VCPU, "tci");
+            XTBPHASE_SET("tci");
             res = tci_exec_tb(env, h->tci_ptr);
-            XPHASE_SET(XPHASE_VCPU, "dispatch");
+            XTBPHASE_SET("dispatch");
         } else {
             if (unlikely(region_enabled < 0)) {
                 const char *e = getenv("XEMU_WASM_REGION");
@@ -1378,7 +1382,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                         "fidx=%d\n", h, h->wasm_size, h->import_size / 4, fidx);
             }
             if (ic_source) {
-                XSTAT_INC(n_ic_fill);
+                XTBSTAT_INC(n_ic_fill);
                 wasm32_ic_fill(ic_source, ic_slot, h, fidx);
             }
             if (profile) {
@@ -1386,9 +1390,9 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 XSTAT_ADD(n_jit_alias_entries, h->instance_member != 0);
             }
             wasm_ctx.do_init = 1;
-            XPHASE_SET(XPHASE_VCPU, NULL);
+            XTBPHASE_SET(NULL);
             res = ((wasm_func_ptr)(uintptr_t)fidx)(&wasm_ctx);
-            XPHASE_SET(XPHASE_VCPU, "dispatch");
+            XTBPHASE_SET("dispatch");
             if (unlikely(wasm32_jit_debug > 0)) {
                 fprintf(stderr, "[jit]  -> res=%lx next=%p\n",
                         (unsigned long)res, wasm_ctx.tb_ptr);

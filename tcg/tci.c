@@ -41,7 +41,17 @@ static struct { const char *name; uint64_t calls; } helper_prof[HELPER_PROF_SLOT
 
 static inline void helper_prof_hit(const char *name)
 {
-    uintptr_t h = ((uintptr_t)name >> 3) * 2654435761u;
+    static int enabled = -1;
+    uintptr_t h;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_HELPER_PROF");
+        enabled = xemu_wasm_tb_stats_enabled() || (e && *e == '1');
+    }
+    if (!enabled) {
+        return;
+    }
+    h = ((uintptr_t)name >> 3) * 2654435761u;
     for (unsigned i = 0; i < HELPER_PROF_SLOTS; i++) {
         unsigned slot = (h + i) & (HELPER_PROF_SLOTS - 1);
         if (helper_prof[slot].name == name) {
@@ -704,7 +714,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 unsigned sig = use_ffi ? UINT_MAX : meta->direct_sig;
                 HELPER_PROF_HIT(meta->name);
                 uint64_t rv;
-                XSTAT_INC(n_helper);
+                XTBSTAT_INC(n_helper);
                 if (tci_direct_call(sig, func, stack, &rv)) {
                     if (len == 1) {
                         *(uint32_t *)stack = (uint32_t)rv;
@@ -1274,7 +1284,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 if (!tb_ptr) {
                     return 0;
                 }
-                XSTAT_INC(n_tb_exec); /* chained block */
+                XTBSTAT_INC(n_tb_exec); /* chained block */
             }
             break;
 
@@ -1289,7 +1299,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             if (!tb_ptr) {
                 return 0;
             }
-            XSTAT_INC(n_tb_exec); /* lookup-and-goto block */
+            XTBSTAT_INC(n_tb_exec); /* lookup-and-goto block */
             break;
 #else
         case INDEX_op_exit_tb:
