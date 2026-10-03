@@ -770,7 +770,7 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
     int len = 0;
 
     buf[0] = 0;
-    for (int k = 0; k < 60; k++) {
+    for (int k = 0; k < 150; k++) {
         int best = -1;
         for (int i = 0; i < COUNT_SLOTS; i++) {
             if (!used[i] && count_tab[i].key &&
