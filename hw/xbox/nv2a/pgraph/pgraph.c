@@ -121,12 +121,14 @@ void pgraph_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
      * so it still waits for the method in flight. Taking it here made each
      * toggle wait for a whole draw (~140 us in Ghost Recon, ~1.7% of the
      * vCPU). The register is not 3D state, so it needs no regs_dirty bit.
-     * XEMU_WASM_PGRAPH_FIFO_FAST=0 takes the lock as before.
+     * Opt-in (XEMU_WASM_PGRAPH_FIFO_FAST=1): Ghost Recon hit an emscripten
+     * "pthread mutex deadlock detected" abort at title launch in 2 of 3
+     * runs with it on (0 of 1 off); not yet explained.
      */
     static int fifo_fast = -1;
     if (fifo_fast < 0) {
         const char *e = getenv("XEMU_WASM_PGRAPH_FIFO_FAST");
-        fifo_fast = !(e && *e == '0');
+        fifo_fast = e && *e == '1';
     }
     if (fifo_fast && addr == NV_PGRAPH_FIFO) {
         qatomic_set(&pg->regs_[NV_PGRAPH_FIFO], (uint32_t)val);
