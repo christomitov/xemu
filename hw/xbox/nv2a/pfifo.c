@@ -126,7 +126,7 @@ static bool is_flip_stall_complete(NV2AState *d)
 
 
 /*
- * Method batching (XEMU_WASM_PFIFO_BATCH=1). Each method used to drop
+ * Method batching (default; XEMU_WASM_PFIFO_BATCH=0 disables). Each method used to drop
  * pfifo.lock, take pgraph.lock, run, and swap back: four lock operations
  * per method, ~2.2M times/s in Ghost Recon, which uploads vertex constants
  * one vector at a time. Instead take pgraph.lock once for a run of methods,
@@ -142,7 +142,7 @@ static bool pfifo_batch_enabled(void)
     static int en = -1;
     if (en < 0) {
         const char *e = getenv("XEMU_WASM_PFIFO_BATCH");
-        en = e && *e == '1';
+        en = !(e && *e == '0');
     }
     return en;
 }
