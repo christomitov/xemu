@@ -324,6 +324,16 @@ void thread_pool_update_params(ThreadPoolAio *pool, AioContext *ctx)
 
     pool->min_threads = ctx->thread_pool_min;
     pool->max_threads = ctx->thread_pool_max;
+#ifdef EMSCRIPTEN
+    /*
+     * Each worker is a pthread with an 8 MiB stack carved out of the fixed
+     * 2 GiB wasm heap (896 MiB of which is the TB buffer). The default
+     * maximum of 64 workers let a burst of disc reads abort Ghost Recon
+     * with "Cannot enlarge memory arrays" in __pthread_create. A few
+     * workers keep up with disc I/O.
+     */
+    pool->max_threads = MIN(pool->max_threads, 4);
+#endif
 
     /*
      * We either have to:
