@@ -733,7 +733,7 @@ EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_size(int w, int h)
  * Keyed event counts (interned strings), e.g. why surfaces get downloaded.
  * Single writer (pfifo thread) in practice; reported as downloads_top.
  */
-#define COUNT_SLOTS 256
+#define COUNT_SLOTS 512
 static struct {
     const char *key;
     uint32_t n;
@@ -760,10 +760,10 @@ void xemu_wasm_count(const char *key)
     xemu_wasm_count_add(key, 1);
 }
 
-/* "key=n;..." top 60, cumulative */
+/* "key=n;..." top 150, cumulative */
 EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
 {
-    static char buf[8192];
+    static char buf[24576];
     bool used[COUNT_SLOTS] = { false };
     int len = 0;
 
