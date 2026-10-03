@@ -65,6 +65,28 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
     PGRAPHState *pg = &d->pgraph;
 
 #ifdef EMSCRIPTEN
+    /*
+     * Reads without side effects (all but RDI_DATA) do not need the PGRAPH
+     * lock: each returns one 32-bit value the PFIFO worker updates, and the
+     * hardware is asynchronous anyway. With the lock, the guest polling
+     * status registers waited for whole method runs, including GPU waits
+     * (~5% of the vCPU in Rainbow Six 3 firefights).
+     * Opt-in: XEMU_WASM_PGRAPH_READ_FAST=1.
+     */
+    static int read_fast = -1;
+    if (read_fast < 0) {
+        const char *e = getenv("XEMU_WASM_PGRAPH_READ_FAST");
+        read_fast = e && *e == '1';
+    }
+    if (read_fast && addr != NV_PGRAPH_RDI_DATA) {
+        uint64_t r = addr == NV_PGRAPH_INTR ?
+                         qatomic_read(&pg->pending_interrupts) :
+                     addr == NV_PGRAPH_INTR_EN ?
+                         qatomic_read(&pg->enabled_interrupts) :
+                         qatomic_read(&pg->regs_[addr]);
+        nv2a_reg_log_read(NV_PGRAPH, addr, size, r);
+        return r;
+    }
     int64_t t0 = xemu_wasm_stats_now_ns();
 #endif
     qemu_mutex_lock(&pg->lock);
