@@ -7,6 +7,7 @@
  * trigger of the heap-0 clobber (debug walk racing the live vCPU).
  */
 #include "qemu/osdep.h"
+#include <unistd.h>
 #include "qemu/xemu-wasm-stats.h"
 #include "hw/core/cpu.h"
 #include "qemu/main-loop.h"
@@ -787,6 +788,16 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
 }
 
 /* page reads the struct directly from the wasm heap */
+/*
+ * wasm heap in use (MiB): the top of the sbrk heap that malloc grows. The
+ * heap is a fixed 2 GiB; the page records this per second so an
+ * out-of-memory abort shows what was growing.
+ */
+EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_used_mb(void)
+{
+    return (uint32_t)((uintptr_t)sbrk(0) >> 20);
+}
+
 EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
 {
     return &xemu_wasm_stats;
