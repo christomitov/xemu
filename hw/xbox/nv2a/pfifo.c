@@ -232,9 +232,12 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
         XPHASE_SET(XPHASE_GPU, NULL);
 
         if (can_fifo_access(d)) {
+            /* GPU-thread profile: method work vs PFIFO plumbing around it */
+            XPHASE_PUSH(XPHASE_GPU, "method");
             num_proc =
                 pgraph_method(d, subchannel, method, parameter, parameters,
                               num_words_available, max_lookahead_words, inc);
+            XPHASE_POP(XPHASE_GPU);
         }
 
         qemu_mutex_unlock(&d->pgraph.lock);
