@@ -116,7 +116,8 @@ static void wasm_if_hint(TCGContext *s, unsigned type, bool hot) {
 '''
 C += function("wasm32_tlb_hint_enabled", DRIVER) + "\n"
 for f in ["wasm_tlb_hint_drop", "wasm_call_idx", "wasm_tlb_fast",
-          "wasm_tlb_compare", "wasm_tlb_host", "wasm_tlb_load"]:
+          "wasm_tlb_compare", "wasm_tlb_host", "wasm_notdirty_inline",
+          "wasm_tlb_load"]:
     C += function(f) + "\n"
 C += r'''
 int main(int argc, char **argv) {

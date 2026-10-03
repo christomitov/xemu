@@ -47,6 +47,10 @@ void tb_unlock_pages(TranslationBlock *);
 #ifdef CONFIG_SOFTMMU
 void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t ram_addr,
                                    unsigned size, uintptr_t retaddr);
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/* Nonblocking, allocation-free admission; never invalidates or replays. */
+bool tb_wasm_smc_bitmap_miss(ram_addr_t start, unsigned len);
+#endif
 #endif /* CONFIG_SOFTMMU */
 
 bool tb_invalidate_phys_page_unwind(CPUState *cpu, tb_page_addr_t addr,

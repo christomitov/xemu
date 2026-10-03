@@ -1500,6 +1500,49 @@ static bool smc_drop_range(CPUState *cpu, PageDesc *p, ram_addr_t *start,
 }
 #endif
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/*
+ * A fresh JIT store may avoid its resumable helper only if no code overlaps.
+ * Never read code_bitmap without its page lock: publication, removal and
+ * bitmap freeing all use that lock. Do not build a missing bitmap, wait for
+ * a lock, invalidate anything, or change adaptive/drop policy accounting.
+ */
+bool tb_wasm_smc_bitmap_miss(ram_addr_t start, unsigned len)
+{
+#if defined(CONFIG_DEBUG_TCG) || defined(CONFIG_TSAN)
+    /* Debug/sanitizer lock bookkeeping is not an audited leaf. */
+    return false;
+#else
+    PageDesc *p;
+    unsigned off = start & ~TARGET_PAGE_MASK;
+    bool miss;
+
+    if (!len || len > 4 || !is_power_of_2(len) ||
+        (start & (len - 1)) || off + len > TARGET_PAGE_SIZE) {
+        return false;
+    }
+    /* Uninitialized or non-exact policies stay entirely on the old path. */
+    if (smc_policy != 0) {
+        return false;
+    }
+    p = page_find(start >> TARGET_PAGE_BITS);
+    if (!p || page_trylock(p)) {
+        return false;
+    }
+    miss = p->first_tb && p->code_bitmap &&
+           find_next_bit(p->code_bitmap, off + len, off) >= off + len;
+    if (miss) {
+        p->smc_miss++;
+    }
+    page_unlock(p);
+    if (miss) {
+        XSTAT_INC(n_smc_bitmap_miss);
+    }
+    return miss;
+#endif
+}
+#endif
+
 /*
  * len must be <= 8 and start must be a multiple of len.
  * Called via softmmu_template.h when code areas are written to with

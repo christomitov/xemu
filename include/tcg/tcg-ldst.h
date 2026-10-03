@@ -60,4 +60,9 @@ void helper_stq_mmu(CPUArchState *env, uint64_t addr, uint64_t val,
 void helper_st16_mmu(CPUArchState *env, uint64_t addr, Int128 val,
                      MemOpIdx oi, uintptr_t retaddr);
 
+#if defined(XBOX) && defined(EMSCRIPTEN) && defined(CONFIG_SOFTMMU)
+/* Non-suspending admission/dirty marking, not a memory access helper. */
+uintptr_t helper_wasm_notdirty(CPUArchState *env, uint32_t addr, MemOpIdx oi);
+#endif
+
 #endif /* TCG_LDST_H */

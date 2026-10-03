@@ -43,6 +43,8 @@
 #include "exec/tlb-flags.h"
 #include "qemu/atomic.h"
 #include "qemu/atomic128.h"
+#include "qemu/rcu.h"
+#include "system/xen.h"
 #include "tb-internal.h"
 #include "trace.h"
 #include "tb-hash.h"
@@ -1537,6 +1539,67 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
     }
     XSMC_PROF_END();
 }
+
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/*
+ * Non-suspending leaf for a fresh, aligned JIT store. It never fills the TLB,
+ * builds a bitmap, waits for a page lock, invokes an access callback, or
+ * invalidates code. Returning zero leaves the original store helper in charge.
+ * The caller must not enable this path while XEMU_WASM_SMC_DUMP is selected.
+ */
+uintptr_t helper_wasm_notdirty(CPUArchState *env, uint32_t addr, MemOpIdx oi)
+{
+    CPUState *cpu = env_cpu(env);
+    MemOp mop = get_memop(oi);
+    unsigned mmu = get_mmuidx(oi);
+    unsigned size = memop_size(mop);
+    unsigned atom = mop & MO_ATOM_MASK;
+    unsigned align = MAX(memop_alignment_bits(mop), mop & MO_SIZE);
+    CPUTLBEntry *entry;
+    CPUTLBEntryFull *full;
+    uintptr_t host;
+    ram_addr_t ram_addr;
+
+    /* No outer RCU unlock/wakeup or Xen callback may occur in this leaf. */
+    if (!get_ptr_rcu_reader()->depth || xen_enabled() ||
+        mmu >= NB_MMU_MODES || size > 4 ||
+        (mop & ~(MO_SIZE | MO_AMASK | MO_ATOM_MASK)) ||
+        (atom != MO_ATOM_IFALIGN && atom != MO_ATOM_NONE) ||
+        (addr & ((1u << align) - 1)) ||
+        cpu_plugin_mem_cbs_enabled(cpu) ||
+        trace_event_get_state_backends(TRACE_MEMORY_NOTDIRTY_WRITE_ACCESS) ||
+        trace_event_get_state_backends(TRACE_MEMORY_NOTDIRTY_SET_DIRTY)) {
+        goto decline;
+    }
+    entry = tlb_entry(cpu, mmu, addr);
+    if (tlb_read_idx(entry, MMU_DATA_STORE) !=
+        ((addr & TARGET_PAGE_MASK) | TLB_NOTDIRTY)) {
+        goto decline;
+    }
+    full = &cpu->neg.tlb.d[mmu].fulltlb[tlb_index(cpu, mmu, addr)];
+    /* In particular: GPU callbacks use WATCHPOINT, via FORCE_SLOW. */
+    if (full->slow_flags[MMU_DATA_STORE]) {
+        goto decline;
+    }
+    host = (uintptr_t)addr + entry->addend;
+    ram_addr = addr + full->xlat_section;
+    if (!host || physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE) ||
+        !tb_wasm_smc_bitmap_miss(ram_addr, size)) {
+        goto decline;
+    }
+
+    /* Exactly the original dirty-client updates, BEFORE the actual store. */
+    physical_memory_set_dirty_range(ram_addr, size, DIRTY_CLIENTS_NOCODE);
+    xemu_wasm_count("invsrc:cpu");
+    XSTAT_INC(n_notdirty_inline);
+    /* Keep NOTDIRTY conservatively; never unprotect live translated code. */
+    return host;
+
+decline:
+    XSTAT_INC(n_notdirty_inline_miss);
+    return 0;
+}
+#endif
 
 static int probe_access_internal(CPUState *cpu, vaddr addr,
                                  int fault_size, MMUAccessType access_type,

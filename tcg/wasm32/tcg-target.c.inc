@@ -32,6 +32,7 @@
 
 #include "../wasm32.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "exec/tlb-flags.h"
 
 /* Used for function call generation. */
 #define TCG_TARGET_CALL_STACK_OFFSET    0
@@ -1871,6 +1872,82 @@ static void wasm_tlb_host(TCGContext *s)
 }
 
 /*
+ * Emit only in the existing store-TLB miss arm: plain RAM hits gain no
+ * instructions. The leaf can neither suspend nor fault, and it commits no
+ * store. A zero result still selects the original resumable store helper.
+ */
+static bool wasm_notdirty_inline(TCGContext *s, MemOpIdx oi)
+{
+#if defined(XBOX) && defined(EMSCRIPTEN) && defined(CONFIG_SOFTMMU) && \
+    !defined(CONFIG_DEBUG_TCG) && !defined(CONFIG_PLUGIN) && \
+    !defined(CONFIG_TSAN)
+    static int enabled = -1;
+    MemOp mop = get_memop(oi);
+    unsigned atom = mop & MO_ATOM_MASK;
+    unsigned align = MAX(memop_alignment_bits(mop), mop & MO_SIZE);
+    bool profile;
+    int idx;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_NOTDIRTY_INLINE");
+        enabled = e && *e == '1' && !getenv("XEMU_WASM_SMC_DUMP");
+    }
+    if (!enabled || (s->gen_tb->cflags & CF_PARALLEL) ||
+        (mop & MO_SIZE) > MO_32 ||
+        (mop & ~(MO_SIZE | MO_AMASK | MO_ATOM_MASK)) ||
+        (atom != MO_ATOM_IFALIGN && atom != MO_ATOM_NONE)) {
+        return false;
+    }
+    /* Configure profiling here, never initialize configuration in the leaf. */
+    profile = xemu_wasm_smc_profile_enabled();
+    idx = get_helper_idx(helper_wasm_notdirty);
+    if (idx < 0) {
+        idx = register_helper(helper_wasm_notdirty);
+        types_out8(0x60);
+        types_out8(3); /* env, addr, MemOpIdx */
+        types_out8(W_TYPE_I32);
+        types_out8(W_TYPE_I32);
+        types_out8(W_TYPE_I32);
+        types_out8(1);
+        types_out8(W_TYPE_I32); /* admitted host address, or zero */
+    }
+
+    /* Exact live tag: reject FORCE_SLOW (GPU/watch callbacks), invalid, etc. */
+    wasm_var(s, W_LOCAL_GET, L32_0);
+    wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBEntry, addr_write));
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, TARGET_PAGE_MASK);
+    wasm8(s, W_I32_AND);
+    wasm_i32_const(s, TLB_NOTDIRTY);
+    wasm8(s, W_I32_OR);
+    wasm8(s, W_I32_EQ);
+    /* Natural alignment implies a same-page span for these 1/2/4-byte ops. */
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, (1u << align) - 1);
+    wasm8(s, W_I32_AND);
+    wasm8(s, W_I32_EQZ);
+    wasm8(s, W_I32_AND);
+    wasm_if_hint(s, W_TYPE_I32, true);
+    wasm_get_r32(s, TCG_AREG0);
+    wasm_var(s, W_LOCAL_GET, L32_2);
+    wasm_i32_const(s, oi);
+    if (profile) {
+        wasm_phase(s, "notdirty_inline");
+    }
+    wasm_call_idx(s, idx);
+    if (profile) {
+        wasm_phase(s, (wasm_jit_profile() & 2) ? "jit:st" : NULL);
+    }
+    wasm8(s, W_ELSE);
+    wasm_i32_const(s, 0);
+    wasm8(s, W_END);
+    return true;
+#else
+    return false;
+#endif
+}
+
+/*
  * Guest memory access: inline TLB lookup, helper call on a miss.
  *
  * On wasm32 guest addresses (vaddr) and TLB comparators are 32 bits.
@@ -2012,7 +2089,9 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
     }
     wasm_tlb_host(s);
     wasm8(s, W_ELSE);
-    wasm_i32_const(s, 0);
+    if (is_ld || !wasm_notdirty_inline(s, oi)) {
+        wasm_i32_const(s, 0);
+    }
     wasm8(s, W_END);
     wasm_var(s, W_LOCAL_SET, L32_1);
     if (hint) {
