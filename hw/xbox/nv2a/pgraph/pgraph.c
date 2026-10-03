@@ -114,6 +114,25 @@ void pgraph_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
     nv2a_reg_log_write(NV_PGRAPH, addr, size, val);
 
 #ifdef EMSCRIPTEN
+    /*
+     * Toggling FIFO access does not need the PGRAPH lock: the PFIFO worker
+     * reads the register atomically (can_fifo_access) before each method,
+     * and any following guest access to PGRAPH state still takes the lock,
+     * so it still waits for the method in flight. Taking it here made each
+     * toggle wait for a whole draw (~140 us in Ghost Recon, ~1.7% of the
+     * vCPU). The register is not 3D state, so it needs no regs_dirty bit.
+     * XEMU_WASM_PGRAPH_FIFO_FAST=0 takes the lock as before.
+     */
+    static int fifo_fast = -1;
+    if (fifo_fast < 0) {
+        const char *e = getenv("XEMU_WASM_PGRAPH_FIFO_FAST");
+        fifo_fast = !(e && *e == '0');
+    }
+    if (fifo_fast && addr == NV_PGRAPH_FIFO) {
+        qatomic_set(&pg->regs_[NV_PGRAPH_FIFO], (uint32_t)val);
+        pfifo_kick(d);
+        return;
+    }
     int64_t t0 = xemu_wasm_stats_now_ns();
 #endif
     qemu_mutex_lock(&d->pfifo.lock); // FIXME: Factor out fifo lock here
