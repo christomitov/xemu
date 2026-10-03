@@ -2845,6 +2845,10 @@ static void disas_insn(DisasContext *s, CPUState *cpu)
         }
     }
 
+#ifdef CONFIG_TCG_WASM_JIT
+    wasm_census_record(s, &decode);
+#endif
+
     if (decode.e.special == X86_SPECIAL_MMX &&
         !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
         gen_enter_mmx(s);

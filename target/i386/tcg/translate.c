@@ -19,6 +19,7 @@
 #include "qemu/osdep.h"
 
 #include "qemu/host-utils.h"
+#include "qemu/xemu-wasm-census.h"
 #include "cpu.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/translation-block.h"
@@ -179,6 +180,10 @@ typedef struct DisasContext {
     target_ulong pc;       /* pc = eip + cs_base */
     target_ulong cs_base;  /* base of CS segment */
     bool cpu_has_bps;      /* debugger breakpoints exist (wasm inline lookup) */
+#ifdef CONFIG_TCG_WASM_JIT
+    uint32_t *wasm_census_word;
+    bool wasm_census_classified;
+#endif
     target_ulong pc_save;
 
     MemOp aflag;
@@ -4498,6 +4503,7 @@ static void gen_multi0F(DisasContext *s, X86DecodedInsn *decode)
     gen_illegal_opcode(s);
 }
 
+#include "wasm-census.c.inc"
 #include "decode-new.c.inc"
 
 void tcg_x86_init(void)
@@ -4673,6 +4679,29 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 
 static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
 {
+#ifdef CONFIG_TCG_WASM_JIT
+    DisasContext *s = container_of(db, DisasContext, base);
+    uint32_t cflags = tb_cflags(db->tb);
+
+    s->wasm_census_word = NULL;
+    if (wasm_census_enabled()) {
+        s->wasm_census_word = tcg_malloc(sizeof(*s->wasm_census_word));
+        *s->wasm_census_word = XWC_ELIGIBLE | XWC_REGONLY;
+        /* Structural upper bound; live segment/TLB guards still required. */
+        if (!PE(s) || !CODE32(s) || !SS32(s) || CODE64(s) || ADDSEG(s) ||
+            VM86(s) || GUEST(s) || SVME(s) || s->cs_base || s->cpu_has_bps ||
+            (s->flags & (HF_TF_MASK | HF_RF_MASK | HF_INHIBIT_IRQ_MASK)) ||
+            (cflags & (CF_COUNT_MASK | CF_NOIRQ | CF_SINGLE_STEP | CF_BP_PAGE |
+                       CF_MEMI_ONLY | CF_PARALLEL | CF_USE_ICOUNT))) {
+            *s->wasm_census_word &= ~XWC_ELIGIBLE;
+        }
+#ifdef CONFIG_PLUGIN
+        *s->wasm_census_word &= ~XWC_ELIGIBLE;
+#endif
+        /* After gen_tb_start's entry guard; patched once the TB is decoded. */
+        tcg_gen_wasm_census(s->wasm_census_word);
+    }
+#endif
 }
 
 static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
@@ -4694,6 +4723,11 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     bool orig_cc_op_dirty = dc->cc_op_dirty;
     CCOp orig_cc_op = dc->cc_op;
     target_ulong orig_pc_save = dc->pc_save;
+#ifdef CONFIG_TCG_WASM_JIT
+    uint32_t census_before = dc->wasm_census_word ? *dc->wasm_census_word : 0;
+
+    dc->wasm_census_classified = false;
+#endif
 
 #ifdef TARGET_VSYSCALL_PAGE
     /*
@@ -4714,6 +4748,11 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         gen_exception_gpf(dc);
         break;
     case 2:
+#ifdef CONFIG_TCG_WASM_JIT
+        if (dc->wasm_census_word) {
+            *dc->wasm_census_word = census_before;
+        }
+#endif
         /* Restore state that may affect the next instruction. */
         dc->pc = dc->base.pc_next;
         assert(dc->cc_op_dirty == orig_cc_op_dirty);
@@ -4727,6 +4766,13 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     default:
         g_assert_not_reached();
     }
+
+#ifdef CONFIG_TCG_WASM_JIT
+    if (dc->wasm_census_word && !dc->wasm_census_classified) {
+        *dc->wasm_census_word |= XWC_OTHER;
+        *dc->wasm_census_word &= ~XWC_ELIGIBLE;
+    }
+#endif
 
     /*
      * Instruction decoding completed (possibly with #GP if the
@@ -4752,6 +4798,15 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
+
+#ifdef CONFIG_TCG_WASM_JIT
+    if (dc->wasm_census_word) {
+        if (dcbase->plugin_enabled) {
+            *dc->wasm_census_word &= ~XWC_ELIGIBLE;
+        }
+        *dc->wasm_census_word |= dcbase->num_insns << XWC_INSN_SHIFT;
+    }
+#endif
 
     /*
      * FT0 is scratch within one x87 instruction (always written before it

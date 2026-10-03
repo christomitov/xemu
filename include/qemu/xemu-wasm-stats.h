@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "qemu/xemu-wasm-census.h"
 
 #define XEMU_WASM_STATS_FIELDS(X)                                             \
     /* vCPU (TCG) */                                                         \
@@ -150,7 +151,8 @@
     X(n_eager_readback_hit) /* ... whose early copy served a CPU read */ \
     X(n_wgsl_cache_hit)  /* shaders whose WGSL came from the persistent cache */ \
     /* guest-visible */                                                      \
-    X(n_flip)            /* guest buffer flips (frames) */
+    X(n_flip)            /* guest buffer flips (frames) */                   \
+    XEMU_WASM_CENSUS_FIELDS(X)
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;
@@ -160,6 +162,36 @@ typedef struct XemuWasmStats {
 
 #ifdef EMSCRIPTEN
 extern XemuWasmStats xemu_wasm_stats;
+/* Single vCPU writer, like the other generated counters; no clocks/calls. */
+static inline uint64_t *xemu_wasm_census_counter(unsigned bucket, bool insns)
+{
+#define XEMU_CENSUS_PTRS(unused, id) \
+    { &xemu_wasm_stats.n_census_tb_##id, \
+      &xemu_wasm_stats.n_census_insn_##id },
+    static uint64_t *const counters[][2] = {
+        XEMU_CENSUS_BUCKETS(XEMU_CENSUS_PTRS, unused)
+    };
+#undef XEMU_CENSUS_PTRS
+    return counters[bucket][insns];
+}
+
+static inline void xemu_wasm_census_hit(uint32_t word)
+{
+    unsigned bucket = word & XWC_MASK;
+    unsigned n = word >> XWC_INSN_SHIFT;
+
+    ++*xemu_wasm_census_counter(bucket, false);
+    *xemu_wasm_census_counter(bucket, true) += n;
+    if (word & XWC_ELIGIBLE) {
+        ++*xemu_wasm_census_counter(0x40, false);
+        *xemu_wasm_census_counter(0x40, true) += n;
+        if (word & XWC_REGONLY) {
+            ++*xemu_wasm_census_counter(0x41, false);
+            *xemu_wasm_census_counter(0x41, true) += n;
+        }
+    }
+}
+
 int64_t xemu_wasm_stats_now_ns(void);
 /* per-MemoryRegion MMIO call count + time (vCPU thread), for the report */
 void xemu_wasm_mmio_prof(const char *region, int64_t ns);

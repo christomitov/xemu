@@ -7176,6 +7176,9 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, uint64_t pc_start)
             /* No TCI instruction, register allocation or guest-state sync. */
             wasm_jit_phase(s, op->args[0], (const char *)op->args[1]);
             break;
+        case INDEX_op_wasm_census:
+            wasm_census(s, *(const uint32_t *)op->args[0]);
+            break;
         case INDEX_op_wasm_lookup:
             wasm_lookup_layout = (const WasmLookupLayout *)op->args[0];
             wasm_lookup_cflags = op->args[1];
