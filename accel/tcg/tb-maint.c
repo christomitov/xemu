@@ -200,7 +200,7 @@ struct PageDesc {
     /* list of TBs intersecting this ram page */
     uintptr_t first_tb;
 #if defined(XBOX) && defined(EMSCRIPTEN)
-    /* stores to this page that missed all of its TBs (adaptive SMC) */
+    /* Miss count (adaptive SMC), or packed window/backoff in DROP mode. */
     uint32_t smc_miss;
     /* stores seen before the code bitmap is built */
     uint32_t smc_writes;
@@ -338,6 +338,35 @@ typedef int PageForEachNext;
     TB_FOR_EACH_TAGGED((pagedesc)->first_tb, tb, n, page_next)
 
 #if defined(XBOX) && defined(EMSCRIPTEN)
+static int smc_policy = -1, smc_threshold;
+
+#define SMC_DROP_INITIAL 256u
+#define SMC_DROP_MAX (1u << 20)
+#define SMC_DROP_COUNT_BITS 21
+#define SMC_DROP_COUNT_MASK ((1u << SMC_DROP_COUNT_BITS) - 1)
+
+/*
+ * Mode 3 reuses the existing exact-mode miss word: 21 low count bits,
+ * then a bounded backoff exponent (0..12). No larger PageDesc, side
+ * table, lazy allocation or per-write allocation, even when enabled.
+ */
+static unsigned smc_drop_limit(const PageDesc *p)
+{
+    return SMC_DROP_INITIAL << (p->smc_miss >> SMC_DROP_COUNT_BITS);
+}
+
+static unsigned smc_drop_count(const PageDesc *p)
+{
+    return p->smc_miss & SMC_DROP_COUNT_MASK;
+}
+
+static void smc_drop_reset(PageDesc *p)
+{
+    if (smc_policy == 3) {
+        p->smc_miss &= ~SMC_DROP_COUNT_MASK;
+    }
+}
+
 /* The byte range [*first, *last] of @tb that lies on its page @n. */
 static void tb_page_range(const TranslationBlock *tb, unsigned n,
                           tb_page_addr_t *first, tb_page_addr_t *last)
@@ -369,6 +398,8 @@ static void page_code_bitmap_drop(PageDesc *p)
     g_free(p->code_bitmap);
     p->code_bitmap = NULL;
     p->smc_writes = 0;
+    /* Keep the packed backoff across removals, revivals and TB flushes. */
+    smc_drop_reset(p);
 }
 
 static void page_code_bitmap_build(PageDesc *p)
@@ -385,19 +416,42 @@ static void page_code_bitmap_build(PageDesc *p)
 /*
  * XEMU_WASM_SMC_PAGE: 0 exact (default; cheap with the code bitmap), 1 whole
  * page, 2 adaptive. R6: exact ~100 TB/s re-translated vs ~2000 with page.
+ * XEMU_WASM_SMC_DROP=1 adds speculative eviction to exact mode only.
  */
 static void smc_config(int *mode, int *thresh)
 {
-    static int smc_mode = -1, smc_thresh;
-
-    if (smc_mode < 0) {
+    if (smc_policy < 0) {
         const char *e = getenv("XEMU_WASM_SMC_PAGE");
         const char *m = getenv("XEMU_WASM_SMC_MISS");
-        smc_thresh = m ? atoi(m) : 64;
-        smc_mode = !e ? 0 : *e == '0' ? 0 : *e == '2' ? 2 : 1;
+        int policy = !e ? 0 : *e == '0' ? 0 : *e == '2' ? 2 : 1;
+
+        smc_threshold = m ? atoi(m) : 64;
+        /* Mode 3 is exact invalidation plus opt-in speculative eviction. */
+        e = getenv("XEMU_WASM_SMC_DROP");
+        if (policy == 0 && e && *e == '1') {
+            policy = 3;
+        }
+        smc_policy = policy;
     }
-    *mode = smc_mode;
-    *thresh = smc_thresh;
+    *mode = smc_policy;
+    *thresh = smc_threshold;
+}
+
+/* Caller holds the page lock. No per-execution instrumentation is needed. */
+static bool smc_drop_miss(PageDesc *p)
+{
+    p->smc_miss++;
+    return smc_drop_count(p) >= smc_drop_limit(p);
+}
+
+static void smc_drop_backoff(PageDesc *p)
+{
+    unsigned order = p->smc_miss >> SMC_DROP_COUNT_BITS;
+
+    if (smc_drop_limit(p) < SMC_DROP_MAX) {
+        order++;
+    }
+    p->smc_miss = order << SMC_DROP_COUNT_BITS;
 }
 #endif
 
@@ -789,6 +843,8 @@ static void tb_page_add(PageDesc *p, TranslationBlock *tb, unsigned int n)
     page_already_protected = p->first_tb != 0;
     p->first_tb = (uintptr_t)tb | n;
 #if defined(XBOX) && defined(EMSCRIPTEN)
+    /* Includes hash-cache revivals, not just newly translated code. */
+    smc_drop_reset(p);
     if (p->code_bitmap) {
         page_code_bitmap_add(p, tb, n);
     }
@@ -1344,7 +1400,7 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
 #if defined(XBOX) && defined(EMSCRIPTEN)
     if (smc_page) {
         p->smc_miss = 0;
-    } else if (!smc_hit) {
+    } else if (!smc_hit && smc_mode != 3) {
         p->smc_miss++;
     }
 #endif
@@ -1398,6 +1454,52 @@ void tb_invalidate_phys_range(CPUState *cpu, tb_page_addr_t start,
     page_collection_unlock(pages);
 }
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/*
+ * Speculative code-cache eviction, NOT proof that the page was unexecuted.
+ * Publication/revival and bitmap mutation reset the miss window; a hot TB
+ * can still run without either. Backoff limits the cost of such mistakes.
+ *
+ * All pages of intersecting TBs are locked here. Recheck after acquiring
+ * that collection: another thread could have changed the code coverage.
+ */
+static bool smc_drop_range(CPUState *cpu, PageDesc *p, ram_addr_t *start,
+                           ram_addr_t *last, uintptr_t ra)
+{
+    unsigned off = *start & ~TARGET_PAGE_MASK;
+    unsigned end = off + (*last - *start) + 1;
+    tb_page_addr_t page = *start & TARGET_PAGE_MASK;
+    TranslationBlock *current;
+
+    assert_page_locked(p);
+    if (!p->first_tb || !p->code_bitmap ||
+        smc_drop_count(p) < smc_drop_limit(p) ||
+        find_next_bit(p->code_bitmap, end, off) < end) {
+        XSTAT_INC(n_smc_drop_changed);
+        return false;
+    }
+    smc_drop_backoff(p);
+
+    /*
+     * Never manufacture a current-instruction replay for an unrelated
+     * data store: it could already have had other side effects. Preserve
+     * the normal precise-SMC path for actual code-overlapping stores.
+     */
+    current = cpu && ra ? tcg_tb_lookup(ra) : NULL;
+    if (!current || (tb_page_addr0(current) & TARGET_PAGE_MASK) == page ||
+        (tb_page_addr1(current) != -1 &&
+         (tb_page_addr1(current) & TARGET_PAGE_MASK) == page)) {
+        XSTAT_INC(n_smc_drop_busy);
+        return false;
+    }
+
+    *start = page;
+    *last = page | ~TARGET_PAGE_MASK;
+    XSTAT_INC(n_smc_drop_pages);
+    return true;
+}
+#endif
+
 /*
  * len must be <= 8 and start must be a multiple of len.
  * Called via softmmu_template.h when code areas are written to with
@@ -1416,6 +1518,8 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
      * lock. The adaptive page flush still applies once misses accumulate.
      */
     int smc_mode, smc_thresh;
+    bool drop = false;
+
     smc_config(&smc_mode, &smc_thresh);
     if (p && smc_mode != 1) {
         unsigned off = start & ~TARGET_PAGE_MASK;
@@ -1427,12 +1531,20 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
         } else if (p->first_tb && ++p->smc_writes >= 4) {
             page_code_bitmap_build(p);
         }
-        if (miss && (smc_mode == 0 || p->smc_miss + 1 < smc_thresh)) {
-            p->smc_miss++;
-            page_unlock(p);
-            XSTAT_INC(n_smc_bitmap_miss);
-            XSMC_PROF_END();
-            return;
+        if (miss && (smc_mode != 2 || p->smc_miss + 1 < smc_thresh)) {
+            if (smc_mode == 3) {
+                drop = smc_drop_miss(p);
+            } else {
+                p->smc_miss++;
+            }
+            if (!drop) {
+                page_unlock(p);
+                XSTAT_INC(n_smc_bitmap_miss);
+                XSMC_PROF_END();
+                return;
+            }
+        } else {
+            smc_drop_reset(p);
         }
         page_unlock(p);
     }
@@ -1442,6 +1554,11 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
         ram_addr_t last = start + len - 1;
         struct page_collection *pages = page_collection_lock(start, last);
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+        if (drop) {
+            smc_drop_range(cpu, p, &start, &last, ra);
+        }
+#endif
         tb_invalidate_phys_page_range__locked(cpu, pages, p,
                                               start, last, ra);
         page_collection_unlock(pages);
