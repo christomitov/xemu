@@ -2929,7 +2929,7 @@ static bool gen_wasm_lookup_fast(uint32_t cflags)
 
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_LOOKUP_FAST");
-        enabled = e && *e == '1';
+        enabled = !(e && *e == '0');   /* default on; =0 disables */
     }
     if (!enabled) {
         return false;

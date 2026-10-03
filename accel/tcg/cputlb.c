@@ -1464,7 +1464,7 @@ static bool notdirty_skip_tlb_cleanup(ram_addr_t ram_addr)
 
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_NOTDIRTY_FAST");
-        enabled = e && *e == '1';
+        enabled = !(e && *e == '0');   /* default on; =0 disables */
     }
     if (enabled &&
         !physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {

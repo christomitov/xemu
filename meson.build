@@ -872,9 +872,9 @@ emulator_link_args = []
 # inherit them (emulator_link_args).  The 16MB main/8MB pthread stacks are
 # required - QEMU's call chains blow the 64KB default.
 if host_os == 'emscripten'
-  emulator_link_args += ['-sDEFAULT_PTHREAD_STACK_SIZE=8MB',
+  emulator_link_args += ['-sASSERTIONS=0', '-sDEFAULT_PTHREAD_STACK_SIZE=8MB',
                          '-sSTACK_SIZE=16MB',
-                         '-sSTACK_OVERFLOW_CHECK=2',
+                         '-sSTACK_OVERFLOW_CHECK=0',
                          '-lnodefs.js',
                          '--profiling-funcs']
 endif
