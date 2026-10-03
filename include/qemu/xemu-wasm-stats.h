@@ -60,9 +60,6 @@
     X(n_slow_st_miss)    /*  ... TLB miss (victim hit or fill) */          \
     X(n_slow_st_notdirty) /* ... clean page (code / dirty tracking) */     \
     X(n_smc_bitmap_miss) /* ... code-page stores cleared by the code bitmap */ \
-    X(n_smc_drop_pages)  /* speculative whole-page code-cache evictions */ \
-    X(n_smc_drop_busy)   /* current/unknown TB: speculative drop declined */ \
-    X(n_smc_drop_changed) /* code coverage changed before drop recheck */ \
     X(n_notdirty_fast_skip) /* opt-in: protected-page TLB cleanup elided */  \
     X(n_slow_st_mmio)    /*  ... MMIO */                                    \
     X(n_slow_st_watch)   /*  ... watchpoint / access callback */            \
