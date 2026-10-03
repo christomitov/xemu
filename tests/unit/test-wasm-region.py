@@ -58,6 +58,7 @@ static void *g_memdup2(const void *p, size_t n) {
 }
 #define qatomic_read(p) (*(p))
 #define XPHASE_SET(...) do {} while (0)
+#define XTBPHASE_SET(...) do {} while (0)
 #define XSTAT_INC(f) (xemu_wasm_stats.f++)
 #define XSTAT_ADD(f,n) (xemu_wasm_stats.f += (n))
 static struct {
@@ -167,8 +168,9 @@ static uint32_t run(int id, int f)
 }
 int main(int argc, char **argv)
 {
-    assert(argc == 2);
+    assert(argc == 3);
     setenv("XEMU_WASM_TLB_HINT", argv[1], 1);
+    setenv("XEMU_WASM_TB_STATS", argv[2], 1);
     for (int i = 0; i < 8; i++) fixture(i, i % 2 == 0 ? i + 1 : -1);
     int ab = compile_region(&headers[0]);
     int cd = compile_region(&headers[2]);
@@ -237,6 +239,8 @@ int main(int argc, char **argv)
         blocks[3*i] = 2; blocks[3*i+1] = 0x40; blocks[3*i+2] = 0x0b;
     }
     assert(!region_cfg(blocks, sizeof(blocks), &score, &depth));
+    assert(xemu_wasm_stats.n_tb_exec == (argv[2][0] == '1' ? 2 : 0));
+    assert(xemu_wasm_stats.n_tb_region == (argv[2][0] == '1' ? 2 : 0));
     assert(xemu_wasm_stats.n_region_shared == 3);
     assert(xemu_wasm_stats.n_region_aliases == 3);
     puts("PASS: native multi-entry routing, stale/index/foreign guards, "
@@ -254,7 +258,10 @@ def main():
              "region_leb", "region_cfg", "region_member_ok", "bb_count",
              "region_guard", "region_shared_guard", "add_instance",
              "get_instance", "remove_instances", "compile_region"]
-    code = (PREFIX + defines + "\n" +
+    stats = (ROOT / 'include/qemu/xemu-wasm-stats.h').read_text()
+    policy = re.search(r'static inline bool xemu_wasm_tb_stats_enabled\(void\)'
+                       r'.*?\n}', stats, re.S).group()
+    code = (PREFIX + policy + "\n" + defines + "\n" +
             "\n".join(function(n) for n in names) + SUFFIX)
     with tempfile.TemporaryDirectory(prefix="test-wasm-region-") as tmp:
         src = Path(tmp) / "test.c"
@@ -267,8 +274,10 @@ def main():
                         "-sEXIT_RUNTIME=1", str(src), "-o", str(out)],
                        check=True)
         for hint in [0, 1]:
-            subprocess.run([*shlex.split(os.environ.get("NODE", "node")),
-                            str(out), str(hint)], check=True, timeout=30)
+            for stats in [0, 1]:
+                subprocess.run([*shlex.split(os.environ.get("NODE", "node")),
+                                str(out), str(hint), str(stats)],
+                               check=True, timeout=30)
 
 
 if __name__ == "__main__":

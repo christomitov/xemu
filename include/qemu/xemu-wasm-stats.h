@@ -162,6 +162,49 @@ typedef struct XemuWasmStats {
 
 #ifdef EMSCRIPTEN
 extern XemuWasmStats xemu_wasm_stats;
+
+/* Rollout: unset retains legacy telemetry; explicit 0 tests the lean path. */
+static inline bool xemu_wasm_tb_stats_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_TB_STATS");
+        enabled = !(e && *e == '0');
+    }
+    return enabled;
+}
+
+/* Explicit JIT attribution needs the sampler even with TB_STATS=0. */
+static inline bool xemu_wasm_profile_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *p = getenv("XEMU_WASM_PROFILE");
+        const char *j = getenv("XEMU_WASM_JIT_PROFILE");
+        enabled = (j && (atoi(j) & 15)) ||
+                  (p ? *p == '1' : xemu_wasm_tb_stats_enabled());
+    }
+    return enabled;
+}
+
+#define XTBSTAT_INC(f) do { \
+    if (xemu_wasm_tb_stats_enabled()) { \
+        XSTAT_INC(f); \
+    } \
+} while (0)
+#define XTBSTAT_ADD(f, n) do { \
+    if (xemu_wasm_tb_stats_enabled()) { \
+        XSTAT_ADD(f, n); \
+    } \
+} while (0)
+#define XTBPHASE_SET(name) do { \
+    if (xemu_wasm_profile_enabled()) { \
+        XPHASE_SET(XPHASE_VCPU, name); \
+    } \
+} while (0)
+
 /* Single vCPU writer, like the other generated counters; no clocks/calls. */
 static inline uint64_t *xemu_wasm_census_counter(unsigned bucket, bool insns)
 {
@@ -250,6 +293,9 @@ static inline bool xemu_wasm_smc_profile_enabled(void)
 #define XPHASE_PUSH(t, name) do { } while (0)
 #define XPHASE_POP(t) do { } while (0)
 #define XPHASE_SET(t, name) do { } while (0)
+#define XTBSTAT_INC(f) do { } while (0)
+#define XTBSTAT_ADD(f, n) do { } while (0)
+#define XTBPHASE_SET(name) do { } while (0)
 #define XSMC_PROF_BEGIN(name) do { } while (0)
 #define XSMC_PROF_SET(name) do { } while (0)
 #define XSMC_PROF_END() do { } while (0)

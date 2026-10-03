@@ -579,6 +579,16 @@ static void wasm_count(TCGContext *s, uint64_t *ctr)
     wasm_mem(s, W_I64_STORE, 0);
 }
 
+/* Resolved while generating code: lean TBs gain no runtime policy branch. */
+static void wasm_count_tb_stat(TCGContext *s, uint64_t *ctr)
+{
+#ifdef EMSCRIPTEN
+    if (xemu_wasm_tb_stats_enabled()) {
+        wasm_count(s, ctr);
+    }
+#endif
+}
+
 /* One entry marker survives self-loops, IC tails and copied region bodies. */
 static void wasm_census(TCGContext *s, uint32_t word)
 {
@@ -759,6 +769,9 @@ static const char *wasm_helper_phase_name(const TCGHelperInfo *info)
 static void wasm_phase(TCGContext *s, const char *name)
 {
 #ifdef EMSCRIPTEN
+    if (!xemu_wasm_profile_enabled()) {
+        return;
+    }
     wasm_i32_const(s, (int32_t)(uintptr_t)&xemu_wasm_phase[XPHASE_VCPU]);
     wasm_i32_const(s, (int32_t)(uintptr_t)name);
     wasm_mem(s, W_I32_STORE, 0);
@@ -831,7 +844,7 @@ static void wasm_callsite_phase(TCGContext *s, const TCGHelperInfo *info,
 static void wasm_count_tb_exec(TCGContext *s)
 {
 #ifdef EMSCRIPTEN
-    wasm_count(s, &xemu_wasm_stats.n_tb_exec);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_tb_exec);
 #endif
 }
 
@@ -1505,7 +1518,7 @@ static bool wasm_call_i128_fast(TCGContext *s, const tcg_insn_unit *func,
     }
 
 #ifdef EMSCRIPTEN
-    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
 #endif
     wasm_jit_phase(s, 1, "jit:i128");
@@ -1716,7 +1729,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     }
 
 #ifdef EMSCRIPTEN
-    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
 #endif
     if (may_suspend) {
@@ -2213,8 +2226,8 @@ static void wasm_ic_exit(TCGContext *s, bool indirect)
     wasm_mem(s, W_I32_STORE, WASM_INSTANCE_USED_OFF);
     wasm_count_tb_exec(s);
 #ifdef EMSCRIPTEN
-    wasm_count(s, indirect ? &xemu_wasm_stats.n_ic_indirect_hit :
-                            &xemu_wasm_stats.n_ic_direct_hit);
+    wasm_count_tb_stat(s, indirect ? &xemu_wasm_stats.n_ic_indirect_hit :
+                                    &xemu_wasm_stats.n_ic_direct_hit);
 #endif
     wasm_var(s, W_LOCAL_GET, CTX_IDX);
     wasm_ic_operand(s, W_I32_CONST, site, 0);
@@ -2223,8 +2236,8 @@ static void wasm_ic_exit(TCGContext *s, bool indirect)
     wasm_uleb(s, 0); /* this module's small cache table, not the C table */
     wasm8(s, W_END);
 #ifdef EMSCRIPTEN
-    wasm_count(s, indirect ? &xemu_wasm_stats.n_ic_indirect_miss :
-                            &xemu_wasm_stats.n_ic_direct_miss);
+    wasm_count_tb_stat(s, indirect ? &xemu_wasm_stats.n_ic_indirect_miss :
+                                    &xemu_wasm_stats.n_ic_direct_miss);
 #endif
     if (indirect) {
         /*
@@ -2266,7 +2279,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
     wasm_if(s, W_BLOCKTYPE_VOID);
     wasm_count_tb_exec(s);
 #ifdef EMSCRIPTEN
-    wasm_count(s, &xemu_wasm_stats.n_tb_selfloop);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_tb_selfloop);
     wasm_phase(s, "spin");
 #endif
     wasm_i64_const(s, 0);
@@ -2322,7 +2335,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
         wasm_mem(s, W_I32_STORE, WASM_INSTANCE_USED_OFF);
         wasm_count_tb_exec(s);
 #ifdef EMSCRIPTEN
-        wasm_count(s, &xemu_wasm_stats.n_tb_linked);
+        wasm_count_tb_stat(s, &xemu_wasm_stats.n_tb_linked);
 #endif
         wasm_tlb_hint_drop(s);
         wasm_var(s, W_LOCAL_GET, CTX_IDX);
@@ -2335,7 +2348,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
         wasm_i32_const(s, (int32_t)(uintptr_t)cur_hdr);
         wasm_mem(s, W_I32_STORE, WASM_CTX_RELINK_OFF);
 #ifdef EMSCRIPTEN
-        wasm_count(s, &xemu_wasm_stats.n_tb_linkmiss);
+        wasm_count_tb_stat(s, &xemu_wasm_stats.n_tb_linkmiss);
 #endif
     }
     wasm_count_goto_exit(s, slot < 0);
@@ -2346,7 +2359,7 @@ static void wasm_goto_tb_in_l32_0(TCGContext *s, int depth, int slot)
 static void wasm_goto_ptr(TCGContext *s, TCGReg arg)
 {
 #ifdef EMSCRIPTEN
-    wasm_count(s, &xemu_wasm_stats.n_tb_gotoptr);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_tb_gotoptr);
 #endif
     wasm_get_r32(s, arg);
     wasm_var(s, W_LOCAL_SET, L32_0);
@@ -3963,7 +3976,7 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
         nest++;
     }
     /* any other op: the helper */
-    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
     wasm_set_tci_tb_ptr(s);
     wasm_push_call_args(s, typemask, nargs);
@@ -4053,7 +4066,7 @@ static bool wasm_call_sse_fast(TCGContext *s, const tcg_insn_unit *func,
         func_idx = register_helper(func);
         gen_func_type(info);
     }
-    wasm_count(s, &xemu_wasm_stats.n_helper);
+    wasm_count_tb_stat(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
 
     wasm_jit_phase(s, 1, "jit:sse");

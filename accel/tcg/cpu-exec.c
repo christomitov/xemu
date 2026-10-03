@@ -266,7 +266,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
 
     hash = tb_jmp_cache_hash_func(s.pc);
     jc = cpu->tb_jmp_cache;
-    XSTAT_INC(n_jc_lookup);
+    XTBSTAT_INC(n_jc_lookup);
 
     tb = qatomic_read(&jc->array[hash].tb);
     if (likely(tb &&
@@ -277,7 +277,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
         goto hit;
     }
 
-    XSTAT_INC(n_jc_miss);
+    XTBSTAT_INC(n_jc_miss);
     tb = tb_htable_lookup(cpu, s);
     if (tb == NULL) {
         return NULL;
@@ -469,7 +469,7 @@ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
     }
 
     qemu_thread_jit_execute();
-    XSTAT_INC(n_tb_exec);
+    XTBSTAT_INC(n_tb_exec);
     ret = tcg_qemu_tb_exec(cpu_env(cpu), tb_ptr);
     cpu->neg.can_do_io = true;
     qemu_plugin_disable_mem_helpers(cpu);
@@ -1009,9 +1009,9 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                 uint32_t h;
 
                 mmap_lock();
-                XPHASE_SET(XPHASE_VCPU, "tb_gen");
+                XTBPHASE_SET("tb_gen");
                 tb = tb_gen_code(cpu, s);
-                XPHASE_SET(XPHASE_VCPU, "dispatch");
+                XTBPHASE_SET("dispatch");
                 mmap_unlock();
 
                 /*
@@ -1066,7 +1066,7 @@ static int cpu_exec_setjmp(CPUState *cpu, SyncClocks *sc)
     /* Prepare setjmp context for exception handling. */
     if (unlikely(sigsetjmp(cpu->jmp_env, 0) != 0)) {
         XSTAT_INC(n_cpu_exit);
-        XPHASE_SET(XPHASE_VCPU, "dispatch");
+        XTBPHASE_SET("dispatch");
 #ifdef EMSCRIPTEN
         {
             /* why the vCPU longjmp'ed out of the TB (a JS throw on wasm) */

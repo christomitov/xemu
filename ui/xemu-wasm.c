@@ -973,7 +973,7 @@ int main(int argc, char **argv)
     lowmem_snapshot();
     lowmem_init = 1;
 
-    {
+    if (xemu_wasm_profile_enabled()) {
         static QemuThread sampler;
         qemu_thread_create(&sampler, "phase-sampler", phase_sampler_thread,
                            NULL, QEMU_THREAD_DETACHED);
