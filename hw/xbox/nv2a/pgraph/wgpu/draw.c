@@ -649,6 +649,47 @@ static void create_clear_pipeline(PGRAPHState *pg)
     ds->pipeline_binding_changed = true;
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * Diagnostic: on a pipeline cache miss, which key fields differ from the last
+ * pipeline built for the same vertex+pixel shader modules ("pmiss:<field>"
+ * events; "pmiss:new" for a first use). Many misses whose shaders were seen
+ * before mean pipelines are rebuilt for state that varies per draw.
+ */
+static void pipeline_miss_diag(const ShaderBinding *sb,
+                               const WgpuPipelineKey *key)
+{
+    enum { N = 512 };
+    static struct { uintptr_t v, p; WgpuPipelineKey key; } *last;
+    if (!last) {
+        last = g_malloc0(sizeof(*last) * N);
+    }
+    uintptr_t v = (uintptr_t)sb->vsh_module, p = (uintptr_t)sb->psh_module;
+    unsigned i = ((v >> 4) ^ (p >> 4) * 2654435761u) & (N - 1);
+    if (last[i].v != v || last[i].p != p) {
+        xemu_wasm_count_add(g_intern_static_string("pmiss:new"), 1);
+    } else {
+        const WgpuPipelineKey *o = &last[i].key;
+#define PMISS(f) do { if (memcmp(&o->f, &key->f, sizeof(key->f))) \
+        xemu_wasm_count_add(g_intern_static_string("pmiss:" #f), 1); } while (0)
+        PMISS(clear); PMISS(color_format); PMISS(zeta_format);
+        PMISS(topology); PMISS(layout_key); PMISS(pipeline_layout);
+        PMISS(vertex); PMISS(shader_state);
+        for (int r = 0; r < 9; r++) {
+            if (o->regs[r] != key->regs[r]) {
+                char k[24];
+                snprintf(k, sizeof(k), "pmiss:regs[%d]", r);
+                xemu_wasm_count_add(g_intern_string(k), 1);
+            }
+        }
+#undef PMISS
+    }
+    last[i].v = v;
+    last[i].p = p;
+    last[i].key = *key;
+}
+#endif
+
 static bool check_render_pass_dirty(PGRAPHState *pg)
 {
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
@@ -1039,6 +1080,9 @@ static void create_pipeline(PGRAPHState *pg, uint32_t topology)
     };
 
     XSTAT_INC(n_pipeline_gen);
+#ifdef EMSCRIPTEN
+    pipeline_miss_diag(sb, &key);
+#endif
     snode->draw_time = pg->draw_time;
     if (async_pipelines_enabled() && !force_sync) {
         /*
