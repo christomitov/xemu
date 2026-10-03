@@ -152,7 +152,9 @@
     X(n_wgsl_cache_hit)  /* shaders whose WGSL came from the persistent cache */ \
     /* guest-visible */                                                      \
     X(n_flip)            /* guest buffer flips (frames) */                   \
-    XEMU_WASM_CENSUS_FIELDS(X)
+    XEMU_WASM_CENSUS_FIELDS(X)                                            \
+    X(n_notdirty_inline) /* opt-in: bitmap-miss inline stores admitted */   \
+    X(n_notdirty_inline_miss) /* leaf declines; original helper required */
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;

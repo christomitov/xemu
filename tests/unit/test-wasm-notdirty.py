@@ -36,6 +36,7 @@ C = r'''
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #define XBOX 1
 #define EMSCRIPTEN 1
 typedef uint64_t ram_addr_t;
@@ -61,8 +62,12 @@ C += ("static bool cleanup(ram_addr_t ram_addr) { return " +
 C += r'''
 int main(int argc, char **argv) {
     assert(argc == 2);
-    setenv("XEMU_WASM_NOTDIRTY_FAST", argv[1], 1);
-    bool enabled = argv[1][0] == '1';
+    if (!strcmp(argv[1], "unset")) {
+        unsetenv("XEMU_WASM_NOTDIRTY_FAST");
+    } else {
+        setenv("XEMU_WASM_NOTDIRTY_FAST", argv[1], 1);
+    }
+    bool enabled = argv[1][0] != '0';
     for (unsigned state = 0; state <= ALL; state++) {
         bits = state; calls = 0;
         bool original = !physical_memory_is_clean(0x1234000);
@@ -96,5 +101,5 @@ with tempfile.TemporaryDirectory(prefix="test-wasm-notdirty-") as directory:
                    ["-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror",
                     str(p / "test.c"), "-o", str(p / "test")],
                    check=True, timeout=30)
-    for mode in ["0", "1", "2"]:
+    for mode in ["unset", "", "0", "1", "2", "invalid"]:
         subprocess.run([str(p / "test"), mode], check=True, timeout=10)
