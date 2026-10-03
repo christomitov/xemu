@@ -161,6 +161,15 @@ QEMU_BUILD_BUG_ON(offsetof(WasmContext, ic_slot) != WASM_CTX_IC_SLOT_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, func_idx) != WASM_INSTANCE_FIDX_OFF);
 QEMU_BUILD_BUG_ON(offsetof(WasmInstance, used) != WASM_INSTANCE_USED_OFF);
 
+/* Immutable target layout; no guest state or cached translation is kept. */
+typedef struct WasmLookupLayout {
+    int32_t env_bps, env_jc;
+    uint32_t env_eip, env_cs, env_eflags, env_hflags, flags_mask;
+    uint32_t jc_gen, entry_size, entry_tb, entry_pc, entry_gen;
+    uint32_t tb_cs, tb_flags, tb_cflags, tb_ptr;
+    uint32_t hash_shift, hash_page_mask, hash_addr_mask;
+} WasmLookupLayout;
+
 /* Blocks run by the interpreter this many times get compiled to wasm. */
 extern int wasm32_jit_threshold;
 bool wasm32_ic_enabled(void);

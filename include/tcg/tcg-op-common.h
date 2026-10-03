@@ -41,6 +41,8 @@ void tcg_gen_mb(TCGBar);
 #ifdef CONFIG_TCG_WASM_JIT
 /* Diagnostic marker, with no interpreter or architectural side effects. */
 void tcg_gen_wasm_phase(unsigned mask, const char *name);
+/* Use a target-supplied layout for the next eligible lookup helper call. */
+void tcg_gen_wasm_lookup(const void *layout, uint32_t cflags);
 #endif
 
 /**

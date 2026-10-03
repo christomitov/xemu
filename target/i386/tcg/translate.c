@@ -2897,6 +2897,48 @@ static void gen_bnd_jmp(DisasContext *s)
 #ifdef EMSCRIPTEN
 #include "accel/tcg/tb-jmp-cache.h"
 #include "accel/tcg/tb-hash.h"
+#ifdef CONFIG_TCG_WASM_JIT
+#include "tcg/wasm32.h"
+
+static bool gen_wasm_lookup_fast(uint32_t cflags)
+{
+    static int enabled = -1;
+    static const WasmLookupLayout layout = {
+        .env_bps = (intptr_t)offsetof(CPUState, breakpoints.tqh_first) -
+                   (intptr_t)offsetof(X86CPU, env),
+        .env_jc = (intptr_t)offsetof(CPUState, tb_jmp_cache) -
+                  (intptr_t)offsetof(X86CPU, env),
+        .env_eip = offsetof(CPUX86State, eip),
+        .env_cs = offsetof(CPUX86State, segs[R_CS].base),
+        .env_eflags = offsetof(CPUX86State, eflags),
+        .env_hflags = offsetof(CPUX86State, hflags),
+        .flags_mask = IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK,
+        .jc_gen = offsetof(CPUJumpCache, gen),
+        .entry_size = sizeof(((CPUJumpCache *)0)->array[0]),
+        .entry_tb = offsetof(CPUJumpCache, array[0].tb),
+        .entry_pc = offsetof(CPUJumpCache, array[0].pc),
+        .entry_gen = offsetof(CPUJumpCache, array[0].gen),
+        .tb_cs = offsetof(TranslationBlock, cs_base),
+        .tb_flags = offsetof(TranslationBlock, flags),
+        .tb_cflags = offsetof(TranslationBlock, cflags),
+        .tb_ptr = offsetof(TranslationBlock, tc.ptr),
+        .hash_shift = TARGET_PAGE_BITS - TB_JMP_PAGE_BITS,
+        .hash_page_mask = TB_JMP_PAGE_MASK,
+        .hash_addr_mask = TB_JMP_ADDR_MASK,
+    };
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_LOOKUP_FAST");
+        enabled = e && *e == '1';
+    }
+    if (!enabled) {
+        return false;
+    }
+    tcg_gen_wasm_lookup(&layout, cflags);
+    tcg_gen_lookup_and_goto_ptr();
+    return true;
+}
+#endif
 
 static void gen_lookup_phase(const char *name)
 {
@@ -2937,6 +2979,11 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
         tcg_gen_lookup_and_goto_ptr();
         return;
     }
+#ifdef CONFIG_TCG_WASM_JIT
+    if (gen_wasm_lookup_fast(cflags)) {
+        return;
+    }
+#endif
     gen_lookup_phase("jit:lookup");
     QEMU_BUILD_BUG_ON(offsetof(X86CPU, parent_obj) != 0);
     /* 32-bit softmmu only: pc, vaddr and cs_base fit in 32 bits */

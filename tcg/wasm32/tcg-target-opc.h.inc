@@ -17,3 +17,4 @@ DEF(tci_qemu_ld_rrr, 1, 2, 0, TCG_OPF_NOT_PRESENT)
 DEF(tci_qemu_st_rrr, 0, 3, 0, TCG_OPF_NOT_PRESENT)
 /* Codegen-only diagnostic marker: never emitted into TCI bytecode. */
 DEF(wasm_phase, 0, 0, 2, TCG_OPF_NOT_PRESENT)
+DEF(wasm_lookup, 0, 0, 2, TCG_OPF_NOT_PRESENT)
