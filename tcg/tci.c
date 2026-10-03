@@ -666,6 +666,13 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
         opc = extract32(insn, 0, 8);
 
         switch (opc) {
+#ifdef CONFIG_TCG_WASM_JIT
+        case INDEX_op_wasm_census:
+#ifdef EMSCRIPTEN
+            xemu_wasm_census_hit(insn >> 8);
+#endif
+            break;
+#endif
         case INDEX_op_call:
             {
                 void *call_slots[MAX_CALL_IARGS];
@@ -1426,6 +1433,12 @@ int print_insn_tci(bfd_vma addr, disassemble_info *info)
     op_name = def->name;
 
     switch (op) {
+#ifdef CONFIG_TCG_WASM_JIT
+    case INDEX_op_wasm_census:
+        info->fprintf_func(info->stream, "%-12s  flags=0x%x insns=%u",
+                           op_name, (insn >> 8) & 255, insn >> 16);
+        break;
+#endif
     case INDEX_op_br:
     case INDEX_op_exit_tb:
     case INDEX_op_goto_tb:

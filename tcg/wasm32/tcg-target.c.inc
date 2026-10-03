@@ -579,6 +579,30 @@ static void wasm_count(TCGContext *s, uint64_t *ctr)
     wasm_mem(s, W_I64_STORE, 0);
 }
 
+/* One entry marker survives self-loops, IC tails and copied region bodies. */
+static void wasm_census(TCGContext *s, uint32_t word)
+{
+    tcg_debug_assert(word < (1u << 24));
+    tcg_out32(s, INDEX_op_wasm_census | (word << 8));
+#ifdef EMSCRIPTEN
+    unsigned buckets[3] = { word & XWC_MASK, 0x40, 0x41 };
+    unsigned count = !(word & XWC_ELIGIBLE) ? 1 :
+                     (word & XWC_REGONLY) ? 3 : 2;
+
+    for (unsigned i = 0; i < count; i++) {
+        uint32_t addr = (uintptr_t)xemu_wasm_census_counter(buckets[i], true);
+
+        wasm_count(s, xemu_wasm_census_counter(buckets[i], false));
+        wasm_i32_const(s, addr);
+        wasm_i32_const(s, addr);
+        wasm_mem(s, W_I64_LOAD, 0);
+        wasm_i64_const(s, word >> XWC_INSN_SHIFT);
+        wasm8(s, W_I64_ADD);
+        wasm_mem(s, W_I64_STORE, 0);
+    }
+#endif
+}
+
 /* No extra generated instructions unless entry/exit profiling is enabled. */
 static bool wasm_profile_exits(void)
 {

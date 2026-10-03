@@ -295,6 +295,11 @@ void tcg_gen_br(TCGLabel *l)
 }
 
 #ifdef CONFIG_TCG_WASM_JIT
+void tcg_gen_wasm_census(const uint32_t *word)
+{
+    tcg_gen_op1(INDEX_op_wasm_census, TCG_TYPE_I32, (uintptr_t)word);
+}
+
 void tcg_gen_wasm_phase(unsigned mask, const char *name)
 {
     tcg_gen_op2(INDEX_op_wasm_phase, TCG_TYPE_I32, mask, (uintptr_t)name);
