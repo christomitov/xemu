@@ -124,18 +124,90 @@ static bool is_flip_stall_complete(NV2AState *d)
     return false;
 }
 
+
+/*
+ * Method batching (XEMU_WASM_PFIFO_BATCH=1). Each method used to drop
+ * pfifo.lock, take pgraph.lock, run, and swap back: four lock operations
+ * per method, ~2.2M times/s in Ghost Recon, which uploads vertex constants
+ * one vector at a time. Instead take pgraph.lock once for a run of methods,
+ * keeping pfifo.lock released for the whole run exactly as during one
+ * method (handlers may drop pgraph.lock and take the BQL to raise an IRQ,
+ * which must never happen with pfifo.lock held). The run ends when the
+ * pusher stops, after any method that drew (the long ones, so vCPU PGRAPH
+ * accesses wait no longer than before), or after 64 methods. Code on this
+ * path that takes pgraph.lock itself checks pfifo.pgraph_held.
+ */
+static bool pfifo_batch_enabled(void)
+{
+    static int en = -1;
+    if (en < 0) {
+        const char *e = getenv("XEMU_WASM_PFIFO_BATCH");
+        en = e && *e == '1';
+    }
+    return en;
+}
+
+static void pfifo_pgraph_acquire(NV2AState *d)
+{
+    if (d->pfifo.pgraph_held) {
+        return;
+    }
+    qemu_mutex_unlock(&d->pfifo.lock);
+    XPHASE_SET(XPHASE_GPU, "lock_pgraph");
+    qemu_mutex_lock(&d->pgraph.lock);
+    XPHASE_SET(XPHASE_GPU, NULL);
+    if (pfifo_batch_enabled()) {
+        d->pfifo.pgraph_held = true;
+        d->pfifo.pgraph_held_methods = 0;
+    }
+}
+
+static void pfifo_pgraph_release_now(NV2AState *d)
+{
+    d->pfifo.pgraph_held = false;
+    qemu_mutex_unlock(&d->pgraph.lock);
+    XPHASE_SET(XPHASE_GPU, "lock_pfifo");
+    qemu_mutex_lock(&d->pfifo.lock);
+    XPHASE_SET(XPHASE_GPU, NULL);
+}
+
+/* after a method: end the run if it drew or is long enough */
+static void pfifo_pgraph_method_done(NV2AState *d, bool drew)
+{
+    if (!d->pfifo.pgraph_held) {
+        pfifo_pgraph_release_now(d);
+        return;
+    }
+    if (drew || ++d->pfifo.pgraph_held_methods >= 64) {
+        pfifo_pgraph_release_now(d);
+    }
+}
+
+/* end of a pusher run (any exit from its loop) */
+static void pfifo_pgraph_end_run(NV2AState *d)
+{
+    if (d->pfifo.pgraph_held) {
+        pfifo_pgraph_release_now(d);
+    }
+}
+
 static bool pfifo_stall_for_flip(NV2AState *d)
 {
     bool should_stall = false;
 
     if (qatomic_read(&d->pgraph.waiting_for_flip)) {
-        qemu_mutex_lock(&d->pgraph.lock);
+        bool held = d->pfifo.pgraph_held;
+        if (!held) {
+            qemu_mutex_lock(&d->pgraph.lock);
+        }
         if (!is_flip_stall_complete(d)) {
             should_stall = true;
         } else {
             d->pgraph.waiting_for_flip = false;
         }
-        qemu_mutex_unlock(&d->pgraph.lock);
+        if (!held) {
+            qemu_mutex_unlock(&d->pgraph.lock);
+        }
     }
 
     return should_stall;
@@ -187,10 +259,7 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
         SET_MASK(*pull1, NV_PFIFO_CACHE1_PULL1_ENGINE, entry.engine);
 
         // TODO: this is fucked
-        qemu_mutex_unlock(&d->pfifo.lock);
-        XPHASE_SET(XPHASE_GPU, "lock_pgraph");
-        qemu_mutex_lock(&d->pgraph.lock);
-        XPHASE_SET(XPHASE_GPU, NULL);
+        pfifo_pgraph_acquire(d);
 
         // Switch contexts if necessary
         if (can_fifo_access(d)) {
@@ -202,10 +271,7 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
             }
         }
 
-        qemu_mutex_unlock(&d->pgraph.lock);
-        XPHASE_SET(XPHASE_GPU, "lock_pfifo");
-        qemu_mutex_lock(&d->pfifo.lock);
-        XPHASE_SET(XPHASE_GPU, NULL);
+        pfifo_pgraph_method_done(d, true);  /* object bind: end the run */
 
     } else if (method >= 0x100) {
         // method passed to engine
@@ -226,10 +292,12 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
         SET_MASK(*pull1, NV_PFIFO_CACHE1_PULL1_ENGINE, engine);
 
         // TODO: this is fucked
-        qemu_mutex_unlock(&d->pfifo.lock);
-        XPHASE_SET(XPHASE_GPU, "lock_pgraph");
-        qemu_mutex_lock(&d->pgraph.lock);
-        XPHASE_SET(XPHASE_GPU, NULL);
+        pfifo_pgraph_acquire(d);
+#ifdef EMSCRIPTEN
+        uint64_t draws_before = xemu_wasm_stats.n_draw;
+#else
+        uint64_t draws_before = 0;
+#endif
 
         if (can_fifo_access(d)) {
             /* GPU-thread profile: method work vs PFIFO plumbing around it */
@@ -240,10 +308,13 @@ static ssize_t pfifo_run_puller(NV2AState *d, uint32_t method_entry,
             XPHASE_POP(XPHASE_GPU);
         }
 
-        qemu_mutex_unlock(&d->pgraph.lock);
-        XPHASE_SET(XPHASE_GPU, "lock_pfifo");
-        qemu_mutex_lock(&d->pfifo.lock);
-        XPHASE_SET(XPHASE_GPU, NULL);
+#ifdef EMSCRIPTEN
+        pfifo_pgraph_method_done(d, xemu_wasm_stats.n_draw != draws_before ||
+                                        num_proc < 0);
+#else
+        (void)draws_before;
+        pfifo_pgraph_method_done(d, true);
+#endif
     } else {
         assert(!"Unrecognized pfifo puller method");
     }
@@ -453,6 +524,7 @@ static void pfifo_run_pusher(NV2AState *d)
             break;
         }
     }
+    pfifo_pgraph_end_run(d);
 
     // NV2A_DPRINTF("DMA pusher done: max 0x%" HWADDR_PRIx ", 0x%" HWADDR_PRIx " - 0x%" HWADDR_PRIx "\n",
     //      dma_len, control->dma_get, control->dma_put);

@@ -1698,19 +1698,29 @@ void pgraph_wgpu_pre_read_command(NV2AState *d, hwaddr addr, hwaddr size)
      * flags). Avoid another PGRAPH lock for unrelated command buffers. Reset
      * and renderer switching quiesce the worker with PFIFO, already held here.
      */
+    /* PFIFO method batching may already hold pgraph.lock (pfifo.c) */
+    bool held = d->pfifo.pgraph_held;
     if (!QTAILQ_EMPTY(&r->surf.pending_wb)) {
-        qemu_mutex_lock(&d->pgraph.lock);
+        if (!held) {
+            qemu_mutex_lock(&d->pgraph.lock);
+        }
         wb_flush_range(d, addr, size, "cmd");
-        qemu_mutex_unlock(&d->pgraph.lock);
+        if (!held) {
+            qemu_mutex_unlock(&d->pgraph.lock);
+        }
     }
     if (r->surf.num_retained) {
         SurfaceBinding *surface;
         QTAILQ_FOREACH(surface, &r->surf.surfaces, entry) {
             if (surface->backing &&
                 check_surface_overlaps_range(surface, addr, size)) {
-                qemu_mutex_lock(&d->pgraph.lock);
+                if (!held) {
+                    qemu_mutex_lock(&d->pgraph.lock);
+                }
                 pgraph_wgpu_materialize_retained(d, addr, size, false);
-                qemu_mutex_unlock(&d->pgraph.lock);
+                if (!held) {
+                    qemu_mutex_unlock(&d->pgraph.lock);
+                }
                 break;
             }
         }

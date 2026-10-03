@@ -103,6 +103,12 @@ typedef struct NV2AState {
         QemuCond fifo_idle_cond;
         bool fifo_kick;
         bool fifo_idle;     /* pfifo thread about to wait / waiting */
+        /*
+         * PFIFO worker holds pgraph.lock across a run of methods (with
+         * pfifo.lock released, as during a single method); see pfifo.c.
+         */
+        bool pgraph_held;
+        int pgraph_held_methods;
         bool halt;
     } pfifo;
 
