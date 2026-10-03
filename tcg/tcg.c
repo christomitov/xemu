@@ -7171,6 +7171,12 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, uint64_t pc_start)
         case INDEX_op_mb:
             tcg_out_mb(s, op->args[0]);
             break;
+#ifdef CONFIG_TCG_WASM_JIT
+        case INDEX_op_wasm_phase:
+            /* No TCI instruction, register allocation or guest-state sync. */
+            wasm_jit_phase(s, op->args[0], (const char *)op->args[1]);
+            break;
+#endif
         case INDEX_op_dup2_vec:
             if (tcg_reg_alloc_dup2(s, op)) {
                 break;

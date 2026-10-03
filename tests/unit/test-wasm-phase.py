@@ -13,11 +13,14 @@ ROOT = Path(__file__).resolve().parents[2]
 UI = (ROOT / "ui/xemu-wasm.c").read_text()
 TCG = (ROOT / "tcg/wasm32/tcg-target.c.inc").read_text()
 STATS = (ROOT / "include/qemu/xemu-wasm-stats.h").read_text()
+FRONTEND = (ROOT / "target/i386/tcg/translate.c").read_text()
+IR = (ROOT / "tcg/tcg-op.c").read_text()
 
 
 def function(source, name):
-    match = re.search(r"^(?:static|EMSCRIPTEN_KEEPALIVE) [^\n]*\b" +
-                      name + r"\(", source, re.M)
+    match = re.search(r"^(?:(?:static|EMSCRIPTEN_KEEPALIVE) )?"
+                      r"[a-zA-Z_][\w *]*\b" + name +
+                      r"\([^;]*?\)\s*\{", source, re.M)
     assert match, name
     brace = source.index("{", match.start())
     depth = 0
@@ -44,6 +47,15 @@ PREFIX = r'''
 #define EMSCRIPTEN_KEEPALIVE
 #define EMSCRIPTEN 1
 #define XBOX 1
+#define CONFIG_TCG_WASM_JIT 1
+#define INDEX_op_wasm_phase 999
+#define TCG_TYPE_I32 1
+static unsigned frontend_phases;
+static const char *frontend_phase;
+static void tcg_gen_op2(int opc, int type, uintptr_t mask, uintptr_t name) {
+    assert(opc == INDEX_op_wasm_phase && type == TCG_TYPE_I32 && mask == 8);
+    frontend_phases++; frontend_phase = (const char *)name;
+}
 #define XPHASE_VCPU 0
 static const char *volatile xemu_wasm_phase[2];
 #define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
@@ -106,8 +118,8 @@ static void smc_nested(bool early) {
     assert(xemu_wasm_phase[0] == before);
 }
 static void profile_test(const char *arg) {
-    setenv("XEMU_WASM_JIT_PROFILE", arg, 1);
-    unsigned flags = atoi(arg) & 3;
+    assert(!strcmp(getenv("XEMU_WASM_JIT_PROFILE"), arg));
+    unsigned flags = atoi(arg) & 11;
     assert(wasm_jit_profile() == flags);
     bool smc = !!(atoi(arg) & 4);
     assert(xemu_wasm_smc_profile_enabled() == smc);
@@ -143,6 +155,17 @@ static void profile_test(const char *arg) {
     if (flags & 2) { assert(!strcmp(s.last, "jit:ld")); }
     wasm_jit_phase(&s, 2, NULL);
     assert(!s.last && s.count == 2 * !!(flags & 2));
+    s.count = 0;
+    wasm_jit_phase(&s, 8, "jit:lookup");
+    assert(s.count == !!(flags & 8));
+    if (flags & 8) { assert(!strcmp(s.last, "jit:lookup")); }
+    wasm_jit_phase(&s, 8, NULL);
+    assert(!s.last && s.count == 2 * !!(flags & 8));
+    gen_lookup_phase("jit:lookup");
+    assert(frontend_phases == !!(flags & 8));
+    if (flags & 8) { assert(!strcmp(frontend_phase, "jit:lookup")); }
+    gen_lookup_phase(NULL);
+    assert(!frontend_phase && frontend_phases == 2 * !!(flags & 8));
     printf("PASS: generated phase mask=%u, call groups/reset/default gate\n",
            flags);
 }
@@ -207,7 +230,9 @@ def main():
             function(TCG, "wasm_jit_profile") +
             function(TCG, "wasm_jit_phase") +
             function(TCG, "wasm_callsite_phase_name") +
-            function(TCG, "wasm_callsite_phase") + SUFFIX)
+            function(TCG, "wasm_callsite_phase") +
+            function(IR, "tcg_gen_wasm_phase") +
+            function(FRONTEND, "gen_lookup_phase") + SUFFIX)
     with tempfile.TemporaryDirectory(prefix="test-wasm-phase-") as tmp:
         source = Path(tmp) / "test.c"
         exe = Path(tmp) / "test"
@@ -216,8 +241,10 @@ def main():
                         "-std=gnu11", "-O2", "-pthread", str(source),
                         "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True, timeout=30)
-        for flags in [0, 1, 2, 3, 4, 7]:
-            subprocess.run([str(exe), str(flags)], check=True, timeout=10)
+        for flags in [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 15, 16]:
+            env = dict(os.environ, XEMU_WASM_JIT_PROFILE=str(flags))
+            subprocess.run([str(exe), str(flags)], env=env, check=True,
+                           timeout=10)
 
 
 if __name__ == "__main__":

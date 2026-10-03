@@ -2897,6 +2897,22 @@ static void gen_bnd_jmp(DisasContext *s)
 #ifdef EMSCRIPTEN
 #include "accel/tcg/tb-jmp-cache.h"
 #include "accel/tcg/tb-hash.h"
+
+static void gen_lookup_phase(const char *name)
+{
+#ifdef CONFIG_TCG_WASM_JIT
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_JIT_PROFILE");
+        enabled = e && (atoi(e) & 8);
+    }
+    if (enabled) {
+        tcg_gen_wasm_phase(8, name);
+    }
+#endif
+}
+
 /*
  * Indirect jump (ret, jmp/call through a register or memory): probe the
  * CPU's TB jump cache inline, as helper_lookup_tb_ptr's fast path does,
@@ -2921,6 +2937,7 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
         tcg_gen_lookup_and_goto_ptr();
         return;
     }
+    gen_lookup_phase("jit:lookup");
     QEMU_BUILD_BUG_ON(offsetof(X86CPU, parent_obj) != 0);
     /* 32-bit softmmu only: pc, vaddr and cs_base fit in 32 bits */
     QEMU_BUILD_BUG_ON(TARGET_LONG_BITS != 32);
@@ -2987,9 +3004,11 @@ static void gen_lookup_and_goto_ptr_inline(DisasContext *s)
     tcg_gen_brcondi_i32(TCG_COND_NE, t, cflags, miss);
 
     tcg_gen_ld_ptr(p, tb, offsetof(TranslationBlock, tc.ptr));
+    gen_lookup_phase(NULL);
     tcg_gen_goto_ptr(p);
 
     gen_set_label(miss);
+    gen_lookup_phase(NULL);
     tcg_gen_lookup_and_goto_ptr();
 }
 #endif

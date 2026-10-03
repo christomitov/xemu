@@ -38,6 +38,10 @@ TCGv_ptr tcg_global_mem_new_ptr(TCGv_ptr reg, intptr_t off, const char *name);
 void gen_set_label(TCGLabel *l);
 void tcg_gen_br(TCGLabel *l);
 void tcg_gen_mb(TCGBar);
+#ifdef CONFIG_TCG_WASM_JIT
+/* Diagnostic marker, with no interpreter or architectural side effects. */
+void tcg_gen_wasm_phase(unsigned mask, const char *name);
+#endif
 
 /**
  * tcg_gen_exit_tb() - output exit_tb TCG operation

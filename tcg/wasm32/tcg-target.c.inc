@@ -741,9 +741,9 @@ static void wasm_phase(TCGContext *s, const char *name)
 
 /*
  * Opt-in generated-code attribution: 1 = inline helpers/call-site glue,
- * 2 = inline SoftMMU (bit 4 selects C notdirty subphases in accel/tcg).
- * Neither adds generated code when disabled. The extra stores can
- * perturb optimization and region grouping: compare an uninstrumented run.
+ * 2 = inline SoftMMU, 8 = frontend TB lookup (bit 4 selects C notdirty
+ * subphases in accel/tcg). None adds generated code when disabled. Extra stores
+ * can perturb optimization and region grouping: compare an uninstrumented run.
  * Scopes also cover work inside self loops, replacing the heuristic "spin"
  * tag. For overhead, compare throughput, not spin-subtracted phase busy time.
  */
@@ -754,7 +754,7 @@ static unsigned wasm_jit_profile(void)
 
     if (flags < 0) {
         const char *e = getenv("XEMU_WASM_JIT_PROFILE");
-        flags = e ? atoi(e) & 3 : 0;
+        flags = e ? atoi(e) & 11 : 0;
     }
     return flags;
 #else

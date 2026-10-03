@@ -294,6 +294,13 @@ void tcg_gen_br(TCGLabel *l)
     add_as_label_use(l, tcg_gen_op1(INDEX_op_br, 0, label_arg(l)));
 }
 
+#ifdef CONFIG_TCG_WASM_JIT
+void tcg_gen_wasm_phase(unsigned mask, const char *name)
+{
+    tcg_gen_op2(INDEX_op_wasm_phase, TCG_TYPE_I32, mask, (uintptr_t)name);
+}
+#endif
+
 void tcg_gen_mb(TCGBar mb_type)
 {
 #ifdef CONFIG_USER_ONLY
