@@ -204,6 +204,9 @@ struct PageDesc {
     uint32_t smc_miss;
     /* stores seen before the code bitmap is built */
     uint32_t smc_writes;
+    /* Optional speculative eviction: consecutive misses and retry backoff. */
+    uint32_t smc_drop_misses;
+    uint32_t smc_drop_limit;
     /* one bit per byte covered by a TB on this page; NULL until needed */
     unsigned long *code_bitmap;
 #endif
@@ -369,6 +372,8 @@ static void page_code_bitmap_drop(PageDesc *p)
     g_free(p->code_bitmap);
     p->code_bitmap = NULL;
     p->smc_writes = 0;
+    p->smc_drop_misses = 0;
+    /* Keep the backoff across removals, revivals and whole-cache flushes. */
 }
 
 static void page_code_bitmap_build(PageDesc *p)
@@ -385,6 +390,7 @@ static void page_code_bitmap_build(PageDesc *p)
 /*
  * XEMU_WASM_SMC_PAGE: 0 exact (default; cheap with the code bitmap), 1 whole
  * page, 2 adaptive. R6: exact ~100 TB/s re-translated vs ~2000 with page.
+ * XEMU_WASM_SMC_DROP=1 adds speculative eviction to exact mode only.
  */
 static void smc_config(int *mode, int *thresh)
 {
@@ -395,9 +401,32 @@ static void smc_config(int *mode, int *thresh)
         const char *m = getenv("XEMU_WASM_SMC_MISS");
         smc_thresh = m ? atoi(m) : 64;
         smc_mode = !e ? 0 : *e == '0' ? 0 : *e == '2' ? 2 : 1;
+        /* Mode 3 is exact invalidation plus opt-in speculative eviction. */
+        e = getenv("XEMU_WASM_SMC_DROP");
+        if (smc_mode == 0 && e && *e == '1') {
+            smc_mode = 3;
+        }
     }
     *mode = smc_mode;
     *thresh = smc_thresh;
+}
+
+#define SMC_DROP_INITIAL 256u
+#define SMC_DROP_MAX (1u << 20)
+
+/* Caller holds the page lock. No per-execution instrumentation is needed. */
+static bool smc_drop_miss(PageDesc *p)
+{
+    if (!p->smc_drop_limit) {
+        p->smc_drop_limit = SMC_DROP_INITIAL;
+    }
+    return ++p->smc_drop_misses >= p->smc_drop_limit;
+}
+
+static void smc_drop_backoff(PageDesc *p)
+{
+    p->smc_drop_misses = 0;
+    p->smc_drop_limit = MIN(p->smc_drop_limit * 2, SMC_DROP_MAX);
 }
 #endif
 
@@ -789,6 +818,8 @@ static void tb_page_add(PageDesc *p, TranslationBlock *tb, unsigned int n)
     page_already_protected = p->first_tb != 0;
     p->first_tb = (uintptr_t)tb | n;
 #if defined(XBOX) && defined(EMSCRIPTEN)
+    /* Includes hash-cache revivals, not just newly translated code. */
+    p->smc_drop_misses = 0;
     if (p->code_bitmap) {
         page_code_bitmap_add(p, tb, n);
     }
@@ -1398,6 +1429,52 @@ void tb_invalidate_phys_range(CPUState *cpu, tb_page_addr_t start,
     page_collection_unlock(pages);
 }
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+/*
+ * Speculative code-cache eviction, NOT proof that the page was unexecuted.
+ * Publication/revival and bitmap mutation reset the miss window; a hot TB
+ * can still run without either. Backoff limits the cost of such mistakes.
+ *
+ * All pages of intersecting TBs are locked here. Recheck after acquiring
+ * that collection: another thread could have changed the code coverage.
+ */
+static bool smc_drop_range(CPUState *cpu, PageDesc *p, ram_addr_t *start,
+                           ram_addr_t *last, uintptr_t ra)
+{
+    unsigned off = *start & ~TARGET_PAGE_MASK;
+    unsigned end = off + (*last - *start) + 1;
+    tb_page_addr_t page = *start & TARGET_PAGE_MASK;
+    TranslationBlock *current;
+
+    assert_page_locked(p);
+    if (!p->first_tb || !p->code_bitmap || !p->smc_drop_limit ||
+        p->smc_drop_misses < p->smc_drop_limit ||
+        find_next_bit(p->code_bitmap, end, off) < end) {
+        XSTAT_INC(n_smc_drop_changed);
+        return false;
+    }
+    smc_drop_backoff(p);
+
+    /*
+     * Never manufacture a current-instruction replay for an unrelated
+     * data store: it could already have had other side effects. Preserve
+     * the normal precise-SMC path for actual code-overlapping stores.
+     */
+    current = cpu && ra ? tcg_tb_lookup(ra) : NULL;
+    if (!current || (tb_page_addr0(current) & TARGET_PAGE_MASK) == page ||
+        (tb_page_addr1(current) != -1 &&
+         (tb_page_addr1(current) & TARGET_PAGE_MASK) == page)) {
+        XSTAT_INC(n_smc_drop_busy);
+        return false;
+    }
+
+    *start = page;
+    *last = page | ~TARGET_PAGE_MASK;
+    XSTAT_INC(n_smc_drop_pages);
+    return true;
+}
+#endif
+
 /*
  * len must be <= 8 and start must be a multiple of len.
  * Called via softmmu_template.h when code areas are written to with
@@ -1416,6 +1493,8 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
      * lock. The adaptive page flush still applies once misses accumulate.
      */
     int smc_mode, smc_thresh;
+    bool drop = false;
+
     smc_config(&smc_mode, &smc_thresh);
     if (p && smc_mode != 1) {
         unsigned off = start & ~TARGET_PAGE_MASK;
@@ -1427,12 +1506,17 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
         } else if (p->first_tb && ++p->smc_writes >= 4) {
             page_code_bitmap_build(p);
         }
-        if (miss && (smc_mode == 0 || p->smc_miss + 1 < smc_thresh)) {
-            p->smc_miss++;
-            page_unlock(p);
-            XSTAT_INC(n_smc_bitmap_miss);
-            XSMC_PROF_END();
-            return;
+        if (miss && (smc_mode != 2 || p->smc_miss + 1 < smc_thresh)) {
+            drop = smc_mode == 3 && smc_drop_miss(p);
+            if (!drop) {
+                p->smc_miss++;
+                page_unlock(p);
+                XSTAT_INC(n_smc_bitmap_miss);
+                XSMC_PROF_END();
+                return;
+            }
+        } else {
+            p->smc_drop_misses = 0;
         }
         page_unlock(p);
     }
@@ -1442,6 +1526,11 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
         ram_addr_t last = start + len - 1;
         struct page_collection *pages = page_collection_lock(start, last);
 
+#if defined(XBOX) && defined(EMSCRIPTEN)
+        if (drop) {
+            smc_drop_range(cpu, p, &start, &last, ra);
+        }
+#endif
         tb_invalidate_phys_page_range__locked(cpu, pages, p,
                                               start, last, ra);
         page_collection_unlock(pages);
