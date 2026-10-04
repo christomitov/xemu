@@ -19,7 +19,7 @@
 #include "qemu/osdep.h"
 
 #include "qemu/host-utils.h"
-#include "qemu/xemu-wasm-census.h"
+#include "qemu/xemu-wasm-stats.h"
 #include "cpu.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/translation-block.h"
@@ -4684,9 +4684,12 @@ static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
     uint32_t cflags = tb_cflags(db->tb);
 
     s->wasm_census_word = NULL;
-    if (wasm_census_enabled()) {
+    if (wasm_census_enabled() || xemu_wasm_insn_profile_enabled()) {
         s->wasm_census_word = tcg_malloc(sizeof(*s->wasm_census_word));
         *s->wasm_census_word = XWC_ELIGIBLE | XWC_REGONLY;
+        if (!wasm_census_enabled()) {
+            *s->wasm_census_word |= XWC_NOCOUNT;
+        }
         /* Structural upper bound; live segment/TLB guards still required. */
         if (!PE(s) || !CODE32(s) || !SS32(s) || CODE64(s) || ADDSEG(s) ||
             VM86(s) || GUEST(s) || SVME(s) || s->cs_base || s->cpu_has_bps ||
@@ -4698,7 +4701,10 @@ static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
 #ifdef CONFIG_PLUGIN
         *s->wasm_census_word &= ~XWC_ELIGIBLE;
 #endif
-        /* After gen_tb_start's entry guard; patched once the TB is decoded. */
+        /*
+         * After gen_tb_start's guard; patched once decoded. Profile-only
+         * metadata emits neither a TCI opcode nor generated counters.
+         */
         tcg_gen_wasm_census(s->wasm_census_word);
     }
 #endif

@@ -706,6 +706,40 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
  */
 const char *volatile xemu_wasm_phase[2];
 
+/* Shared identities for generated phase stores and the sampler. */
+const char *const xemu_wasm_insn_phase_names[XWIP_COUNT] = {
+    [XWIP_ELIGIBLE] = "jit:eligible",
+    [XWIP_ELIGIBLE_LOOP] = "jit:eligible-loop",
+    [XWIP_OTHER] = "jit:other",
+    [XWIP_OTHER_LOOP] = "jit:other-loop",
+    [XWIP_UNKNOWN] = "jit:unknown",
+};
+
+/* One sampler writer, like phase_prof; independent of top-N name truncation. */
+static void xemu_wasm_insn_sample(const char *name)
+{
+    static uint64_t *const counters[XWIP_COUNT] = {
+        [XWIP_ELIGIBLE] = &xemu_wasm_stats.n_insn_sample_eligible,
+        [XWIP_ELIGIBLE_LOOP] = &xemu_wasm_stats.n_insn_sample_eligible_loop,
+        [XWIP_OTHER] = &xemu_wasm_stats.n_insn_sample_other,
+        [XWIP_OTHER_LOOP] = &xemu_wasm_stats.n_insn_sample_other_loop,
+        [XWIP_UNKNOWN] = &xemu_wasm_stats.n_insn_sample_unknown,
+    };
+
+    XSTAT_INC(n_insn_sample_total);
+    if (!name) {
+        /* Includes unattributed bridge/prologue/startup time: not eligible. */
+        XSTAT_INC(n_insn_sample_unknown);
+        return;
+    }
+    for (int i = 0; i < XWIP_COUNT; i++) {
+        if (name == xemu_wasm_insn_phase_names[i]) {
+            ++*counters[i];
+            break;
+        }
+    }
+}
+
 #define PHASE_SLOTS 512
 static struct {
     const char *name;
@@ -749,6 +783,9 @@ void xemu_wasm_phase_sample(void)
     static const char *const dflt[2] = { "jit", "pfifo" };
     for (int t = 0; t < 2; t++) {
         const char *p = xemu_wasm_phase[t];
+        if (t == XPHASE_VCPU && xemu_wasm_insn_profile_enabled()) {
+            xemu_wasm_insn_sample(p);
+        }
         phase_bump(t, p ? p : dflt[t]);
     }
 }

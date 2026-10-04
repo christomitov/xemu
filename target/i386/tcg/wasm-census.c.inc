@@ -115,6 +115,18 @@ static void wasm_census_record(DisasContext *s, const X86DecodedInsn *d)
         mask = XWC_OTHER;
     }
     *s->wasm_census_word |= mask;
+    /*
+     * Conservatively withhold direct self-loop TBs from expected savings.
+     * Includes the load/compare fence-poll shapes without any PC/game list.
+     * Productive self-loops also land here: this is NOT proof of idleness,
+     * nor a detector for all multi-TB/indirect wait loops. No extra fetches.
+     */
+    if (xemu_wasm_insn_profile_enabled() &&
+        (gen == gen_Jcc || gen == gen_JMP) &&
+        CODE32(s) && !CODE64(s) && s->dflag == MO_32 && !s->cs_base &&
+        (uint32_t)(s->pc + d->immediate) == (uint32_t)s->base.pc_first) {
+        *s->wasm_census_word |= XWC_SELFLOOP;
+    }
     if (mask || !admit || s->aflag != MO_32 || s->dflag != MO_32 ||
         s->override >= 0 ||
         (s->prefix & (PREFIX_LOCK | PREFIX_REPZ | PREFIX_REPNZ | PREFIX_VEX))) {

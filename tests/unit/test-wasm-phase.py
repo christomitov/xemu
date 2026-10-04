@@ -48,6 +48,9 @@ PREFIX = r'''
 #define EMSCRIPTEN 1
 #define XBOX 1
 #define CONFIG_TCG_WASM_JIT 1
+/* Legacy phase fixture; the class profiler has its own actual-source tests. */
+static bool xemu_wasm_insn_profile_enabled(void) { return false; }
+static void xemu_wasm_insn_sample(const char *name) { (void)name; }
 #define INDEX_op_wasm_phase 999
 #define TCG_TYPE_I32 1
 static unsigned frontend_phases;

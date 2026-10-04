@@ -58,13 +58,14 @@ enum { X86_CHECK_cpl0=1, X86_CHECK_iopl=2, X86_CHECK_smm=4 };
 typedef struct {
     struct { X86GenFunc gen; unsigned check; } e;
     struct { unsigned unit; bool has_ea; } op[3];
+    uint32_t immediate;
 } X86DecodedInsn;
 typedef struct { unsigned cflags; } TranslationBlock;
-typedef struct { TranslationBlock *tb; } DisasContextBase;
+typedef struct { TranslationBlock *tb; uint32_t pc_first; } DisasContextBase;
 typedef struct { int unused; } CPUState;
 typedef struct {
     DisasContextBase base;
-    unsigned flags, cs_base;
+    unsigned flags, cs_base, pc;
     bool cpu_has_bps;
     uint32_t *wasm_census_word;
     bool wasm_census_classified;

@@ -14,7 +14,21 @@ enum {
     XWC_ELIGIBLE = 64,
     XWC_REGONLY = 128,
     XWC_INSN_SHIFT = 8,
+    XWC_COUNTER_MASK = (1u << 24) - 1,
+    /* Translation-only metadata; never packed into the TCI counter word. */
+    XWC_SELFLOOP = 1u << 24,
+    XWC_NOCOUNT = 1u << 25,
 };
+
+/* Generated-code sampling classes, not instruction-count or idle claims. */
+typedef enum XemuWasmInsnPhase {
+    XWIP_ELIGIBLE,
+    XWIP_ELIGIBLE_LOOP,
+    XWIP_OTHER,
+    XWIP_OTHER_LOOP,
+    XWIP_UNKNOWN,
+    XWIP_COUNT,
+} XemuWasmInsnPhase;
 
 /* 00..3f partition all entered TBs. 40/41 are overlapping subsets. */
 #define XEMU_CENSUS_BUCKETS(X, A) \
