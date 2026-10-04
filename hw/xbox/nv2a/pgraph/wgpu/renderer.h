@@ -61,6 +61,9 @@ typedef struct ShaderBinding ShaderBinding;     /* shaders.h */
 /* ---- core: display (display.c) ---- */
 typedef struct PGRAPHWgpuDisplayState {
     WGPURenderPipeline pipeline;
+    /* display filters, switchable live (xemu_wasm_set_display_filter):
+     * [0] bicubic, [1] FXAA, [2] bilinear; NULL if a shader failed */
+    WGPURenderPipeline filters[3];
     WGPUBindGroupLayout bind_group_layout;
     WGPUSampler sampler;
 

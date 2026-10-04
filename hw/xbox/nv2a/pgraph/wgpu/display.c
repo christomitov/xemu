@@ -290,6 +290,16 @@ static void on_display_scope(WGPUPopErrorScopeStatus status,
     }
 }
 
+/* 0 bicubic, 1 FXAA, 2 bilinear (XEMU_AA / XEMU_FILTER set the default) */
+static volatile int xemu_wasm_display_filter;
+
+#ifdef EMSCRIPTEN
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_filter(int f)
+{
+    xemu_wasm_display_filter = f;
+}
+#endif
+
 static WGPURenderPipeline create_display_pipeline(PGRAPHWgpuState *r,
                                                   WGPUPipelineLayout layout,
                                                   const char *wgsl,
@@ -371,18 +381,18 @@ void pgraph_wgpu_init_display(PGRAPHState *pg)
      */
     const char *aa = getenv("XEMU_AA");
     const char *filter = getenv("XEMU_FILTER");
-    disp->pipeline = NULL;
+    disp->filters[0] = create_display_pipeline(r, layout,
+                                               display_wgsl_bicubic, true);
+    disp->filters[1] = create_display_pipeline(r, layout, display_wgsl_fxaa,
+                                               true);
+    disp->filters[2] = create_display_pipeline(r, layout, display_wgsl,
+                                               false);
     if (aa && !strcmp(aa, "1")) {
-        disp->pipeline = create_display_pipeline(r, layout, display_wgsl_fxaa,
-                                                 true);
-    } else if (!filter || strcmp(filter, "bilinear")) {
-        disp->pipeline = create_display_pipeline(r, layout,
-                                                 display_wgsl_bicubic, true);
+        xemu_wasm_display_filter = 1;
+    } else if (filter && !strcmp(filter, "bilinear")) {
+        xemu_wasm_display_filter = 2;
     }
-    if (!disp->pipeline) {
-        disp->pipeline = create_display_pipeline(r, layout, display_wgsl,
-                                                 false);
-    }
+    disp->pipeline = disp->filters[2];
     wgpuPipelineLayoutRelease(layout);
 
     disp->sampler = wgpuDeviceCreateSampler(
@@ -447,9 +457,13 @@ void pgraph_wgpu_finalize_display(PGRAPHState *pg)
     if (disp->sampler) {
         wgpuSamplerRelease(disp->sampler);
     }
-    if (disp->pipeline) {
-        wgpuRenderPipelineRelease(disp->pipeline);
+    for (int i = 0; i < 3; i++) {
+        if (disp->filters[i]) {
+            wgpuRenderPipelineRelease(disp->filters[i]);
+        }
+        disp->filters[i] = NULL;
     }
+    disp->pipeline = NULL;
     if (disp->bind_group_layout) {
         wgpuBindGroupLayoutRelease(disp->bind_group_layout);
     }
@@ -781,7 +795,13 @@ void pgraph_wgpu_render_display(NV2AState *d)
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(
         enc, &(WGPURenderPassDescriptor){ .colorAttachmentCount = 1,
                                           .colorAttachments = &ca });
-    wgpuRenderPassEncoderSetPipeline(pass, disp->pipeline);
+    {
+        /* the page's Filter menu may switch this at any time */
+        int f = xemu_wasm_display_filter;
+        WGPURenderPipeline p = f >= 0 && f < 3 && disp->filters[f] ?
+                                   disp->filters[f] : disp->pipeline;
+        wgpuRenderPassEncoderSetPipeline(pass, p);
+    }
     wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
     wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
     wgpuRenderPassEncoderEnd(pass);
