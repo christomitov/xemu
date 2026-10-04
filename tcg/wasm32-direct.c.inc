@@ -33,6 +33,56 @@ static bool xwd_modrm(XwdReader *r, unsigned *reg, unsigned *rm)
     return r->valid && (b >> 6) == 3;
 }
 
+/* The memory operand of a ModRM byte: value comes from / goes to guest RAM. */
+#define XWD_MEMREG 0xfe
+
+/*
+ * ModRM that may name memory: 1 for a register operand (*rm), 2 for a
+ * memory operand (address in o->base/index/scale/disp, *rm = XWD_MEMREG),
+ * 0 if invalid or memory is not allowed.
+ */
+static unsigned xwd_modrm_ex(XwdReader *r, unsigned *reg, unsigned *rm,
+                             XwdInsn *o, bool allow_memory)
+{
+    unsigned b = xwd_read(r, 1), mod = b >> 6;
+
+    *reg = (b >> 3) & 7;
+    *rm = b & 7;
+    if (!r->valid) {
+        return 0;
+    }
+    if (mod == 3) {
+        return 1;
+    }
+    if (!allow_memory) {
+        return 0;
+    }
+    o->base = *rm;
+    o->index = 0xff;
+    o->scale = 0;
+    o->disp = 0;
+    if (*rm == 4) {
+        b = xwd_read(r, 1);
+        o->base = b & 7;
+        o->index = (b >> 3) & 7;
+        o->scale = b >> 6;
+        if (o->index == 4) {
+            o->index = 0xff;
+        }
+    }
+    if (!mod && o->base == 5) {
+        o->base = 0xff;
+        o->disp = xwd_read(r, 4);
+    } else if (mod == 1) {
+        o->disp = xwd_signed_byte(r);
+    } else if (mod == 2) {
+        o->disp = xwd_read(r, 4);
+    }
+    o->mem = true;
+    *rm = XWD_MEMREG;
+    return r->valid ? 2 : 0;
+}
+
 static bool xwd_alu(unsigned group, XwdInsn *o)
 {
     switch (group) {
@@ -95,8 +145,14 @@ static bool xwd_lea(XwdReader *r, XwdInsn *o)
     return r->valid;
 }
 
-/* Return false for the WHOLE TB, before any direct instruction is emitted. */
-static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
+/*
+ * Return false for the WHOLE TB, before any direct instruction is emitted.
+ * allow_memory admits the memory-operand forms (one guest access each):
+ * MOV r,[m] / [m],r / [m],imm; MOVZX/MOVSX r,[m]; ALU r,[m]; CMP and TEST
+ * with a memory operand; PUSH/POP r32. Read-modify-write, string, segment-
+ * override and address-size forms still decline.
+ */
+static bool xwd_decode_ex(const XwdCapture *c, XwdPlan *p, bool allow_memory)
 {
     unsigned start = 0;
     bool terminal = false;
@@ -139,7 +195,7 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
             o->immediate = true;
             o->imm = xwd_read(&r, o->width / 8);
         } else if (b >= 0x88 && b <= 0x8b) {
-            if (!xwd_modrm(&r, &reg, &rm)) {
+            if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory)) {
                 return false;
             }
             o->op = XWD_MOV;
@@ -148,10 +204,12 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
             }
             o->dst = b & 2 ? reg : rm;
             o->src = b & 2 ? rm : reg;
+            o->mem_store = o->mem && !(b & 2);
         } else if (b == 0xc6 || b == 0xc7) {
-            if (!xwd_modrm(&r, &reg, &rm) || reg != 0) {
+            if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory) || reg != 0) {
                 return false;
             }
+            o->mem_store = o->mem;
             o->op = XWD_MOV;
             o->dst = rm;
             if (b == 0xc6) {
@@ -167,8 +225,9 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
                 o->width = 8;
             }
             if ((b & 7) <= 3) {
-                if (!xwd_modrm(&r, &reg, &rm)) {
-                    return false;
+                if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory) ||
+                    (o->mem && !(b & 2) && o->op != XWD_CMP)) {
+                    return false;   /* [m] op= r is read-modify-write */
                 }
                 o->dst = b & 2 ? reg : rm;
                 o->src = b & 2 ? rm : reg;
@@ -177,7 +236,8 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
                 o->imm = xwd_read(&r, o->width / 8);
             }
         } else if (b == 0x80 || b == 0x81 || b == 0x83) {
-            if (!xwd_modrm(&r, &reg, &rm) || !xwd_alu(reg, o)) {
+            if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory) ||
+                !xwd_alu(reg, o) || (o->mem && o->op != XWD_CMP)) {
                 return false;
             }
             o->dst = rm;
@@ -193,7 +253,7 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
                 o->width = 8;
             }
             if (b < 0xa0) {
-                if (!xwd_modrm(&r, &reg, &rm)) {
+                if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory)) {
                     return false;
                 }
                 o->dst = rm;
@@ -203,7 +263,8 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
                 o->imm = xwd_read(&r, o->width / 8);
             }
         } else if (b == 0xf6 || b == 0xf7) {
-            if (!xwd_modrm(&r, &reg, &rm)) {
+            if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory) ||
+                (o->mem && reg != 0)) {
                 return false;
             }
             o->dst = rm;
@@ -228,7 +289,8 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
                 p->delta = r.end + o->imm;
                 p->conditional = terminal = true;
             } else {
-                if (!xwd_modrm(&r, &reg, &rm)) {
+                bool ext = b == 0xb6 || b == 0xb7 || b == 0xbe || b == 0xbf;
+                if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory && ext)) {
                     return false;
                 }
                 o->dst = reg;
@@ -269,6 +331,13 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
             }
         } else if (b == 0xf8 || b == 0xf9 || b == 0xf5) {
             o->op = b == 0xf8 ? XWD_CLC : b == 0xf9 ? XWD_STC : XWD_CMC;
+        } else if (b >= 0x50 && b <= 0x5f && allow_memory && !prefix) {
+            /* PUSH r32 stores to [ESP-4]; POP r32 loads from [ESP] */
+            o->op = b < 0x58 ? XWD_PUSH : XWD_POP;
+            o->src = o->dst = b & 7;
+            o->mem = true;
+            o->mem_store = b < 0x58;
+            o->base = o->index = 0xff;
         } else if (b == 0x8d) {
             o->op = XWD_LEA;
             if (!xwd_lea(&r, o)) {
@@ -301,9 +370,19 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
         if (!r.valid || r.pos != r.end) {
             return false;
         }
-        p->needs_flags |= o->op >= XWD_ADC;
+        if (o->mem) {
+            o->mem_width = o->op == XWD_MOVZX || o->op == XWD_MOVSX ?
+                           o->src_width : o->width;
+            p->accesses++;
+        }
+        p->needs_flags |= o->op >= XWD_ADC && o->op <= XWD_SETCC;
     }
     return start == c->size && (terminal || c->fallthrough);
+}
+
+static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
+{
+    return xwd_decode_ex(c, p, false);
 }
 
 /* Internal function ABI: (WasmContext*) -> i32, with private i32 locals. */
@@ -313,7 +392,53 @@ enum {
     XD_SRC2 = 16, XD_FLAGS = 17, XD_DELTA = 18,
     /* Region-only architectural packet and selected edge. */
     XD_CC_OP = 19, XD_PC = 20, XD_TAKEN = 21,
+    /* Memory stage: address, value, TLB entry and hit flag of an access. */
+    XD_MADDR = 22, XD_MVAL = 23, XD_MENTRY = 24, XD_MHIT = 25,
+    /* First local index past the direct body's own (region-private go here). */
+    XD_NLOCALS = 26,
 };
+
+struct XwdEmitter;
+
+/*
+ * One guest memory access of a direct body. The emitter fills insn/index/
+ * store/width; resolve() fills the rest from the ORIGINAL translation of the
+ * same instruction (never invented here): MemOpIdx, the softmmu fast-path
+ * TLB layout, and integration data (helper, GETPC) in opaque.
+ */
+typedef struct XwdMemAccess {
+    uint32_t insn, index;       /* instruction index, whole-TB access ordinal */
+    bool store;
+    uint8_t width;              /* 8, 16 or 32 */
+    uint32_t oi;                /* original MemOpIdx */
+    int32_t mask_ofs, table_ofs; /* env-relative CPUTLBDescFast mask/table */
+    uint32_t cmp_ofs, addend_ofs; /* within CPUTLBEntry: addr_read/write */
+    uint32_t index_shift;       /* TARGET_PAGE_BITS - CPU_TLB_ENTRY_BITS */
+    uint32_t fold_shift, fold_mask; /* tlb index fold: a ^ ((a >> s) & m) */
+    uint32_t page_mask;         /* TARGET_PAGE_MASK */
+    uint32_t a_mask, s_mask;    /* alignment and span (size - 1) masks */
+    void *opaque;
+} XwdMemAccess;
+
+/*
+ * Integration callbacks (owned by the backend/region code). Locals are
+ * unbiased XD_* indices: loads must leave the value in value_local, stores
+ * read it there. resume_boundary is emitted after the fast path with an empty
+ * operand stack; slow runs only on a TLB miss and performs the access through
+ * the original helper (spills, snapshots, faults, unwind are its business);
+ * shadow replaces the whole access in verify mode (xwmo_*, no guest memory).
+ */
+typedef struct XwdMemHooks {
+    void *opaque;
+    bool (*resolve)(struct XwdEmitter *e, unsigned insn, unsigned access,
+                    bool store, unsigned width, XwdMemAccess *out);
+    bool (*resume_boundary)(struct XwdEmitter *e, const XwdMemAccess *a);
+    bool (*slow)(struct XwdEmitter *e, const XwdMemAccess *a,
+                 unsigned addr_local, unsigned value_local);
+    bool (*shadow)(struct XwdEmitter *e, const XwdMemAccess *a,
+                   unsigned addr_local, unsigned value_local);
+} XwdMemHooks;
+
 typedef struct XwdEmitter {
     XwdCode *code;
     const XwdLayout *layout;
@@ -323,6 +448,9 @@ typedef struct XwdEmitter {
     /* ctx stays at zero; private locals may be relocated. */
     unsigned local_bias;
     uint32_t cc, cc_helper;
+    /* Memory stage: NULL declines any plan with accesses. */
+    const XwdMemHooks *mem;
+    unsigned access;            /* next whole-TB access ordinal */
 } XwdEmitter;
 
 static void xwd_byte(XwdEmitter *e, uint8_t b)
@@ -396,6 +524,12 @@ static void xwd_load_reg(XwdEmitter *e, unsigned reg)
 
 static void xwd_get(XwdEmitter *e, unsigned reg, unsigned width)
 {
+    if (reg == XWD_MEMREG) {
+        /* the value this instruction's access loaded */
+        xwd_local(e, 0x20, XD_MVAL);
+        xwd_mask(e, width);
+        return;
+    }
     unsigned n = xwd_reg(reg, width);
     xwd_load_reg(e, n);
     xwd_local(e, 0x20, XD_REG + n);
@@ -517,6 +651,8 @@ static void xwd_condition(XwdEmitter *e, unsigned cond)
     }
 }
 
+#include "wasm32-direct-mem.c.inc"
+
 /* No function prologue/epilogue: also used by the resident region bank. */
 static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
 {
@@ -524,7 +660,8 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
     const XwdLayout *l = e.layout;
 
     if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS ||
-        (p->needs_flags && e.cc_helper == UINT32_MAX)) {
+        (p->needs_flags && e.cc_helper == UINT32_MAX) ||
+        (p->accesses && !e.mem)) {
         return false;
     }
     for (unsigned i = 0; i < p->count; i++) {
@@ -532,6 +669,33 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
         unsigned wi = o->width == 8 ? 0 : o->width == 16 ? 1 : 2;
         if (!verify && (!i || i + 1 == p->count)) {
             xwd_io(&e, i + 1 == p->count);
+        }
+        if (o->mem) {
+            /* the access first: nothing architectural changes before it */
+            if (!xwd_mem_insn(&e, o, i, verify)) {
+                return false;
+            }
+            if (o->op == XWD_PUSH) {
+                xwd_local(&e, 0x20, XD_MADDR);
+                xwd_local(&e, 0x21, XD_RESULT);
+                xwd_put(&e, 4, 32);
+                continue;
+            }
+            if (o->op == XWD_POP) {
+                /* ESP += 4, then the destination (POP ESP: the value) */
+                xwd_get(&e, 4, 32);
+                xwd_const(&e, 4);
+                xwd_byte(&e, 0x6a);
+                xwd_local(&e, 0x21, XD_RESULT);
+                xwd_put(&e, 4, 32);
+                xwd_local(&e, 0x20, XD_MVAL);
+                xwd_local(&e, 0x21, XD_RESULT);
+                xwd_put(&e, o->dst, 32);
+                continue;
+            }
+            if (o->mem_store) {
+                continue;       /* MOV [m], r/imm: the store was all */
+            }
         }
         if (o->op == XWD_NOP || o->op == XWD_JMP) {
             continue;
@@ -695,10 +859,12 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
     return e.code->valid;
 }
 
-static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
-                     uint32_t scratch, uint32_t cc_helper, XwdCode *code)
+static bool xwd_emit_ex(const XwdPlan *p, const XwdLayout *l, bool verify,
+                        uint32_t scratch, uint32_t cc_helper,
+                        const XwdMemHooks *mem, XwdCode *code)
 {
-    XwdEmitter e = { .code = code, .layout = l, .cc_helper = cc_helper };
+    XwdEmitter e = { .code = code, .layout = l, .cc_helper = cc_helper,
+                     .mem = mem };
 
     memset(code, 0, sizeof(*code));
     if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS ||
@@ -707,7 +873,9 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
     }
     code->valid = true;
     /* The body includes its local declaration and final end. */
-    xwd_byte(&e, 1); xwd_byte(&e, XD_DELTA); xwd_byte(&e, 0x7f);
+    xwd_byte(&e, 1);
+    xwd_byte(&e, p->accesses ? XD_NLOCALS - 1 : XD_DELTA);
+    xwd_byte(&e, 0x7f);
     xwd_local(&e, 0x20, 0);
     xwd_mem(&e, 0x28, 0); /* WasmContext.env, unchanged external ABI */
     xwd_local(&e, 0x21, XD_ENV);
@@ -770,4 +938,10 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
     xwd_const(&e, 0);
     xwd_byte(&e, 0x0b);
     return code->valid;
+}
+
+static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
+                     uint32_t scratch, uint32_t cc_helper, XwdCode *code)
+{
+    return xwd_emit_ex(p, l, verify, scratch, cc_helper, NULL, code);
 }
