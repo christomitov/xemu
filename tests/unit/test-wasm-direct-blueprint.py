@@ -22,7 +22,7 @@ ROOT = direct.ROOT
 C = direct.C[:direct.C.index('int main(void)')] + r'''
 #include "tcg/wasm32-direct-blueprint.c.inc"
 static unsigned probes;
-static const unsigned fixed_words = 50;
+static const unsigned fixed_words = 52;
 static uint32_t seed = 0x86c0de32;
 static uint32_t random_word(void) {
     seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -122,7 +122,7 @@ int main(void) {
             t = translation(n, k); roundtrip(&t, &code);
         }
     }
-    assert(code.size == 968); /* Exact512-byte/64-instruction capture. */
+    assert(code.size == 976); /* Exact512-byte/64-instruction capture. */
     t = translation(1, 0);
     t.capture.bytes[0] = 0x74; t.capture.bytes[1] = 0;
     t.capture.size = t.capture.end[0] = 2; t.capture.fallthrough = false;
@@ -168,6 +168,7 @@ int main(void) {
         XWD_BLUEPRINT_VERSION, XWD_VERSION, t.capture.pc, 10, 2, 1, 1,
         t.capture.pc + 10, 0, 17, 23, 0, 32, 40, 44, 48, 52,
         0xfffffffcu, 0xfffffff8u, CC_OP_EFLAGS, 9000, 0x1111, 0x2222,
+        64, 68,
         CC_OP_ADDB, CC_OP_ADDW, CC_OP_ADDL,
         CC_OP_SUBB, CC_OP_SUBW, CC_OP_SUBL,
         CC_OP_LOGICB, CC_OP_LOGICW, CC_OP_LOGICL,
@@ -188,8 +189,8 @@ int main(void) {
         {1, XWD_VERSION + 1},
         {3, 0}, {3, 513}, {3, UINT32_MAX}, {4, 0}, {4, 65},
         {4, UINT32_MAX}, {5, 4}, {5, UINT32_MAX}, {6, 4},
-        {6, UINT32_MAX}, {9, 0}, {10, 0}, {50, 0}, {50, 11},
-        {51, 5}, {51, 9}, {51, UINT32_MAX}
+        {6, UINT32_MAX}, {9, 0}, {10, 0}, {52, 0}, {52, 11},
+        {53, 5}, {53, 9}, {53, UINT32_MAX}
     };
     for (unsigned i = 0; i < sizeof(invalid) / sizeof(*invalid); i++) {
         bad = code; word(bad.bytes + invalid[i].index * 4, invalid[i].value);

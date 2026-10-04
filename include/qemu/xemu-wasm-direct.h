@@ -54,6 +54,8 @@ typedef struct XwdInsn {
     /* read-modify-write: load [m], operate, store [m] (two accesses) */
     bool mem_rmw;
     uint8_t mem_width;
+    /* segment override of the memory operand: 0 none, else R_FS/R_GS + 1 */
+    uint8_t seg;
     uint32_t disp;
 } XwdInsn;
 
@@ -76,6 +78,7 @@ typedef struct XwdLayout {
     uint32_t cc_add[3], cc_sub[3], cc_logic[3];
     uint32_t cc_adc[3], cc_sbb[3], cc_inc[3], cc_dec[3], cc_eflags;
     uint32_t cc_shl[3], cc_sar[3];      /* SHL; SHR and SAR share SAR */
+    uint32_t seg_fs_base, seg_gs_base;  /* env offsets of FS/GS bases */
     /* Optional sampler scope, resolved at code generation; zero disables. */
     uint32_t phase_ptr, phase_cc, phase_generated;
 } XwdLayout;

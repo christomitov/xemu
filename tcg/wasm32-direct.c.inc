@@ -236,9 +236,19 @@ static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
         start = r.end;
         o->width = 32;
         b = xwd_read(&r, 1);
-        if (b == 0x66) {
-            prefix = true;
-            o->width = 16;
+        /*
+         * Up to two prefixes: operand size (66) and, for memory operands
+         * (allow_memory), an FS/GS segment override (64/65); no repeats.
+         */
+        for (unsigned n = 0; n < 2; n++) {
+            if (b == 0x66 && !prefix) {
+                prefix = true;
+                o->width = 16;
+            } else if ((b == 0x64 || b == 0x65) && !o->seg && allow_memory) {
+                o->seg = b == 0x64 ? 4 + 1 : 5 + 1;   /* R_FS / R_GS + 1 */
+            } else {
+                break;
+            }
             b = xwd_read(&r, 1);
         }
         /* All other prefixes (including duplicates) decline. */
@@ -483,6 +493,10 @@ static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
         }
         if (!r.valid || r.pos != r.end) {
             return false;
+        }
+        if (o->seg && (!o->mem || o->op == XWD_PUSH || o->op == XWD_POP ||
+                       o->op == XWD_CALL || o->op == XWD_PUSHM)) {
+            return false;   /* a segment override needs a plain [m] operand */
         }
         if (o->mem) {
             o->mem_width = o->op == XWD_MOVZX || o->op == XWD_MOVSX ?

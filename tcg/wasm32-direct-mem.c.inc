@@ -54,6 +54,13 @@ static void xwd_mem_address(XwdEmitter *e, const XwdInsn *o)
             }
             xwd_byte(e, 0x6a);
         }
+        if (o->seg) {
+            /* FS:/GS: linear = offset + segment base (32-bit wrap) */
+            xwd_local(e, 0x20, XD_ENV);
+            xwd_memop(e, 0x28, 2, o->seg == 4 + 1 ? e->layout->seg_fs_base :
+                                                  e->layout->seg_gs_base);
+            xwd_byte(e, 0x6a);
+        }
     }
     xwd_local(e, 0x21, XD_MADDR);
 }

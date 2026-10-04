@@ -139,6 +139,7 @@ function setup(t, regs){
  bytes.fill(0x5a); v.setUint32(128,M.ENV,true);
  for(let i=0;i<8;i++)v.setUint32(M.ENV+4*i,regs[i],true);
  v.setUint32(M.ENV+32,t.eip||0x40000000,true);
+ v.setUint32(M.ENV+64,t.fs||0,true); v.setUint32(M.ENV+68,t.gs||0,true);
  for(let i=0;i<4;i++)v.setUint32(M.ENV+40+4*i,t.lazy[i],true);
  v.setUint32(M.ENV+M.MASK,(M.N-1)<<M.EB,true);
  v.setUint32(M.ENV+M.TABLEP,M.TABLE,true);
@@ -338,7 +339,7 @@ DECLINE = [
     'ff10',          # CALL [eax] (indirect)
     '0f4400',        # CMOVZ eax, [eax]
     '0f9400',        # SETZ [eax]
-    '648b00',        # MOV eax, fs:[eax]
+    '6450',          # FS: PUSH eax (override on a stack operation)
     '678b00',        # MOV eax, [bx+si] (address size)
     '6650',          # PUSH ax
     '8700',          # XCHG [eax], eax
@@ -506,6 +507,40 @@ def main():
                              mem=code.hex(), reg=reg, regs=regs, addr=addr,
                              x=x, dst=0, cross=cross, store=store,
                              value=regs[0] & ((1 << w) - 1)))
+    # FS:/GS: overrides: linear = offset + segment base (32-bit wrap)
+    for t in range(args.tests * 2):
+        for seg in (0x64, 0x65):
+            x = rng.choice([1, 2, 3])
+            regs = [rng.getrandbits(32) for _ in range(8)]
+            regs[4] = PAGE + 0x800
+            addr = PAGE + rng.randrange(4096 - 4)
+            sbase = rng.getrandbits(32)
+            off = (addr - sbase) & 0xffffffff
+            if t % 2:
+                code = bytes([seg, 0xa1]) + off.to_bytes(4, 'little')
+                dst = 0
+            else:
+                pool = [n for n in range(8) if n not in (x, 4)]
+                dst, b = rng.sample(pool, 2)
+                disp = rng.randrange(-0x80, 0x80)
+                regs[b] = (off - disp) & 0xffffffff
+                code = bytes([seg, 0x8b]) + modrm_mem(dst, b, None, 0, disp)
+            meta.append(dict(name='seg load', kind='load', width=32,
+                             mem=code.hex(),
+                             reg=bytes([0x8b, 0xc0 | dst << 3 | x]).hex(),
+                             regs=regs, addr=addr, x=x, dst=dst, cross=False,
+                             store=False, value=0,
+                             fs=sbase if seg == 0x64 else 0,
+                             gs=sbase if seg == 0x65 else 0))
+            # store: MOV FS:[moffs], EAX
+            regs2 = regs[:]
+            meta.append(dict(name='seg store', kind='store', width=32,
+                             mem=(bytes([seg, 0xa3]) +
+                                  off.to_bytes(4, 'little')).hex(),
+                             reg=None, regs=regs2, addr=addr, x=0, dst=0,
+                             cross=False, store=True, value=regs2[0],
+                             fs=sbase if seg == 0x64 else 0,
+                             gs=sbase if seg == 0x65 else 0))
     for h in DECLINE:
         meta.append(dict(name='decline', kind='decline', mem=h))
     lines = []
@@ -581,6 +616,7 @@ def main():
                             dst=item['dst'], cross=item['cross'],
                             value=item['value'], page=page, slow=slow,
                             eip=0x50000000 if item.get('pcrel') else None,
+                            fs=item.get('fs', 0), gs=item.get('gs', 0),
                             lazy=[0x89abcdef, 0x55, 0, 1])]))
         assert pos == len(out)
         flags_src = tmp/'flags.c'

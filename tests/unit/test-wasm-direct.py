@@ -130,6 +130,7 @@ static const XwdLayout layout={.regs=0,.eip=32,.cc_dst=40,.cc_src=44,
  .cc_inc={CC_OP_INCB,CC_OP_INCW,CC_OP_INCL},
  .cc_dec={CC_OP_DECB,CC_OP_DECW,CC_OP_DECL},.cc_eflags=CC_OP_EFLAGS,
  .cc_shl={CC_OP_SHLB,CC_OP_SHLW,CC_OP_SHLL},.cc_sar={CC_OP_SARB,CC_OP_SARW,CC_OP_SARL},
+ .seg_fs_base=64,.seg_gs_base=68,
  .phase_ptr=9000,.phase_cc=0x1111,.phase_generated=0x2222};
 int main(void) {
  check_capture();
