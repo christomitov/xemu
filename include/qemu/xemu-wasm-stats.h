@@ -204,6 +204,21 @@ static inline bool xemu_wasm_insn_profile_enabled(void)
 #endif
 }
 
+/* Direct active-code scopes only; no guest-access counters or timers. */
+static inline bool xemu_wasm_direct_profile_enabled(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_DIRECT_PROFILE");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 #ifdef EMSCRIPTEN
 extern XemuWasmStats xemu_wasm_stats;
 extern const char *const xemu_wasm_insn_phase_names[XWIP_COUNT];
@@ -234,6 +249,7 @@ static inline bool xemu_wasm_profile_enabled(void)
         const char *p = getenv("XEMU_WASM_PROFILE");
         const char *j = getenv("XEMU_WASM_JIT_PROFILE");
         enabled = xemu_wasm_insn_profile_enabled() ||
+                  xemu_wasm_direct_profile_enabled() ||
                   (j && (atoi(j) & 15)) ||
                   (p ? *p == '1' : xemu_wasm_tb_stats_enabled());
     }

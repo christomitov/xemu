@@ -150,6 +150,19 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
             goto decline;
         }
     }
+    /* Change only sampled scope identities, after layout compatibility was
+     * checked. Reference/mode2 bodies must never be called active direct time.
+     */
+    if (r->mode == 1 && xemu_wasm_direct_profile_enabled()) {
+        for (unsigned i = 0; i < n; i++) {
+            XwdLayout *l = &r->member[i].t.layout;
+            bool memory = r->member[i].plan.accesses != 0;
+            l->phase_generated = (uintptr_t)(memory ? "direct:mem" :
+                                                       "direct:reg");
+            l->phase_cc = (uintptr_t)(memory ? "direct:mem-cc" :
+                                                "direct:reg-cc");
+        }
+    }
     r->pending = r->memory_members ? XD_NLOCALS : XD_TAKEN + 1;
     r->address = r->pending + 1;
     r->locals = r->memory_members ? r->address : r->pending;
@@ -267,6 +280,9 @@ static bool xwr_init(ByteBuf *b, XwdRegion *r)
 {
     XwdCode code;
     XwdEmitter e = xwr_emitter(&code, r, 0);
+    if (r->mode == 1 && xemu_wasm_direct_profile_enabled()) {
+        xwr_phase(&e, (uintptr_t)"direct:entry");
+    }
     if (r->memory_members && r->mode == 2) {
         xwd_local(&e, 0x20, 0);
         xwd_mem(&e, 0x28, WASM_CTX_DO_INIT_OFF);

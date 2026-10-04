@@ -42,6 +42,12 @@ static bool xwr_mem_miss(XwdEmitter *e, const XwdMemAccess *a,
                          unsigned addr_local, unsigned value_local)
 {
     XwdRegionMember *m = e->mem->opaque;
+    if (xemu_wasm_direct_profile_enabled()) {
+        /* Ends at dispatcher return. Original retry/TB lookup is outside
+         * this scope; the sample count is NOT total miss-associated cost.
+         */
+        xwr_phase(e, (uintptr_t)"direct:miss");
+    }
     if (e->flags_dirty) {
         /* bank_step normally publishes this opcode at the end of the TB. */
         xwd_const(e, e->cc);
