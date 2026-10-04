@@ -7179,6 +7179,9 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, uint64_t pc_start)
         case INDEX_op_wasm_census:
             wasm_census(s, *(const uint32_t *)op->args[0]);
             break;
+        case INDEX_op_wasm_direct:
+            wasm_direct_entry(s, (const XwdTranslation *)op->args[0]);
+            break;
         case INDEX_op_wasm_lookup:
             wasm_lookup_layout = (const WasmLookupLayout *)op->args[0];
             wasm_lookup_cflags = op->args[1];

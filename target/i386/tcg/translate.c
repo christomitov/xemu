@@ -20,6 +20,7 @@
 
 #include "qemu/host-utils.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "qemu/xemu-wasm-direct.h"
 #include "cpu.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/translation-block.h"
@@ -180,6 +181,7 @@ typedef struct DisasContext {
     target_ulong pc;       /* pc = eip + cs_base */
     target_ulong cs_base;  /* base of CS segment */
     bool cpu_has_bps;      /* debugger breakpoints exist (wasm inline lookup) */
+    XwdTranslation *wasm_direct;
 #ifdef CONFIG_TCG_WASM_JIT
     uint32_t *wasm_census_word;
     bool wasm_census_classified;
@@ -2276,6 +2278,8 @@ static TCGv gen_shiftd_rm_T1(DisasContext *s, MemOp ot,
     return cc_src;
 }
 
+#include "wasm-direct.c.inc"
+
 #define X86_MAX_INSN_LENGTH 15
 
 static uint64_t advance_pc(CPUX86State *env, DisasContext *s, int num_bytes)
@@ -2307,23 +2311,31 @@ static uint64_t advance_pc(CPUX86State *env, DisasContext *s, int num_bytes)
 
 static inline uint8_t x86_ldub_code(CPUX86State *env, DisasContext *s)
 {
-    return translator_ldub(env, &s->base, advance_pc(env, s, 1));
+    uint8_t v = translator_ldub(env, &s->base, advance_pc(env, s, 1));
+    x86_wasm_direct_bytes(s, v, 1);
+    return v;
 }
 
 static inline uint16_t x86_lduw_code(CPUX86State *env, DisasContext *s)
 {
-    return translator_lduw(env, &s->base, advance_pc(env, s, 2));
+    uint16_t v = translator_lduw(env, &s->base, advance_pc(env, s, 2));
+    x86_wasm_direct_bytes(s, v, 2);
+    return v;
 }
 
 static inline uint32_t x86_ldl_code(CPUX86State *env, DisasContext *s)
 {
-    return translator_ldl(env, &s->base, advance_pc(env, s, 4));
+    uint32_t v = translator_ldl(env, &s->base, advance_pc(env, s, 4));
+    x86_wasm_direct_bytes(s, v, 4);
+    return v;
 }
 
 #ifdef TARGET_X86_64
 static inline uint64_t x86_ldq_code(CPUX86State *env, DisasContext *s)
 {
-    return translator_ldq(env, &s->base, advance_pc(env, s, 8));
+    uint64_t v = translator_ldq(env, &s->base, advance_pc(env, s, 8));
+    x86_wasm_direct_bytes(s, v, 8);
+    return v;
 }
 #endif
 
@@ -4679,8 +4691,8 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 
 static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
 {
-#ifdef CONFIG_TCG_WASM_JIT
     DisasContext *s = container_of(db, DisasContext, base);
+#ifdef CONFIG_TCG_WASM_JIT
     uint32_t cflags = tb_cflags(db->tb);
 
     s->wasm_census_word = NULL;
@@ -4708,6 +4720,7 @@ static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
         tcg_gen_wasm_census(s->wasm_census_word);
     }
 #endif
+    x86_wasm_direct_start(s);
 }
 
 static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
@@ -4751,9 +4764,15 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         disas_insn(dc, cpu);
         break;
     case 1:
+        if (dc->wasm_direct) {
+            dc->wasm_direct->capture.valid = false;
+        }
         gen_exception_gpf(dc);
         break;
     case 2:
+        if (dc->wasm_direct) {
+            dc->wasm_direct->capture.valid = false;
+        }
 #ifdef CONFIG_TCG_WASM_JIT
         if (dc->wasm_census_word) {
             *dc->wasm_census_word = census_before;
@@ -4784,6 +4803,7 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
      * Instruction decoding completed (possibly with #GP if the
      * 15-byte boundary was exceeded).
      */
+    x86_wasm_direct_insn(dc);
     dc->base.pc_next = dc->pc;
     if (dc->base.is_jmp == DISAS_NEXT) {
         if (dc->flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) {
@@ -4804,6 +4824,8 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
+
+    x86_wasm_direct_stop(dc);
 
 #ifdef CONFIG_TCG_WASM_JIT
     if (dc->wasm_census_word) {

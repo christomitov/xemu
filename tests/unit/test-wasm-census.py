@@ -72,6 +72,7 @@ typedef struct {
     unsigned aflag, dflag, prefix;
     int override;
 } DisasContext;
+static void x86_wasm_direct_start(DisasContext *s) { (void)s; }
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 #define PE(s) 1
 #define CODE32(s) 1
