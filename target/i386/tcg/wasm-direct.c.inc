@@ -100,6 +100,8 @@ static void x86_wasm_direct_start(DisasContext *s)
         .cc_sbb = { CC_OP_SBBB, CC_OP_SBBW, CC_OP_SBBL },
         .cc_inc = { CC_OP_INCB, CC_OP_INCW, CC_OP_INCL },
         .cc_dec = { CC_OP_DECB, CC_OP_DECW, CC_OP_DECL },
+        .cc_shl = { CC_OP_SHLB, CC_OP_SHLW, CC_OP_SHLL },
+        .cc_sar = { CC_OP_SARB, CC_OP_SARW, CC_OP_SARL },
         .cc_eflags = CC_OP_EFLAGS,
     };
     s->wasm_direct = t;
