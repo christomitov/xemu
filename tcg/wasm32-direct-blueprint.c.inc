@@ -6,7 +6,7 @@
  * Include after wasm32-direct.c.inc; native fixtures use synthetic indices.
  */
 /* Version2 certifies that all resumable sites have DIRECT_SUSPEND relocs. */
-#define XWD_BLUEPRINT_VERSION 2u
+#define XWD_BLUEPRINT_VERSION 3u   /* 3: + cc_shl, cc_sar */
 #define XWD_BLUEPRINT_NAME "xemu.direct-region"
 
 #define XWD_LAYOUT_SCALARS(F) \
@@ -14,7 +14,8 @@
     F(can_do_io) F(icount_decr) F(cc_eflags) \
     F(phase_ptr) F(phase_cc) F(phase_generated)
 #define XWD_LAYOUT_ARRAYS(F) \
-    F(cc_add) F(cc_sub) F(cc_logic) F(cc_adc) F(cc_sbb) F(cc_inc) F(cc_dec)
+    F(cc_add) F(cc_sub) F(cc_logic) F(cc_adc) F(cc_sbb) F(cc_inc) F(cc_dec) \
+    F(cc_shl) F(cc_sar)
 
 static inline void xwd_blueprint_word(XwdEmitter *e, uint32_t v)
 {

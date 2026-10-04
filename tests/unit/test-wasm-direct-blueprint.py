@@ -22,7 +22,7 @@ ROOT = direct.ROOT
 C = direct.C[:direct.C.index('int main(void)')] + r'''
 #include "tcg/wasm32-direct-blueprint.c.inc"
 static unsigned probes;
-static const unsigned fixed_words = 44;
+static const unsigned fixed_words = 50;
 static uint32_t seed = 0x86c0de32;
 static uint32_t random_word(void) {
     seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -122,7 +122,7 @@ int main(void) {
             t = translation(n, k); roundtrip(&t, &code);
         }
     }
-    assert(code.size == 944); /* Exact512-byte/64-instruction capture. */
+    assert(code.size == 968); /* Exact512-byte/64-instruction capture. */
     t = translation(1, 0);
     t.capture.bytes[0] = 0x74; t.capture.bytes[1] = 0;
     t.capture.size = t.capture.end[0] = 2; t.capture.fallthrough = false;
@@ -132,6 +132,37 @@ int main(void) {
     assert(xwd_blueprint_read(code.bytes, code.size, &got, &plan));
     assert(got.capture.jump_valid == 3 && plan.conditional);
     t = translation(2, 1); roundtrip(&t, &code);
+    {
+        /* An actual shift plan: its CC ops must survive the codec and
+         * emit exactly what the original layout emits. */
+        static const uint8_t sh[] = { 0xc1, 0xe0, 0x05, 0xd1, 0xf9,
+                                      0x66, 0xc1, 0xea, 0x03,
+                                      0xc0, 0xe4, 0x07 };
+        static const uint16_t ends[] = { 3, 5, 9, 12 };
+        XwdTranslation s = translation(1, 0), got;
+        XwdPlan sp;
+        XwdCode a, b, sc;
+        memcpy(s.capture.bytes, sh, sizeof(sh));
+        s.capture.size = sizeof(sh); s.capture.count = 4;
+        memcpy(s.capture.end, ends, sizeof(ends));
+        s.capture.jump_pc[0] = s.capture.pc + s.capture.size;
+        roundtrip(&s, &sc);
+        assert(xwd_blueprint_read(sc.bytes, sc.size, &got, &sp));
+        assert(sp.count == 4 && sp.insn[0].op == XWD_SHL &&
+               sp.insn[1].op == XWD_SAR && sp.insn[2].op == XWD_SHR);
+        for (unsigned i = 0; i < 3; i++) {
+            assert(got.layout.cc_shl[i] == s.layout.cc_shl[i] &&
+                   got.layout.cc_shl[i] != 0);
+            assert(got.layout.cc_sar[i] == s.layout.cc_sar[i] &&
+                   got.layout.cc_sar[i] != 0);
+        }
+        for (int verify = 0; verify < 2; verify++) {
+            assert(xwd_emit(&sp, &s.layout, verify, 8192, 0, &a));
+            assert(xwd_emit(&sp, &got.layout, verify, 8192, 0, &b));
+            assert(a.size == b.size && !memcmp(a.bytes, b.bytes, a.size));
+        }
+        probes += 3;
+    }
     /* Independent LE field vector: no native layout/padding assumptions. */
     const uint32_t expected[] = {
         XWD_BLUEPRINT_VERSION, XWD_VERSION, t.capture.pc, 10, 2, 1, 1,
@@ -143,7 +174,9 @@ int main(void) {
         CC_OP_ADCB, CC_OP_ADCW, CC_OP_ADCL,
         CC_OP_SBBB, CC_OP_SBBW, CC_OP_SBBL,
         CC_OP_INCB, CC_OP_INCW, CC_OP_INCL,
-        CC_OP_DECB, CC_OP_DECW, CC_OP_DECL, 5, 10
+        CC_OP_DECB, CC_OP_DECW, CC_OP_DECL,
+        CC_OP_SHLB, CC_OP_SHLW, CC_OP_SHLL,
+        CC_OP_SARB, CC_OP_SARW, CC_OP_SARL, 5, 10
     };
     assert(sizeof(expected) == (fixed_words + 2) * 4);
     for (unsigned i = 0; i < sizeof(expected) / sizeof(*expected); i++) {
@@ -155,8 +188,8 @@ int main(void) {
         {1, XWD_VERSION + 1},
         {3, 0}, {3, 513}, {3, UINT32_MAX}, {4, 0}, {4, 65},
         {4, UINT32_MAX}, {5, 4}, {5, UINT32_MAX}, {6, 4},
-        {6, UINT32_MAX}, {9, 0}, {10, 0}, {44, 0}, {44, 11},
-        {45, 5}, {45, 9}, {45, UINT32_MAX}
+        {6, UINT32_MAX}, {9, 0}, {10, 0}, {50, 0}, {50, 11},
+        {51, 5}, {51, 9}, {51, UINT32_MAX}
     };
     for (unsigned i = 0; i < sizeof(invalid) / sizeof(*invalid); i++) {
         bad = code; word(bad.bytes + invalid[i].index * 4, invalid[i].value);
