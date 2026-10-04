@@ -75,6 +75,9 @@ static struct {
     uint64_t n_jit_exit_requested, n_tb_selfloop;
     uint64_t n_direct_checked, n_direct_flags_checked, n_direct_jcc_checked;
     uint64_t n_direct_region_checked, n_direct_mismatch;
+    uint64_t n_direct_mixed_build, n_direct_mixed_members;
+    uint64_t n_direct_mixed_legacy_members, n_direct_mixed_checked;
+    uint64_t n_direct_mixed_legacy_rewind, n_direct_mixed_memory_tb_checked;
     uint64_t n_direct_memory_build, n_direct_memory_members;
 } xemu_wasm_stats;
 /* These register-only fixtures must never execute a memory integration hook. */

@@ -29,7 +29,10 @@ PREFIX = R.PREFIX.replace('if (nimports || s0 || s1 || ic_count)',
     'helper: { u: () => 1 },',
     '''helper: Object.fromEntries([['u', () => 1], ...Array.from(
         {length:nimports}, (_,i) => [String(i),
-            getWasmTableEntry(HEAPU32[(imports>>2)+i])])]),''')
+            getWasmTableEntry(HEAPU32[(imports>>2)+i])])]),''').replace(
+    'bool wasm32_ic_enabled(void) { return false; }',
+    'static bool fixture_ic; '
+    'bool wasm32_ic_enabled(void) { return fixture_ic; }')
 
 TEST = r'''
 ''' + D.FLAGS_C + r'''
@@ -44,13 +47,16 @@ typedef struct FixtureCPU {
 static FixtureCPU cpu;
 #define env_cpu(e) ((FixtureCPU *)((char *)(e)-offsetof(FixtureCPU,env)))
 ''' + D.frontend_function('x86_wasm_direct_verify') + r'''
-static unsigned refs, cc_calls, kick, mode, limit=3;
-static bool profiling;
+static unsigned refs, cc_calls, kick, mode, limit=3, b_rewinds, forwards;
+static uint32_t foreign_resume(WasmContext *ctx) {
+    assert(!ctx->do_init);forwards++;return 0xf00d;
+}
+static bool profiling, mixed_active;
 static CPUX86State initial;
 static uint32_t fixture_cc(uint32_t dst,uint32_t src,uint32_t src2,int op) {
     assert(!strcmp((const char *)(uintptr_t)member_phase,
         mode==1 && profiling ? "direct:reg-cc" : "fixture:cc"));
-    if(mode==1) {
+    if(mode==1 && !mixed_active) {
         /* Pure production helper; test-only observer/kick, no reentry. */
         assert(!memcmp(cpu.env.regs,initial.regs,sizeof(initial.regs)));
     }
@@ -104,7 +110,7 @@ static void edge(ByteBuf *b,unsigned i,unsigned slot,unsigned depth,
     ctx_const(b,WASM_CTX_TB_PTR_OFF,0);
     iconst(b,(uintptr_t)tb+slot);bb_u8(b,0x0f);
 }
-static void fixture(unsigned i,bool mixed,bool suspend) {
+static void fixture(unsigned i,unsigned mask,bool suspend) {
     static const uint8_t insns[3][12]={
         {0x05,1,0,0,0,0x3d,3,0,0,0,0x72,0x14},
         {0x43,0xe9,0xda,0xff,0xff,0xff},
@@ -136,7 +142,7 @@ static void fixture(unsigned i,bool mixed,bool suspend) {
     t.capture.jump_pc[1]=0x100c;
     memcpy(t.capture.bytes,insns[i],size[i]);
     XwdCode blueprint;assert(xwd_blueprint_write(&t,&blueprint));
-    if(mixed && i==1)blueprint.bytes[0]=0;
+    if(mask & (1u<<i))blueprint.bytes[0]=0;
     WasmTBHeader *h=&headers[i];TranslationBlock *tb=&tbs[i];
     tb->tc.ptr=h;tb->icount=t.capture.count;
     tb->jmp_reset_offset[0]=16;
@@ -144,8 +150,8 @@ static void fixture(unsigned i,bool mixed,bool suspend) {
     tb->jmp_target_addr[0]=i==0?(uintptr_t)&headers[1]:
         i==1?(uintptr_t)&headers[0]:(uintptr_t)h+16;
     tb->jmp_target_addr[1]=(uintptr_t)&headers[2];
-    WasmReloc *rl=calloc(16,sizeof(*rl));unsigned nr=0;
-    ByteBuf mod={0},sec={0},body={0};
+    WasmReloc *rl=calloc(20,sizeof(*rl));unsigned nr=0;
+    ByteBuf mod={0},sec={0},body={0},rewind={0};
     bb_bytes(&mod,"\0asm\x01\0\0\0",8);bb_uleb(&sec,4);
     bb_bytes(&sec,"\x60\x01\x7f\x01\x7f",5);
     bb_bytes(&sec,"\x60\x00\x01\x7f",4);
@@ -154,7 +160,17 @@ static void fixture(unsigned i,bool mixed,bool suspend) {
     bb_section(&mod,1,&sec);
     bb_name(&sec,XWD_BLUEPRINT_NAME);bb_bytes(&sec,blueprint.bytes,blueprint.size);
     bb_section(&mod,0,&sec);
+    /* Same A->B delegation contract, not a simulated Asyncify continuation. */
+    bb_u8(&body,0x20);bb_u8(&body,0);
+    bb_u8(&body,0x28);bb_u8(&body,2);bb_u8(&body,WASM_CTX_DO_INIT_OFF);
+    bb_u8(&body,0x45);bb_u8(&body,4);bb_u8(&body,0x40);
+    bb_u8(&body,0x20);bb_u8(&body,0);bb_u8(&body,0x12);
+    reloc(rl,&nr,&body,WASM_RELOC_RETCALL,0,0);
+    bb_bytes(&body,"\x84\x80\x80\x80\x00",5);bb_u8(&body,0x0b);
     ctx_const(&body,WASM_CTX_DO_INIT_OFF,0);
+    iconst(&body,(uintptr_t)&member_phase);
+    iconst(&body,(uintptr_t)"fixture:generated");
+    bb_u8(&body,0x36);bb_u8(&body,2);bb_u8(&body,0);
     bb_u8(&body,3);bb_u8(&body,0x40); /* own TB loop */
     iconst(&body,(uintptr_t)&cpu.neg.icount_decr);
     bb_u8(&body,0x28);bb_u8(&body,2);bb_u8(&body,0);
@@ -177,20 +193,27 @@ static void fixture(unsigned i,bool mixed,bool suspend) {
         bb_u8(&body,0x0b);
     }else edge(&body,i,0,0,rl,&nr,t.capture.jump_pc[0]);
     bb_u8(&body,0x0b);bb_u8(&body,0); /* end loop; unreachable */
+    /* B's sentinel body must execute without any direct-bank publication. */
+    iconst(&rewind,(uintptr_t)&b_rewinds);
+    iconst(&rewind,(uintptr_t)&b_rewinds);
+    bb_u8(&rewind,0x28);bb_u8(&rewind,2);bb_u8(&rewind,0);
+    iconst(&rewind,1);bb_u8(&rewind,0x6a);
+    bb_u8(&rewind,0x36);bb_u8(&rewind,2);bb_u8(&rewind,0);
+    iconst(&rewind,0xc0ffee);bb_u8(&rewind,0x0f);
     /* Framed opaque fragments: scanner sees a complete bounded section. */
     bb_name(&sec,"fixture-bodies");unsigned offa=sec.len;
     bb_bytes(&sec,body.p,body.len);unsigned offb=sec.len;
-    bb_bytes(&sec,body.p,body.len);
+    bb_bytes(&sec,rewind.p,rewind.len);
     unsigned prefix=mod.len+1;for(unsigned v=sec.len;;v>>=7) {
         prefix++;if(v<128)break;
     }
     h->body_off=prefix+offa;h->body_b_off=prefix+offb;
-    h->body_len=h->body_b_len=body.len;bb_section(&mod,0,&sec);
+    h->body_len=body.len;h->body_b_len=rewind.len;bb_section(&mod,0,&sec);
     h->wasm_ptr=mod.p;h->wasm_size=mod.len;h->counter=1000;
-    h->reloc_ptr=h->reloc_b_ptr=rl;h->reloc_count=h->reloc_b_count=nr;
+    h->reloc_ptr=h->reloc_b_ptr=rl;h->reloc_count=nr;
     uint32_t *imports=malloc(4);*imports=(uintptr_t)reference;
     h->import_ptr=imports;h->import_size=4;
-    free(sec.p);free(body.p);
+    free(sec.p);free(body.p);free(rewind.p);
 }
 static WasmContext ctx;
 static void reset(void) {
@@ -203,34 +226,52 @@ static uint32_t run(unsigned f) {
     return ((uint32_t(*)(WasmContext *))(uintptr_t)f)(&ctx);
 }
 int main(int argc,char **argv) {
-    assert(argc==5);mode=atoi(argv[1]);
+    assert(argc==8);mode=atoi(argv[1]);fixture_ic=argv[7][0]=='1';
     profiling=argv[4][0]=='1';
     setenv("XEMU_WASM_DIRECT_PROFILE",argv[4],1);
-    bool mixed=argv[2][0]=='1',suspend=argv[2][0]=='2';
+    setenv("XEMU_WASM_DIRECT_MIXED",argv[5],1);
+    unsigned mask=atoi(argv[2]);bool suspend=argv[6][0]=='1';
+    unsigned legacy=mask|(suspend?2:0);
+    bool use_direct=legacy!=7 && (!legacy || argv[5][0]=='1');
+    mixed_active=use_direct && legacy;
+    unsigned legacy_visits=!!(legacy&1)*3+!!(legacy&2)*2+!!(legacy&4);
+    unsigned admitted=3-!!(legacy&1)-!!(legacy&2)-!!(legacy&4);
     setenv("XEMU_WASM_DIRECT_X86",argv[1],1);
     setenv("XEMU_WASM_DIRECT_FLAGS","1",1);
     setenv("XEMU_WASM_DIRECT_REGIONS","1",1);
     setenv("XEMU_WASM_TLB_HINT",argv[3],1);
     setenv("XEMU_WASM_TB_STATS","0",1);
-    for(unsigned i=0;i<3;i++)fixture(i,mixed,suspend);
+    for(unsigned i=0;i<3;i++)fixture(i,mask,suspend);
     assert(!headers[0].instance && !headers[1].instance);
     int f=compile_region(&headers[0]);assert(f>0);
     assert(headers[0].instance==headers[1].instance &&
            headers[0].instance==headers[2].instance);
     assert(xemu_wasm_stats.n_region_members==3);
-    assert(xemu_wasm_stats.n_direct_region_build==!(mixed||suspend));
+    assert(xemu_wasm_stats.n_direct_region_build==use_direct);
+    assert(xemu_wasm_stats.n_direct_mixed_build==mixed_active);
+    assert(xemu_wasm_stats.n_direct_region_members==
+           (use_direct?admitted:0));
+    assert(xemu_wasm_stats.n_direct_mixed_legacy_members==
+           (mixed_active?3-admitted:0));
     reset();assert(run(f)==(uintptr_t)&tbs[2] && !ctx.tb_ptr);
-    assert(cpu.env.regs[0]==3 && cpu.env.regs[3]==9 &&
-           cpu.env.regs[2]==0x12345678 && cpu.env.eip==0x1080);
-    if(mixed||suspend) {
+    const uint32_t expected_regs[8]={3,2,0x12345678,9,0,0,0,0};
+    assert(!memcmp(cpu.env.regs,expected_regs,sizeof(expected_regs)) &&
+           cpu.env.eip==0x1080 && cpu.env.cc_op==CC_OP_SUBL &&
+           cpu.env.cc_dst==0 && cpu.env.cc_src==3 && cpu.env.cc_src2==0 &&
+           cpu.neg.can_do_io);
+    if(!use_direct) {
         assert(refs==6 && !xemu_wasm_stats.n_direct_region_checked);
         puts("PASS: whole selected mixed/unsafe group kept original TCG");
         return 0;
     }
     assert(!strcmp((const char *)(uintptr_t)member_phase,
-        mode==1 && profiling ? "direct:reg" : "fixture:generated"));
-    assert(refs==(mode==2?6:0));
-    assert(xemu_wasm_stats.n_direct_region_checked==(mode==2?6:0));
+        mode==1 && profiling && !(legacy&4) ? "direct:reg" :
+                                             "fixture:generated"));
+    assert(refs==(mode==2?6:legacy_visits));
+    assert(xemu_wasm_stats.n_direct_region_checked==
+           (mode==2?6-legacy_visits:0));
+    assert(xemu_wasm_stats.n_direct_mixed_checked==
+           (mode==2 && mixed_active?6-legacy_visits:0));
     reset();cpu.env.regs[0]=2;initial=cpu.env;
     ctx.tb_ptr=&headers[1];assert(run(f)==(uintptr_t)&tbs[2]);
     assert(cpu.env.regs[0]==3 && cpu.env.regs[3]==8);
@@ -239,10 +280,12 @@ int main(int argc,char **argv) {
     assert(run(f)==(uintptr_t)&tbs[0]+3 && !ctx.tb_ptr && !refs);
     assert(cpu.env.regs[0]==0 && cpu.env.regs[3]==7);
     assert(xemu_wasm_stats.n_direct_region_checked==before);
-    reset();kick=1;before=xemu_wasm_stats.n_direct_region_checked;
-    assert(run(f)==(uintptr_t)&tbs[1]+3 && !ctx.tb_ptr);
-    assert(cpu.env.regs[0]==1 && cpu.env.regs[3]==7);
-    assert(xemu_wasm_stats.n_direct_region_checked-before==(mode==2?1:0));
+    if(!(legacy&1)) {
+        reset();kick=1;before=xemu_wasm_stats.n_direct_region_checked;
+        assert(run(f)==(uintptr_t)&tbs[1]+3 && !ctx.tb_ptr);
+        assert(cpu.env.regs[0]==1 && cpu.env.regs[3]==7);
+        assert(xemu_wasm_stats.n_direct_region_checked-before==(mode==2?1:0));
+    }
     reset();tbs[0].jmp_target_addr[0]=(uintptr_t)&headers[0]+16;
     assert(run(f)==(uintptr_t)&tbs[0] && !ctx.tb_ptr);
     assert(cpu.env.regs[0]==1 && cpu.env.eip==0x1020);
@@ -252,6 +295,33 @@ int main(int argc,char **argv) {
         tbs[0].jmp_target_addr[0]=(uintptr_t)(k==0?&headers[2]:&headers[7]);
         assert(run(f)==0 && ctx.tb_ptr==(void *)tbs[0].jmp_target_addr[0]);
         assert(cpu.env.regs[0]==1 && cpu.env.regs[3]==7);
+    }
+    if(mixed_active) {
+        for(unsigned i=0;i<3;i++)if(legacy&(1u<<i)) {
+            reset();ctx.tb_ptr=&headers[i];ctx.do_init=0;ctx.rewind_func=f;
+            for(unsigned k=0;k<8;k++)cpu.env.regs[k]=0x98765432u^k;
+            cpu.env.cc_op=CC_OP_SUBL;cpu.env.cc_src=0x80000000;
+            cpu.env.cc_dst=3;cpu.env.cc_src2=0xdeadbeef;initial=cpu.env;
+            unsigned b_before=b_rewinds;
+            uint64_t rw=xemu_wasm_stats.n_direct_mixed_legacy_rewind;
+            before=xemu_wasm_stats.n_direct_region_checked;
+            assert(run(f)==0xc0ffee && !refs && b_rewinds==b_before+1);
+            assert(!memcmp(&cpu.env,&initial,sizeof(initial)));
+            assert(xemu_wasm_stats.n_direct_mixed_legacy_rewind==rw+1);
+            assert(xemu_wasm_stats.n_direct_region_checked==before);
+        }
+        if(fixture_ic) {
+            reset();ctx.tb_ptr=&headers[7];ctx.do_init=0;
+            headers[7].instance_member=0;
+            while(legacy&(1u<<headers[7].instance_member))
+                headers[7].instance_member++;
+            ctx.rewind_func=(uintptr_t)foreign_resume;
+            uint64_t rw=xemu_wasm_stats.n_direct_mixed_legacy_rewind;
+            unsigned fw=forwards;
+            assert(run(f)==0xf00d && forwards==fw+1 && !refs);
+            assert(!memcmp(&cpu.env,&initial,sizeof(initial)));
+            assert(xemu_wasm_stats.n_direct_mixed_legacy_rewind==rw);
+        }
     }
     assert(!xemu_wasm_stats.n_direct_mismatch);
     puts("PASS: actual direct region builder; retained/verified CFG, alias entry, "
@@ -286,14 +356,18 @@ def main():
                         '-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction',
                         '-sEXIT_RUNTIME=1', str(src), '-o', str(out)], check=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith('XEMU_')}
+        node = shlex.split(os.environ.get('NODE', 'node'))
         for mode in [1, 2]:
-            for scenario in [0, 1, 2]:
+            for mask, suspend in [(m, 0) for m in range(8)] + [(0, 1)]:
                 for hints in [0, 1]:
                     for profile in [0, 1]:
-                        subprocess.run([*shlex.split(os.environ.get('NODE', 'node')),
-                                        str(out), str(mode), str(scenario),
-                                        str(hints), str(profile)],
-                                       env=env, check=True, timeout=30)
+                        for mixed in [0, 1]:
+                            for ic in ([0, 1] if mask in [0, 2] else [1]):
+                                subprocess.run([*node, str(out), str(mode),
+                                                str(mask), str(hints),
+                                                str(profile), str(mixed),
+                                                str(suspend), str(ic)],
+                                               env=env, check=True, timeout=30)
 
 
 if __name__ == '__main__':

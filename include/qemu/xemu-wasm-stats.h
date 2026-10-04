@@ -180,7 +180,13 @@
     X(n_direct_memory_checked)                                          \
     X(n_direct_memory_tb_checked)                                       \
     X(n_direct_memory_unverified)                                       \
-    X(n_direct_memory_miss)
+    X(n_direct_memory_miss)                                             \
+    X(n_direct_mixed_build)                                             \
+    X(n_direct_mixed_members)                                           \
+    X(n_direct_mixed_legacy_members)                                    \
+    X(n_direct_mixed_checked)                                           \
+    X(n_direct_mixed_memory_tb_checked)                                 \
+    X(n_direct_mixed_legacy_rewind) /* original legacy rewind entry */
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;

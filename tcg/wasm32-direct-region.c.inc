@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Whole selected-group substitution. No ownership or partition decisions here. */
+/* Direct emission in the unchanged selected group; no ownership decisions. */
 #include "qemu/xemu-wasm-direct.h"
 #include "qemu/xemu-wasm-direct-memory.h"
 #include "wasm32-direct.c.inc"
@@ -15,12 +15,15 @@ typedef struct XwdRegionMember {
     XwdMemoryCapture memory;
     XwdMemHooks hooks;
     struct XwdRegion *region;
+    bool direct;
 } XwdRegionMember;
 
 typedef struct XwdRegion {
     unsigned n, mode, cc, verify, memory_members, locals, pending, address;
     unsigned mem_begin, mem_observe, mem_load, mem_store, mem_end;
     unsigned mem_cancel, mem_miss;
+    unsigned direct_members, anchor, bank_live;
+    bool mixed;
     XwdRegionMember member[REGION_MAX];
 } XwdRegion;
 
@@ -56,13 +59,13 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
         unsigned begin = 0, slots = 0, access = 0, phase = 0;
         if (!xwd_blueprint_find_ex(h->wasm_ptr, h->wasm_size, &m->t, &m->plan,
                                    xemu_wasm_direct_memory_enabled())) {
-            goto decline;
+            goto member_declined;
         }
         m->region = r;
         if (m->plan.accesses) {
             if (!xwd_memory_find(h->wasm_ptr, h->wasm_size, &m->memory) ||
                 m->memory.count != m->plan.accesses) {
-                goto decline;
+                goto member_declined;
             }
             unsigned k = 0;
             for (unsigned insn = 0; insn < m->plan.count; insn++) {
@@ -76,18 +79,17 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
                 if (site->insn != insn || site->store != op->mem_store ||
                     8u << ((site->oi >> 5) & 7) != op->mem_width ||
                     site->restore_pc != (m->plan.pcrel ? pc & 0xfff : pc)) {
-                    goto decline;
+                    goto member_declined;
                 }
             }
             m->hooks = (XwdMemHooks){ .opaque = m, .resolve = xwr_mem_resolve,
                 .resume_boundary = xwr_mem_resume, .slow = xwr_mem_miss,
                 .shadow = xwr_mem_shadow };
-            r->memory_members++;
         }
         m->tb = tcg_tb_lookup((uintptr_t)h);
         unsigned mask = m->plan.conditional ? 3 : 1;
         if (!m->tb || m->t.capture.jump_valid != mask) {
-            goto decline;
+            goto member_declined;
         }
         /* Independent original targets, not the direct emitter's choice. */
         for (unsigned slot = 0; slot < 2; slot++) {
@@ -95,7 +97,7 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
                 (m->tb->jmp_reset_offset[slot] == TB_JMP_OFFSET_INVALID ||
                  m->t.capture.jump_pc[slot] != (uint32_t)(m->plan.pc +
                     (slot ? m->plan.fall_delta : m->plan.delta)))) {
-                goto decline;
+                goto member_declined;
             }
         }
         for (unsigned slot = 0; slot < 2; slot++) {
@@ -106,35 +108,36 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
                 }
             }
         }
-        XwdLayout a = m->t.layout, b = r->member[0].t.layout;
+        XwdLayout a = m->t.layout;
+        XwdLayout b = r->direct_members ? r->member[r->anchor].t.layout : a;
         a.phase_generated = b.phase_generated = 0;
         if (memcmp(&a, &b, sizeof(a))) {
-            goto decline;
+            goto member_declined;
         }
         for (unsigned j = 0; j < h->reloc_count; j++) {
             const WasmReloc *rl = &h->reloc_ptr[j];
             if (rl->off > h->body_len ||
                 (j && rl->off < h->reloc_ptr[j - 1].off)) {
-                goto decline;
+                goto member_declined;
             }
             if (rl->kind == WASM_RELOC_MEM_BEGIN) {
                 if (phase || access >= m->memory.count || rl->arg != access) {
-                    goto decline;
+                    goto member_declined;
                 }
                 phase = 1;
             } else if (rl->kind == WASM_RELOC_DIRECT_SUSPEND) {
                 if (phase != 1) {
-                    goto decline;
+                    goto member_declined;
                 }
                 phase = 2;
             } else if (rl->kind == WASM_RELOC_MEM_RESUME) {
                 if (phase != 2 || rl->arg != access) {
-                    goto decline;
+                    goto member_declined;
                 }
                 phase = 3;
             } else if (rl->kind == WASM_RELOC_MEM_END) {
                 if (phase != 3 || rl->arg != access) {
-                    goto decline;
+                    goto member_declined;
                 }
                 phase = 0;
                 access++;
@@ -143,18 +146,38 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
             } else if (rl->kind == WASM_RELOC_DIRECT_VERIFY && rl->arg < 2) {
                 slots |= 1u << rl->arg;
             } else if (rl->kind == WASM_RELOC_GOTO && rl->arg == 255) {
-                goto decline; /* Do not replace lookup/indirect-exit semantics. */
+                /* Keep lookup/indirect-exit members entirely original. */
+                goto member_declined;
             }
         }
         if (begin != 1 || slots != mask || phase || access != m->memory.count) {
+            goto member_declined;
+        }
+        m->direct = true;
+        if (!r->direct_members++) {
+            r->anchor = i;
+        }
+        r->memory_members += m->plan.accesses != 0;
+        continue;
+member_declined:
+        *m = (XwdRegionMember){0};
+        if (!xemu_wasm_direct_mixed_enabled()) {
             goto decline;
         }
     }
-    /* Change only sampled scope identities, after layout compatibility was
+    if (!r->direct_members) {
+        goto decline;
+    }
+    r->mixed = r->direct_members != n;
+    /*
+     * Change only sampled scope identities, after layout compatibility was
      * checked. Reference/mode2 bodies must never be called active direct time.
      */
     if (r->mode == 1 && xemu_wasm_direct_profile_enabled()) {
         for (unsigned i = 0; i < n; i++) {
+            if (!r->member[i].direct) {
+                continue;
+            }
             XwdLayout *l = &r->member[i].t.layout;
             bool memory = r->member[i].plan.accesses != 0;
             l->phase_generated = (uintptr_t)(memory ? "direct:mem" :
@@ -166,6 +189,9 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
     r->pending = r->memory_members ? XD_NLOCALS : XD_TAKEN + 1;
     r->address = r->pending + 1;
     r->locals = r->memory_members ? r->address : r->pending;
+    if (r->mixed) {
+        r->bank_live = ++r->locals;
+    }
     return r;
 decline:
     g_free(r);
@@ -201,7 +227,7 @@ static bool xwr_imports(XwdRegion *r, uint32_t *hq, const uint8_t **hty,
 {
     static const uint8_t cc[] = {0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 1, 0x7f};
     static const uint8_t verify[] = {0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 0};
-    const XwdLayout *l = &r->member[0].t.layout;
+    const XwdLayout *l = &r->member[r->anchor].t.layout;
 
     static const uint8_t one[] = {0x60, 1, 0x7f, 0};
     static const uint8_t two[] = {0x60, 2, 0x7f, 0x7f, 0};
@@ -275,11 +301,28 @@ static bool xwr_flush(ByteBuf *b, XwdEmitter *e)
 }
 
 #include "wasm32-direct-memory-region.c.inc"
+#include "wasm32-direct-mixed.c.inc"
 
 static bool xwr_init(ByteBuf *b, XwdRegion *r)
 {
     XwdCode code;
-    XwdEmitter e = xwr_emitter(&code, r, 0);
+    XwdEmitter e = xwr_emitter(&code, r, r->anchor);
+    if (r->mixed) {
+        /*
+         * Fresh and rewind entries both start without a resident bank.
+         * In particular, don't touch the original saved TCG locals or make
+         * a legacy B continuation depend on these unsaved direct locals.
+         */
+        xwd_const(&e, 0); xwd_local(&e, 0x21, r->bank_live);
+        xwd_const(&e, 0); xwd_local(&e, 0x21, r->pending);
+        xwd_local(&e, 0x20, 0);
+        xwd_mem(&e, 0x28, WASM_CTX_DO_INIT_OFF);
+        xwd_byte(&e, 0x45);
+        xwd_byte(&e, 0x04); xwd_byte(&e, 0x40);
+        xwr_mixed_rewind(&e, r);
+        xwd_byte(&e, 0x0b);
+        return xwr_flush(b, &e);
+    }
     if (r->mode == 1 && xemu_wasm_direct_profile_enabled()) {
         xwr_phase(&e, (uintptr_t)"direct:entry");
     }
@@ -313,6 +356,12 @@ static bool xwr_shadow_begin(ByteBuf *b, XwdRegion *r, unsigned i)
     XwdCode code;
     XwdEmitter e = xwr_emitter(&code, r, i);
     const XwdPlan *p = &r->member[i].plan;
+    /*
+     * BEGIN is after the original IRQ poll: skipped members stay unchecked.
+     * Reanchor only after legacy/fresh entry, retain independent expected
+     * state across consecutive supported members.
+     */
+    xwr_mixed_load(&e, r);
     if (p->accesses) {
         if (!p->pcrel) {
             xwd_const(&e, p->pc); xwd_local(&e, 0x21, XD_PC);
@@ -357,7 +406,9 @@ static bool xwr_shadow_verify(ByteBuf *b, XwdRegion *r, unsigned i,
     xwd_const(&e, scratch); xwd_const(&e, 1);
     xwd_mem(&e, 0x36, offsetof(XwdState, pending));
     xwd_const(&e, scratch);
-    xwd_const(&e, p->needs_flags | (p->conditional << 1) | XWD_FEATURE_REGION);
+    xwd_const(&e, p->needs_flags | (p->conditional << 1) | XWD_FEATURE_REGION |
+                   (r->mixed ? XWD_FEATURE_MIXED : 0) |
+                   (r->mixed && p->accesses ? XWD_FEATURE_MEMORY : 0));
     if (p->conditional) {
         xwd_local(&e, 0x20, XD_TAKEN);
         xwd_const(&e, XWD_FEATURE_TAKEN);
@@ -444,6 +495,7 @@ static bool xwr_active_member(ByteBuf *b, XwdRegion *r, unsigned i,
     XwdEmitter e = xwr_emitter(&code, r, i);
     const XwdPlan *p = &r->member[i].plan;
 
+    xwr_mixed_load(&e, r);
     xwr_ctx_const(&e, WASM_CTX_DO_INIT_OFF, 0);
     xwr_phase(&e, e.layout->phase_generated);
     if (!p->pcrel) {

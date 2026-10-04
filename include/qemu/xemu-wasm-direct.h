@@ -81,6 +81,8 @@ typedef struct XwdLayout {
 #define XWD_CHECK_TAKEN 4u
 #define XWD_FEATURE_REGION 4u
 #define XWD_FEATURE_TAKEN 8u
+#define XWD_FEATURE_MIXED 16u
+#define XWD_FEATURE_MEMORY 32u
 
 typedef struct XwdState {
     uint32_t regs[8], cc_dst, cc_src, cc_src2, cc_op, eip, pending, features;
@@ -118,6 +120,21 @@ static inline bool xemu_wasm_direct_flags_enabled(void)
     static int enabled = -1;
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_DIRECT_FLAGS");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+/* Canonical bridges within the unchanged selected group; independently off. */
+static inline bool xemu_wasm_direct_mixed_enabled(void)
+{
+#if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_DIRECT_MIXED");
         enabled = e && *e == '1';
     }
     return enabled;

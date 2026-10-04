@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Architectural-local bank for homogeneous direct regions. Include after
+ * Architectural-local bank for consecutive direct members. Include after
  * wasm32-direct.c.inc. This is an emitter primitive, NOT a region builder:
  * its caller must implement member selection, live links, entry IRQ guards,
  * boundary publication, and (for mode 2) the single original TCG execution.
@@ -8,7 +8,9 @@
  * Every member starts with all architectural locals valid. No compile-time
  * dirty/cache information flows between independently entered member bodies.
  * The runtime lazy-CC opcode is a local too: a join may have any predecessor.
- * No guest data memory or suspending helper is supported by this bank yet.
+ * Canonical mixed edges discard it before legacy execution. The bank itself
+ * owns no memory helper or continuation; the caller supplies hit/exit or
+ * reference-observation hooks for direct memory instructions.
  */
 
 static void xwd_bank_init(XwdEmitter *e)

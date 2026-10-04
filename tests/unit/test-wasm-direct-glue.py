@@ -39,7 +39,8 @@ typedef struct CPUX86State {
 static struct { unsigned n_direct_checked,n_direct_mismatch,
  n_direct_flags_checked,n_direct_jcc_checked,n_direct_decline,
  n_direct_build,n_direct_flags_build,n_direct_jcc_build,
- n_direct_region_checked; } stats;
+ n_direct_region_checked,n_direct_mixed_checked,
+ n_direct_mixed_memory_tb_checked; } stats;
 #define XSTAT_INC(name) (++stats.name)
 ''' + D['frontend_function']('x86_wasm_direct_verify') + r'''
 static void test_verify(unsigned bad) {

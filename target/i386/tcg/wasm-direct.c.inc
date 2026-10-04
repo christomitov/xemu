@@ -39,6 +39,12 @@ static void x86_wasm_direct_verify(void *opaque, XwdState *state,
     if (state->features & XWD_FEATURE_REGION) {
         XSTAT_INC(n_direct_region_checked);
     }
+    if (state->features & XWD_FEATURE_MIXED) {
+        XSTAT_INC(n_direct_mixed_checked);
+        if (state->features & XWD_FEATURE_MEMORY) {
+            XSTAT_INC(n_direct_mixed_memory_tb_checked);
+        }
+    }
     if (!equal) {
         XSTAT_INC(n_direct_mismatch);
         fprintf(stderr, "direct-x86 register differential mismatch "

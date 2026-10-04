@@ -1103,7 +1103,11 @@ rebuild_group:
         int top = n - 1 - i;        /* blocks between the body and top */
 
         bb_u8(&code, 0x0b);                         /* end block i */
-        if (direct && direct->mode == 1) {
+        bool direct_member = direct && direct->member[i].direct;
+        if (direct && !direct_member) {
+            direct_ok &= xwr_legacy_member(&code, direct);
+        }
+        if (direct_member && direct->mode == 1) {
             direct_ok &= xwr_active_member(&code, direct, i, top);
             continue;
         }
@@ -1111,11 +1115,11 @@ rebuild_group:
             const WasmReloc *rl = &m[i]->reloc_ptr[r];
             bb_bytes(&code, body + pos, rl->off - pos);
             pos = rl->off;
-            if (direct && rl->kind == WASM_RELOC_DIRECT_BEGIN) {
+            if (direct_member && rl->kind == WASM_RELOC_DIRECT_BEGIN) {
                 direct_ok &= xwr_shadow_begin(&code, direct, i);
-            } else if (direct && rl->kind == WASM_RELOC_DIRECT_VERIFY) {
+            } else if (direct_member && rl->kind == WASM_RELOC_DIRECT_VERIFY) {
                 direct_ok &= xwr_shadow_verify(&code, direct, i, rl->arg);
-            } else if (direct && (rl->kind == WASM_RELOC_MEM_BEGIN ||
+            } else if (direct_member && (rl->kind == WASM_RELOC_MEM_BEGIN ||
                                   rl->kind == WASM_RELOC_MEM_RESUME ||
                                   rl->kind == WASM_RELOC_MEM_END)) {
                 direct_ok &= xwr_observation(&code, direct, i, rl->arg,
@@ -1279,12 +1283,17 @@ rebuild_group:
     XSTAT_ADD(n_region_members, n);
     if (direct) {
         XSTAT_INC(n_direct_region_build);
-        XSTAT_ADD(n_direct_region_members, n);
+        XSTAT_ADD(n_direct_region_members, direct->direct_members);
+        if (direct->mixed) {
+            XSTAT_INC(n_direct_mixed_build);
+            XSTAT_ADD(n_direct_mixed_members, direct->direct_members);
+            XSTAT_ADD(n_direct_mixed_legacy_members, n - direct->direct_members);
+        }
         if (direct->memory_members) {
             XSTAT_INC(n_direct_memory_build);
             XSTAT_ADD(n_direct_memory_members, direct->memory_members);
         }
-        XSTAT_ADD(n_direct_build, n);
+        XSTAT_ADD(n_direct_build, direct->direct_members);
         for (int i = 0; i < n; i++) {
             XSTAT_ADD(n_direct_flags_build, direct->member[i].plan.needs_flags);
             XSTAT_ADD(n_direct_jcc_build, direct->member[i].plan.conditional);
