@@ -29,6 +29,8 @@ typedef enum XwdOp {
     XWD_PUSH, XWD_POP,
     /* CALL rel32: PUSH of the return address, then a direct jump */
     XWD_CALL,
+    /* register shifts by a non-zero immediate count (imm = count) */
+    XWD_SHL, XWD_SHR, XWD_SAR,
 } XwdOp;
 
 typedef struct XwdInsn {
@@ -69,6 +71,7 @@ typedef struct XwdLayout {
     int32_t can_do_io, icount_decr;
     uint32_t cc_add[3], cc_sub[3], cc_logic[3];
     uint32_t cc_adc[3], cc_sbb[3], cc_inc[3], cc_dec[3], cc_eflags;
+    uint32_t cc_shl[3], cc_sar[3];      /* SHL; SHR and SAR share SAR */
     /* Optional sampler scope, resolved at code generation; zero disables. */
     uint32_t phase_ptr, phase_cc, phase_generated;
 } XwdLayout;
