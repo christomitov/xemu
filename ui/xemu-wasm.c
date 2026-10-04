@@ -459,6 +459,7 @@ static volatile int state_req;
 static volatile int state_status;   /* 0 idle, 1 saving, 2 saved, -1 failed */
 
 static void xemu_wasm_service_state(void);
+static void gui_timer_rearm_after_load(void);
 static QEMUTimer *s_state_timer;
 
 /*
@@ -478,6 +479,17 @@ EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
     __atomic_store_n(&state_req, 1, __ATOMIC_SEQ_CST);
 }
 
+/*
+ * Quick load (like xemu's): restore the "bench" snapshot saved above, in
+ * place, without reloading the page (which would discard the in-memory HDD
+ * image holding it). Status: 3 loading, 4 loaded, -2 failed.
+ */
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_load_state(void)
+{
+    __atomic_store_n(&state_status, 3, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&state_req, 2, __ATOMIC_SEQ_CST);
+}
+
 EMSCRIPTEN_KEEPALIVE int xemu_wasm_save_state_status(void)
 {
     return __atomic_load_n(&state_status, __ATOMIC_SEQ_CST);
@@ -487,7 +499,30 @@ static void xemu_wasm_service_state(void)
 {
     Error *err = NULL;
 
-    if (!__atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST)) {
+    int req = __atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST);
+
+    if (!req) {
+        return;
+    }
+    if (req == 2) {
+        bool running = runstate_is_running();
+        vm_stop(RUN_STATE_RESTORE_VM);
+        if (load_snapshot("bench", NULL, false, NULL, &err)) {
+            if (running) {
+                vm_start();
+            }
+            gui_timer_rearm_after_load();
+            fprintf(stderr, "[state] loaded snapshot 'bench'\n");
+            __atomic_store_n(&state_status, 4, __ATOMIC_SEQ_CST);
+        } else {
+            fprintf(stderr, "XEMU-ERROR: load state: %s\n",
+                    err ? error_get_pretty(err) : "failed");
+            error_free(err);
+            if (running) {
+                vm_start();
+            }
+            __atomic_store_n(&state_status, -2, __ATOMIC_SEQ_CST);
+        }
         return;
     }
     /*
@@ -956,6 +991,8 @@ static QEMUTimer *s_gui_timer;
  * latency, so vsync-paced games ran ~4% fast and jittered.
  * XEMU_WASM_VBLANK_HZ overrides (e.g. 50 for PAL).
  */
+static bool gui_timer_resync;   /* set after a state load: see below */
+
 static void gui_timer_arm(void)
 {
     static int64_t next_ns, period_ns;
@@ -967,10 +1004,27 @@ static void gui_timer_arm(void)
         period_ns = (int64_t)(1e9 / (hz > 1 ? hz : 60000.0 / 1001.0));
     }
     next_ns += period_ns;
-    if (next_ns < now - 100 * SCALE_MS || next_ns > now + 2 * period_ns) {
+    if (gui_timer_resync ||
+        next_ns < now - 100 * SCALE_MS || next_ns > now + 2 * period_ns) {
+        gui_timer_resync = false;
         next_ns = now + period_ns;      /* far behind (or first): resync */
     }
     timer_mod(s_gui_timer, next_ns);
+}
+
+/*
+ * A state load rewinds the virtual clock to the save point, but this timer
+ * is not machine state: its deadline stayed in the old future, so VBLANK
+ * stopped until virtual time caught up (~20 s after a quick load, while the
+ * PIT and APU, restored with the devices, kept running). Re-arm it from the
+ * restored clock so VBLANK keeps its exact 59.94 Hz.
+ */
+static void gui_timer_rearm_after_load(void)
+{
+    if (s_gui_timer) {
+        gui_timer_resync = true;
+        gui_timer_arm();
+    }
 }
 
 static void xemu_wasm_gui_tick(void *opaque)
