@@ -795,17 +795,24 @@ static bool wb_defer(NV2AState *d, SurfaceBinding *image)
     PGRAPHState *pg = &d->pgraph;
     PGRAPHWgpuState *r = pg->wgpu_renderer_state;
 
-    if (!wb_defer_ok || !wb_enabled() || image->eager_buf ||
-        image->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8 || !image->texture ||
+    if (!wb_defer_ok || !wb_enabled() || image->eager_buf || !image->texture ||
         r->draw.in_render_pass || r->draw.in_draw) {
         return false;
     }
+    /*
+     * Z24S8 is packed by a compute pass into the shared pack_dst buffer;
+     * copying it out to this write-back's own buffer in command order makes
+     * it deferrable too (Splinter Cell hands its 1024x512 shadow map's
+     * memory to a color target every frame: a 2 MB blocking readback).
+     */
+    bool z24s8 = image->host_fmt.conv == WGPU_SURFACE_CONV_Z24S8;
     /* an older pending copy of these bytes must land first */
     wb_flush_range(d, image->vram_addr, image->pitch * image->height,
                    "redefer");
 
     PendingWriteback *wb = g_new0(PendingWriteback, 1);
-    wb->stride = ROUND_UP(image->width * image->host_fmt.host_bytes_per_pixel,
+    wb->stride = z24s8 ? image->width * 4 :
+                 ROUND_UP(image->width * image->host_fmt.host_bytes_per_pixel,
                           256);
     wb->size = wb->stride * image->height;
     wb->buf = wgpuDeviceCreateBuffer(
@@ -815,7 +822,13 @@ static bool wb_defer(NV2AState *d, SurfaceBinding *image)
                                 WGPUBufferUsage_CopyDst,
                        .size = wb->size });
     WGPUCommandEncoder enc = pgraph_wgpu_begin_nondraw_commands(pg);
-    encode_surface_download(pg, image, enc, &wb->buf, 0);
+    if (z24s8) {
+        pgraph_wgpu_pack_depth_stencil(pg, image, enc);
+        wgpuCommandEncoderCopyBufferToBuffer(enc, r->surf.compute.pack_dst, 0,
+                                             wb->buf, 0, wb->size);
+    } else {
+        encode_surface_download(pg, image, enc, &wb->buf, 0);
+    }
     pgraph_wgpu_end_nondraw_commands(pg, enc);
     pgraph_wgpu_finish(pg, WGPU_FINISH_REASON_SURFACE_DOWN);
     wb->status = g_new0(int, 1);
