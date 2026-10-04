@@ -310,8 +310,10 @@ def main():
              "region_guard", "region_shared_guard", "add_instance",
              "get_instance", "remove_instances", "compile_region"]
     stats = (ROOT / 'include/qemu/xemu-wasm-stats.h').read_text()
-    policy = re.search(r'static inline bool xemu_wasm_tb_stats_enabled\(void\)'
-                       r'.*?\n}', stats, re.S).group()
+    policy = '\n'.join(re.search(r'static inline bool ' + name +
+                        r'\(void\).*?\n}', stats, re.S).group() for name in
+                        ['xemu_wasm_tb_stats_enabled',
+                         'xemu_wasm_direct_profile_enabled'])
     code = (PREFIX + policy + "\n" + defines + "\n" +
             "\n".join(function(n) for n in names if n != 'compile_region') +
             '\n#include "tcg/wasm32-direct-region.c.inc"\n' +

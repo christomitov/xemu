@@ -165,6 +165,10 @@ def main():
              ('0', None, '0', '1', 0, 0),
              ('invalid', None, None, None, 0, 0),
              ('', None, None, None, 0, 0)]
+    cases = [(*case[:4], None, *case[4:]) for case in cases]
+    for direct in ['', '0', '1', 'invalid', '10', '2']:
+        cases.append(('0', '0', None, None, direct, 0,
+                      int(direct.startswith('1'))))
     text = (PREFIX + function(TCI, 'helper_prof_hit') + CHECK_C +
             function(BACKEND, 'wasm_count') +
             function(BACKEND, 'wasm_count_tb_stat') +
@@ -181,10 +185,11 @@ def main():
                        check=True)
         baseline = None
         runs = []
-        for index, (stats, phase, jit, helper, s, p) in enumerate(cases):
+        for index, (stats, phase, jit, helper, direct, s, p) in enumerate(cases):
             env = dict(os.environ)
             for key, value in zip(['TB_STATS', 'PROFILE', 'JIT_PROFILE',
-                                   'HELPER_PROF'], [stats, phase, jit, helper]):
+                                   'HELPER_PROF', 'DIRECT_PROFILE'],
+                                  [stats, phase, jit, helper, direct]):
                 key = 'XEMU_WASM_' + key
                 env.pop(key, None)
                 if value is not None:

@@ -45,8 +45,11 @@ static FixtureCPU cpu;
 #define env_cpu(e) ((FixtureCPU *)((char *)(e)-offsetof(FixtureCPU,env)))
 ''' + D.frontend_function('x86_wasm_direct_verify') + r'''
 static unsigned refs, cc_calls, kick, mode, limit=3;
+static bool profiling;
 static CPUX86State initial;
 static uint32_t fixture_cc(uint32_t dst,uint32_t src,uint32_t src2,int op) {
+    assert(!strcmp((const char *)(uintptr_t)member_phase,
+        mode==1 && profiling ? "direct:reg-cc" : "fixture:cc"));
     if(mode==1) {
         /* Pure production helper; test-only observer/kick, no reentry. */
         assert(!memcmp(cpu.env.regs,initial.regs,sizeof(initial.regs)));
@@ -113,6 +116,9 @@ static void fixture(unsigned i,bool mixed,bool suspend) {
         .size=size[i],.count=i==0?3:2,.valid=true,.fallthrough=false,
         .jump_valid=i==0?3:1,.end={i==1?1:5,i==1?6:10,12}},
         .layout={.verify=x86_wasm_direct_verify,.cc_all=fixture_cc,
+        .phase_ptr=(uintptr_t)&member_phase,
+        .phase_cc=(uintptr_t)"fixture:cc",
+        .phase_generated=(uintptr_t)"fixture:generated",
         .regs=offsetof(CPUX86State,regs),.eip=offsetof(CPUX86State,eip),
         .cc_dst=offsetof(CPUX86State,cc_dst),
         .cc_src=offsetof(CPUX86State,cc_src),
@@ -197,7 +203,9 @@ static uint32_t run(unsigned f) {
     return ((uint32_t(*)(WasmContext *))(uintptr_t)f)(&ctx);
 }
 int main(int argc,char **argv) {
-    assert(argc==4);mode=atoi(argv[1]);
+    assert(argc==5);mode=atoi(argv[1]);
+    profiling=argv[4][0]=='1';
+    setenv("XEMU_WASM_DIRECT_PROFILE",argv[4],1);
     bool mixed=argv[2][0]=='1',suspend=argv[2][0]=='2';
     setenv("XEMU_WASM_DIRECT_X86",argv[1],1);
     setenv("XEMU_WASM_DIRECT_FLAGS","1",1);
@@ -219,6 +227,8 @@ int main(int argc,char **argv) {
         puts("PASS: whole selected mixed/unsafe group kept original TCG");
         return 0;
     }
+    assert(!strcmp((const char *)(uintptr_t)member_phase,
+        mode==1 && profiling ? "direct:reg" : "fixture:generated"));
     assert(refs==(mode==2?6:0));
     assert(xemu_wasm_stats.n_direct_region_checked==(mode==2?6:0));
     reset();cpu.env.regs[0]=2;initial=cpu.env;
@@ -258,8 +268,10 @@ def main():
              'region_member_ok', 'bb_count', 'region_guard', 'region_shared_guard',
              'add_instance', 'get_instance', 'remove_instances']
     stats = (ROOT/'include/qemu/xemu-wasm-stats.h').read_text()
-    policy = re.search(r'static inline bool xemu_wasm_tb_stats_enabled\(void\)'
-                       r'.*?\n}', stats, re.S).group()
+    policy = '\n'.join(re.search(r'static inline bool ' + name +
+                        r'\(void\).*?\n}', stats, re.S).group() for name in
+                        ['xemu_wasm_tb_stats_enabled',
+                         'xemu_wasm_direct_profile_enabled'])
     code = (PREFIX + policy + '\n' + defines + '\n' +
             '\n'.join(R.function(n) for n in names) +
             '\n#include "tcg/wasm32-direct-region.c.inc"\n' +
@@ -277,9 +289,11 @@ def main():
         for mode in [1, 2]:
             for scenario in [0, 1, 2]:
                 for hints in [0, 1]:
-                    subprocess.run([*shlex.split(os.environ.get('NODE', 'node')),
-                                    str(out), str(mode), str(scenario), str(hints)],
-                                   env=env, check=True, timeout=30)
+                    for profile in [0, 1]:
+                        subprocess.run([*shlex.split(os.environ.get('NODE', 'node')),
+                                        str(out), str(mode), str(scenario),
+                                        str(hints), str(profile)],
+                                       env=env, check=True, timeout=30)
 
 
 if __name__ == '__main__':
