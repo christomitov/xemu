@@ -3,7 +3,7 @@
 #define QEMU_XEMU_WASM_DIRECT_H
 
 /* Pool-owned translation metadata; never a guest/TB-header pointer cache. */
-#define XWD_VERSION 2
+#define XWD_VERSION 3
 #define XWD_MAX_BYTES 512u
 #define XWD_MAX_INSNS 64u
 #define XWD_MAX_CODE 16384u
@@ -49,7 +49,7 @@ typedef struct XwdLayout {
                    uint32_t actual_pc);
     uint32_t (*cc_all)(uint32_t dst, uint32_t src, uint32_t src2, int op);
     uint32_t regs, eip, cc_dst, cc_src, cc_src2, cc_op;
-    int32_t can_do_io;
+    int32_t can_do_io, icount_decr;
     uint32_t cc_add[3], cc_sub[3], cc_logic[3];
     uint32_t cc_adc[3], cc_sbb[3], cc_inc[3], cc_dec[3], cc_eflags;
     /* Optional sampler scope, resolved at code generation; zero disables. */
@@ -92,6 +92,21 @@ static inline bool xemu_wasm_direct_flags_enabled(void)
     static int enabled = -1;
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_DIRECT_FLAGS");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+/* Region substitution is a separate, default-off correctness stage. */
+static inline bool xemu_wasm_direct_regions_enabled(void)
+{
+#if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_DIRECT_REGIONS");
         enabled = e && *e == '1';
     }
     return enabled;

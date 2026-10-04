@@ -86,6 +86,7 @@ static void x86_wasm_direct_start(DisasContext *s)
         .cc_src2 = offsetof(CPUX86State, cc_src2),
         .cc_op = offsetof(CPUX86State, cc_op),
         .can_do_io = offsetof(CPUState, neg.can_do_io) - sizeof(CPUState),
+        .icount_decr = offsetof(CPUState, neg.icount_decr) - sizeof(CPUState),
         .cc_add = { CC_OP_ADDB, CC_OP_ADDW, CC_OP_ADDL },
         .cc_sub = { CC_OP_SUBB, CC_OP_SUBW, CC_OP_SUBL },
         .cc_logic = { CC_OP_LOGICB, CC_OP_LOGICW, CC_OP_LOGICL },

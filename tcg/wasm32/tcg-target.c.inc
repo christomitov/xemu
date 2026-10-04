@@ -36,6 +36,7 @@
 
 static const XwdTranslation *wasm_direct_translation;
 static XwdCode *wasm_direct_code;
+static XwdCode *wasm_direct_blueprint;
 static uint32_t wasm_direct_call_pos;
 static XwdState wasm_direct_expected;
 static void wasm_direct_verify(TCGContext *s, int slot);
@@ -4781,6 +4782,7 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_insn_profile_start(s);
     wasm_direct_translation = NULL;
     wasm_direct_code = NULL;
+    wasm_direct_blueprint = NULL;
     code_buf_root = code_buf_cur = new_linked_buf();
     types_buf_root = types_buf_cur = new_linked_buf();
     label_info = NULL;
@@ -5324,6 +5326,13 @@ static int tcg_out_tb_end(TCGContext *s)
         }
     }
 
+    if (wasm_direct_blueprint) {
+        sec = mod_section_begin(&w, 0);
+        mod_name(&w, XWD_BLUEPRINT_NAME);
+        mod_bytes(&w, wasm_direct_blueprint->bytes,
+                  wasm_direct_blueprint->size);
+        mod_section_end(&w, sec);
+    }
     if (wasm_direct_code) {
         sec = mod_section_begin(&w, 0);
         mod_name(&w, "xemu.direct-x86");
