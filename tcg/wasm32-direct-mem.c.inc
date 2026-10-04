@@ -34,9 +34,9 @@ static void xwd_memop(XwdEmitter *e, uint8_t op, unsigned align, unsigned off)
 /* XD_MADDR = disp + base + (index << scale) */
 static void xwd_mem_address(XwdEmitter *e, const XwdInsn *o)
 {
-    if (o->op == XWD_PUSH || o->op == XWD_POP) {
+    if (o->op == XWD_PUSH || o->op == XWD_POP || o->op == XWD_CALL) {
         xwd_get(e, 4, 32);                 /* ESP */
-        if (o->op == XWD_PUSH) {
+        if (o->op != XWD_POP) {
             xwd_const(e, 4);
             xwd_byte(e, 0x6b);             /* i32.sub */
         }
@@ -151,11 +151,30 @@ static bool xwd_mem_access(XwdEmitter *e, unsigned insn, bool verify,
  * is produced by the caller first. Returns false to decline the body.
  */
 static bool xwd_mem_insn(XwdEmitter *e, const XwdInsn *o, unsigned insn,
-                         bool verify)
+                         const XwdPlan *p, bool verify)
 {
     xwd_mem_address(e, o);
     if (o->mem_store) {
-        if (o->op == XWD_PUSH) {
+        if (o->op == XWD_CALL) {
+            /*
+             * Return address: the EIP after the CALL (the plan's last
+             * instruction). PC-relative code takes the entry EIP at run
+             * time, like the exit's EIP update: the region's XD_PC, or
+             * env->eip in a standalone body.
+             */
+            if (p->pcrel) {
+                if (e->resident) {
+                    xwd_local(e, 0x20, XD_PC);
+                } else {
+                    xwd_local(e, 0x20, XD_ENV);
+                    xwd_mem(e, 0x28, e->layout->eip);
+                }
+                xwd_const(e, p->fall_delta);
+                xwd_byte(e, 0x6a);
+            } else {
+                xwd_const(e, p->pc + p->fall_delta);
+            }
+        } else if (o->op == XWD_PUSH && !o->immediate) {
             xwd_get(e, o->src, 32);
         } else if (o->immediate) {
             xwd_const(e, o->imm);
