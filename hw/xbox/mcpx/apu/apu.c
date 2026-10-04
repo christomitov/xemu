@@ -20,6 +20,9 @@
  */
 
 #include "qemu/xemu-wasm-stats.h"
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#endif
 #include "apu_int.h"
 
 MCPXAPUState *g_state; // Used via debug handlers
@@ -277,10 +280,53 @@ static void se_frame(MCPXAPUState *d)
     mcpx_debug_end_frame();
 }
 
+#ifdef EMSCRIPTEN
+/*
+ * Freeze diagnostics: which step of the frame loop the APU thread is in,
+ * plus its control registers, exported in every page report
+ * (xemu_wasm_apu_state). A stalled APU (no frames while PIT/vblank run)
+ * then shows whether it is paused, halted by the guest, waiting for the
+ * BQL, throttled or stuck inside a frame.
+ */
+static MCPXAPUState *apu_diag_state;
+static volatile int apu_diag_phase;  /* see apu_phase_names */
+static const char *const apu_phase_names[] = {
+    "start", "paused", "irq-bql-wait", "irq", "halted-wait", "throttle",
+    "frame",
+};
+#define APU_PHASE(n) (apu_diag_phase = (n))
+
+EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_apu_state(void)
+{
+    static char buf[256];
+    MCPXAPUState *d = apu_diag_state;
+    int ph = apu_diag_phase;
+
+    if (!d) {
+        return "apu: none";
+    }
+    snprintf(buf, sizeof(buf),
+             "phase=%s sectl=0x%08x fectl=0x%08x xcntmode=%u pause=%d "
+             "idle=%d set_irq=%d frames=%" PRIu64,
+             ph >= 0 && ph < (int)ARRAY_SIZE(apu_phase_names) ?
+                 apu_phase_names[ph] : "?",
+             qatomic_read(&d->regs[NV_PAPU_SECTL]),
+             qatomic_read(&d->regs[NV_PAPU_FECTL]),
+             (unsigned)GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
+                                NV_PAPU_SECTL_XCNTMODE),
+             d->pause_requested, d->is_idle, d->set_irq,
+             (uint64_t)xemu_wasm_stats.n_apu_frame);
+    return buf;
+}
+#else
+#define APU_PHASE(n) do { } while (0)
+#endif
+
 static void *mcpx_apu_frame_thread(void *arg)
 {
     MCPXAPUState *d = MCPX_APU_DEVICE(arg);
 #ifdef EMSCRIPTEN
+    apu_diag_state = d;
     extern void xemu_wasm_lowmem_check(const char *);
     extern void xemu_wasm_dbg_ring_put(const char *, ...);
 #endif
@@ -291,6 +337,7 @@ static void *mcpx_apu_frame_thread(void *arg)
         xemu_wasm_lowmem_check("apu iter");
 #endif
         if (d->pause_requested) {
+            APU_PHASE(1);
             d->is_idle = true;
             qemu_cond_signal(&d->idle_cond);
             qemu_cond_wait(&d->cond, &d->lock);
@@ -312,7 +359,9 @@ static void *mcpx_apu_frame_thread(void *arg)
 
         if (d->set_irq) {
             qemu_mutex_unlock(&d->lock);
+            APU_PHASE(2);
             bql_lock();
+            APU_PHASE(3);
 #ifdef EMSCRIPTEN
             xemu_wasm_lowmem_check("apu pre-irq");
 #endif
@@ -331,6 +380,7 @@ static void *mcpx_apu_frame_thread(void *arg)
         if (xcntmode == NV_PAPU_SECTL_XCNTMODE_OFF ||
             (fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) ||
             (fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED)) {
+            APU_PHASE(4);
             qemu_cond_timedwait(&d->cond, &d->lock, 5);
 #ifdef EMSCRIPTEN
             xemu_wasm_lowmem_check("apu post-wait");
@@ -338,10 +388,12 @@ static void *mcpx_apu_frame_thread(void *arg)
             continue;
         }
 
+        APU_PHASE(5);
         throttle(d);
 #ifdef EMSCRIPTEN
         xemu_wasm_lowmem_check("apu post-throttle");
 #endif
+        APU_PHASE(6);
         se_frame(d);
 #ifdef EMSCRIPTEN
         xemu_wasm_lowmem_check("apu post-frame");
