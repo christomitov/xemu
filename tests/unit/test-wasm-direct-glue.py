@@ -90,6 +90,8 @@ static void wasm_add_reloc(unsigned kind, unsigned arg, unsigned depth) {
 }
 static void *tcg_malloc(size_t n) {void *p=calloc(1,n);assert(p);return p;}
 static unsigned wasm_code_len(void) {abort();}
+static bool xemu_wasm_direct_memory_enabled(void) {return false;}
+static void wasm_direct_memory_start(const XwdTranslation *t) {(void)t;}
 static void wasm8(TCGContext *s,unsigned b) {(void)s;(void)b;abort();}
 static void wasm_var(TCGContext *s,unsigned op,unsigned v) {
  (void)s;(void)op;(void)v;abort();

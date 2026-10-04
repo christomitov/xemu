@@ -53,7 +53,12 @@ static void wasm_direct_entry(TCGContext *s, const XwdTranslation *t)
     int mode = xemu_wasm_direct_mode();
     uint32_t cc_idx = UINT32_MAX;
 
-    if (!mode || !xwd_decode(&t->capture, &plan) ||
+    if (mode) {
+        wasm_direct_memory_start(t);
+    }
+    if (!mode || !xwd_decode_ex(&t->capture, &plan,
+            xemu_wasm_direct_regions_enabled() &&
+            xemu_wasm_direct_memory_enabled()) ||
         (plan.needs_flags && !xemu_wasm_direct_flags_enabled())) {
         XSTAT_INC(n_direct_decline);
         return;
@@ -69,7 +74,8 @@ static void wasm_direct_entry(TCGContext *s, const XwdTranslation *t)
         XwdTranslation value = *t;
         value.layout = layout;
         code = tcg_malloc(sizeof(*code));
-        if (!xwd_blueprint_write(&value, code)) {
+        if (!xwd_blueprint_write_ex(&value, code,
+                                    xemu_wasm_direct_memory_enabled())) {
             XSTAT_INC(n_direct_decline);
             return;
         }

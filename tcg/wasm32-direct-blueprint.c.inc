@@ -23,7 +23,8 @@ static inline void xwd_blueprint_word(XwdEmitter *e, uint32_t v)
     }
 }
 
-static inline bool xwd_blueprint_write(const XwdTranslation *t, XwdCode *code)
+static inline bool xwd_blueprint_write_ex(const XwdTranslation *t, XwdCode *code,
+                                           bool allow_memory)
 {
     const XwdCapture *c = &t->capture;
     const XwdLayout *l = &t->layout;
@@ -33,7 +34,8 @@ static inline bool xwd_blueprint_write(const XwdTranslation *t, XwdCode *code)
     memset(code, 0, sizeof(*code));
     if (!l->verify || !l->cc_all || c->jump_valid > 3 ||
         (uintptr_t)l->verify > UINT32_MAX ||
-        (uintptr_t)l->cc_all > UINT32_MAX || !xwd_decode(c, &plan)) {
+        (uintptr_t)l->cc_all > UINT32_MAX ||
+        !xwd_decode_ex(c, &plan, allow_memory)) {
         return false;
     }
     code->valid = true;
@@ -66,8 +68,14 @@ static inline bool xwd_blueprint_write(const XwdTranslation *t, XwdCode *code)
     return code->valid;
 }
 
-static inline bool xwd_blueprint_read(const uint8_t *bytes, unsigned len,
-                                      XwdTranslation *t, XwdPlan *plan)
+static inline bool xwd_blueprint_write(const XwdTranslation *t, XwdCode *code)
+{
+    return xwd_blueprint_write_ex(t, code, false);
+}
+
+static inline bool xwd_blueprint_read_ex(const uint8_t *bytes, unsigned len,
+                                         XwdTranslation *t, XwdPlan *plan,
+                                         bool allow_memory)
 {
     XwdReader r = { .bytes = bytes, .end = len, .valid = true };
     XwdCapture *c = &t->capture;
@@ -120,12 +128,19 @@ static inline bool xwd_blueprint_read(const uint8_t *bytes, unsigned len,
         c->bytes[i] = xwd_read(&r, 1);
     }
     c->valid = r.valid && r.pos == r.end;
-    if (!c->valid || !l->verify || !l->cc_all || !xwd_decode(c, plan)) {
+    if (!c->valid || !l->verify || !l->cc_all ||
+        !xwd_decode_ex(c, plan, allow_memory)) {
         c->valid = false;
         memset(plan, 0, sizeof(*plan));
         return false;
     }
     return true;
+}
+
+static inline bool xwd_blueprint_read(const uint8_t *bytes, unsigned len,
+                                      XwdTranslation *t, XwdPlan *plan)
+{
+    return xwd_blueprint_read_ex(bytes, len, t, plan, false);
 }
 
 /* Wasm permits padded ULEBs, but never more than 32 payload bits. */
@@ -152,17 +167,17 @@ static inline bool xwd_blueprint_uleb(XwdReader *r, uint32_t *value)
  * Layout words/table indices still require authoritative builder compatibility
  * checks; this parser validates framing and instruction admission only.
  */
-static inline bool xwd_blueprint_find(const uint8_t *bytes, unsigned len,
-                                     XwdTranslation *t, XwdPlan *plan)
+static inline const uint8_t *xwd_custom_find(const uint8_t *bytes, unsigned len,
+                                             const char *wanted,
+                                             unsigned *payload_len)
 {
     static const uint8_t magic[] = { 0, 'a', 's', 'm', 1, 0, 0, 0 };
     const uint8_t *payload = NULL;
-    unsigned payload_len = 0;
+    unsigned wanted_len = strlen(wanted);
     XwdReader r = { .bytes = bytes, .pos = sizeof(magic), .end = len,
                     .valid = true };
 
-    memset(t, 0, sizeof(*t));
-    memset(plan, 0, sizeof(*plan));
+    *payload_len = 0;
     if (!bytes || len < sizeof(magic) || memcmp(bytes, magic, sizeof(magic))) {
         return false;
     }
@@ -182,18 +197,34 @@ static inline bool xwd_blueprint_find(const uint8_t *bytes, unsigned len,
                 name_len > name.end - name.pos) {
                 return false;
             }
-            if (name_len == sizeof(XWD_BLUEPRINT_NAME) - 1 &&
-                !memcmp(bytes + name.pos, XWD_BLUEPRINT_NAME, name_len)) {
+            if (name_len == wanted_len &&
+                !memcmp(bytes + name.pos, wanted, name_len)) {
                 if (payload) {
                     return false; /* Ambiguous or duplicate direct metadata. */
                 }
                 payload = bytes + name.pos + name_len;
-                payload_len = end - name.pos - name_len;
+                *payload_len = end - name.pos - name_len;
             }
         }
         r.pos = end;
     }
-    return payload && xwd_blueprint_read(payload, payload_len, t, plan);
+    return payload;
+}
+
+static inline bool xwd_blueprint_find_ex(const uint8_t *bytes, unsigned len,
+                                         XwdTranslation *t, XwdPlan *plan,
+                                         bool allow_memory)
+{
+    unsigned size;
+    const uint8_t *payload = xwd_custom_find(bytes, len, XWD_BLUEPRINT_NAME,
+                                           &size);
+    return xwd_blueprint_read_ex(payload, size, t, plan, allow_memory);
+}
+
+static inline bool xwd_blueprint_find(const uint8_t *bytes, unsigned len,
+                                     XwdTranslation *t, XwdPlan *plan)
+{
+    return xwd_blueprint_find_ex(bytes, len, t, plan, false);
 }
 
 #undef XWD_LAYOUT_SCALARS

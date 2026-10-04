@@ -75,7 +75,19 @@ static struct {
     uint64_t n_jit_exit_requested, n_tb_selfloop;
     uint64_t n_direct_checked, n_direct_flags_checked, n_direct_jcc_checked;
     uint64_t n_direct_region_checked, n_direct_mismatch;
+    uint64_t n_direct_memory_build, n_direct_memory_members;
 } xemu_wasm_stats;
+/* These register-only fixtures must never execute a memory integration hook. */
+void wasm32_direct_mem_begin(CPUArchState *e, uint32_t p) { abort(); }
+void wasm32_direct_mem_observe(CPUArchState *e, uint32_t p, uint32_t a,
+                              uint32_t o, uint32_t s, uint64_t v) { abort(); }
+uint32_t wasm32_direct_mem_load(CPUArchState *e, uint32_t p, uint32_t a,
+                              uint32_t o) { abort(); }
+void wasm32_direct_mem_store(CPUArchState *e, uint32_t p, uint32_t a,
+                            uint32_t o, uint32_t v) { abort(); }
+void wasm32_direct_mem_end(CPUArchState *e) { abort(); }
+void wasm32_direct_mem_cancel(void) { abort(); }
+void wasm32_direct_mem_miss(CPUArchState *e) { abort(); }
 #define MAX_INSTANCES 16
 static WasmInstance instances[MAX_INSTANCES];
 static int free_slots[MAX_INSTANCES], n_free = -1, instances_alive, clock_hand;

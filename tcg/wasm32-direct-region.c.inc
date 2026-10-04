@@ -1,23 +1,35 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Whole selected-group substitution. No ownership or partition decisions here. */
 #include "qemu/xemu-wasm-direct.h"
+#include "qemu/xemu-wasm-direct-memory.h"
 #include "wasm32-direct.c.inc"
 #include "wasm32-direct-blueprint.c.inc"
+#include "wasm32-direct-memory-codec.c.inc"
 #include "wasm32-direct-bank.c.inc"
-
-#define XWR_EXTRA_LOCALS (XD_TAKEN + 1)
 
 typedef struct XwdRegionMember {
     XwdTranslation t;
     XwdPlan plan;
     TranslationBlock *tb;
     WasmTBHeader *internal[2];
+    XwdMemoryCapture memory;
+    XwdMemHooks hooks;
+    struct XwdRegion *region;
 } XwdRegionMember;
 
 typedef struct XwdRegion {
-    unsigned n, mode, cc, verify;
+    unsigned n, mode, cc, verify, memory_members, locals, pending, address;
+    unsigned mem_begin, mem_observe, mem_load, mem_store, mem_end;
+    unsigned mem_cancel, mem_miss;
     XwdRegionMember member[REGION_MAX];
 } XwdRegion;
+
+static bool xwr_mem_resolve(XwdEmitter *, unsigned, unsigned, bool, unsigned,
+                            XwdMemAccess *);
+static bool xwr_mem_resume(XwdEmitter *, const XwdMemAccess *);
+static bool xwr_mem_miss(XwdEmitter *, const XwdMemAccess *, unsigned, unsigned);
+static bool xwr_mem_shadow(XwdEmitter *, const XwdMemAccess *, unsigned,
+                           unsigned);
 
 /* Single vCPU, nonsuspending verifier; never a continuation save area. */
 static XwdState wasm_region_expected;
@@ -41,9 +53,36 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
     for (unsigned i = 0; i < n; i++) {
         XwdRegionMember *m = &r->member[i];
         WasmTBHeader *h = members[i];
-        unsigned begin = 0, slots = 0;
-        if (!xwd_blueprint_find(h->wasm_ptr, h->wasm_size, &m->t, &m->plan)) {
+        unsigned begin = 0, slots = 0, access = 0, phase = 0;
+        if (!xwd_blueprint_find_ex(h->wasm_ptr, h->wasm_size, &m->t, &m->plan,
+                                   xemu_wasm_direct_memory_enabled())) {
             goto decline;
+        }
+        m->region = r;
+        if (m->plan.accesses) {
+            if (!xwd_memory_find(h->wasm_ptr, h->wasm_size, &m->memory) ||
+                m->memory.count != m->plan.accesses) {
+                goto decline;
+            }
+            unsigned k = 0;
+            for (unsigned insn = 0; insn < m->plan.count; insn++) {
+                const XwdInsn *op = &m->plan.insn[insn];
+                if (!op->mem) {
+                    continue;
+                }
+                const XwdMemorySite *site = &m->memory.site[k++];
+                uint32_t pc = m->plan.pc +
+                    (insn ? m->t.capture.end[insn - 1] : 0);
+                if (site->insn != insn || site->store != op->mem_store ||
+                    8u << ((site->oi >> 5) & 7) != op->mem_width ||
+                    site->restore_pc != (m->plan.pcrel ? pc & 0xfff : pc)) {
+                    goto decline;
+                }
+            }
+            m->hooks = (XwdMemHooks){ .opaque = m, .resolve = xwr_mem_resolve,
+                .resume_boundary = xwr_mem_resume, .slow = xwr_mem_miss,
+                .shadow = xwr_mem_shadow };
+            r->memory_members++;
         }
         m->tb = tcg_tb_lookup((uintptr_t)h);
         unsigned mask = m->plan.conditional ? 3 : 1;
@@ -75,11 +114,31 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
         for (unsigned j = 0; j < h->reloc_count; j++) {
             const WasmReloc *rl = &h->reloc_ptr[j];
             if (rl->off > h->body_len ||
-                (j && rl->off < h->reloc_ptr[j - 1].off) ||
-                rl->kind == WASM_RELOC_DIRECT_SUSPEND) {
+                (j && rl->off < h->reloc_ptr[j - 1].off)) {
                 goto decline;
             }
-            if (rl->kind == WASM_RELOC_DIRECT_BEGIN) {
+            if (rl->kind == WASM_RELOC_MEM_BEGIN) {
+                if (phase || access >= m->memory.count || rl->arg != access) {
+                    goto decline;
+                }
+                phase = 1;
+            } else if (rl->kind == WASM_RELOC_DIRECT_SUSPEND) {
+                if (phase != 1) {
+                    goto decline;
+                }
+                phase = 2;
+            } else if (rl->kind == WASM_RELOC_MEM_RESUME) {
+                if (phase != 2 || rl->arg != access) {
+                    goto decline;
+                }
+                phase = 3;
+            } else if (rl->kind == WASM_RELOC_MEM_END) {
+                if (phase != 3 || rl->arg != access) {
+                    goto decline;
+                }
+                phase = 0;
+                access++;
+            } else if (rl->kind == WASM_RELOC_DIRECT_BEGIN) {
                 begin++;
             } else if (rl->kind == WASM_RELOC_DIRECT_VERIFY && rl->arg < 2) {
                 slots |= 1u << rl->arg;
@@ -87,10 +146,13 @@ static XwdRegion *xwr_prepare(WasmTBHeader **members, unsigned n)
                 goto decline; /* Do not replace lookup/indirect-exit semantics. */
             }
         }
-        if (begin != 1 || slots != mask) {
+        if (begin != 1 || slots != mask || phase || access != m->memory.count) {
             goto decline;
         }
     }
+    r->pending = r->memory_members ? XD_NLOCALS : XD_TAKEN + 1;
+    r->address = r->pending + 1;
+    r->locals = r->memory_members ? r->address : r->pending;
     return r;
 decline:
     g_free(r);
@@ -128,10 +190,34 @@ static bool xwr_imports(XwdRegion *r, uint32_t *hq, const uint8_t **hty,
     static const uint8_t verify[] = {0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 0};
     const XwdLayout *l = &r->member[0].t.layout;
 
-    return xwr_import((uintptr_t)l->cc_all, cc, sizeof(cc), hq, hty, htylen,
-                      nh, &r->cc) &&
-           (r->mode != 2 || xwr_import((uintptr_t)l->verify, verify,
-                sizeof(verify), hq, hty, htylen, nh, &r->verify));
+    static const uint8_t one[] = {0x60, 1, 0x7f, 0};
+    static const uint8_t two[] = {0x60, 2, 0x7f, 0x7f, 0};
+    static const uint8_t five[] = {0x60, 5, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0};
+    static const uint8_t observe[] = {0x60, 6, 0x7f, 0x7f, 0x7f, 0x7f,
+                                    0x7f, 0x7e, 0};
+    static const uint8_t none[] = {0x60, 0, 0};
+    if (!xwr_import((uintptr_t)l->cc_all, cc, sizeof(cc), hq, hty, htylen,
+                     nh, &r->cc) ||
+        (r->mode == 2 && !xwr_import((uintptr_t)l->verify, verify,
+                sizeof(verify), hq, hty, htylen, nh, &r->verify))) {
+        return false;
+    }
+    if (!r->memory_members) {
+        return true;
+    }
+#define XWR_MEM_IMPORT(fn, ty, field) \
+    xwr_import((uintptr_t)wasm32_direct_mem_##fn, ty, sizeof(ty), \
+               hq, hty, htylen, nh, &r->field)
+    if (r->mode == 1) {
+        return XWR_MEM_IMPORT(miss, one, mem_miss);
+    }
+    return XWR_MEM_IMPORT(begin, two, mem_begin) &&
+           XWR_MEM_IMPORT(observe, observe, mem_observe) &&
+           XWR_MEM_IMPORT(load, cc, mem_load) &&
+           XWR_MEM_IMPORT(store, five, mem_store) &&
+           XWR_MEM_IMPORT(end, one, mem_end) &&
+           XWR_MEM_IMPORT(cancel, none, mem_cancel);
+#undef XWR_MEM_IMPORT
 }
 
 static XwdEmitter xwr_emitter(XwdCode *code, XwdRegion *r, unsigned i)
@@ -139,7 +225,8 @@ static XwdEmitter xwr_emitter(XwdCode *code, XwdRegion *r, unsigned i)
     *code = (XwdCode){.valid = true};
     return (XwdEmitter){.code = code, .layout = &r->member[i].t.layout,
         .cc_helper = r->cc, .resident = true, .valid = 0xff,
-        .local_bias = REGION_INST_LOCAL};
+        .local_bias = REGION_INST_LOCAL,
+        .mem = r->member[i].plan.accesses ? &r->member[i].hooks : NULL};
 }
 
 static void xwr_raw_local(XwdEmitter *e, unsigned op, unsigned index)
@@ -174,10 +261,25 @@ static bool xwr_flush(ByteBuf *b, XwdEmitter *e)
     return true;
 }
 
+#include "wasm32-direct-memory-region.c.inc"
+
 static bool xwr_init(ByteBuf *b, XwdRegion *r)
 {
     XwdCode code;
     XwdEmitter e = xwr_emitter(&code, r, 0);
+    if (r->memory_members && r->mode == 2) {
+        xwd_local(&e, 0x20, 0);
+        xwd_mem(&e, 0x28, WASM_CTX_DO_INIT_OFF);
+        xwd_byte(&e, 0x04); xwd_byte(&e, 0x40);
+        xwd_bank_init(&e);
+        xwd_byte(&e, 0x05);
+        /* Original B resumes normally, but this lost-bank invocation is
+         * explicitly unverified. Do not fabricate a new expected prefix.
+         */
+        xwd_byte(&e, 0x10); xwd_uleb(&e, r->mem_cancel);
+        xwd_byte(&e, 0x0b);
+        return xwr_flush(b, &e);
+    }
     /* Register-only admitted reference paths cannot suspend. Reject misuse,
      * rather than reinitialize a lost expected bank during an unproven rewind.
      */
@@ -194,11 +296,24 @@ static bool xwr_shadow_begin(ByteBuf *b, XwdRegion *r, unsigned i)
 {
     XwdCode code;
     XwdEmitter e = xwr_emitter(&code, r, i);
-    if (!xwd_bank_step(&e, &r->member[i].plan, true)) {
+    const XwdPlan *p = &r->member[i].plan;
+    if (p->accesses) {
+        if (!p->pcrel) {
+            xwd_const(&e, p->pc); xwd_local(&e, 0x21, XD_PC);
+        }
+        xwd_local(&e, 0x20, XD_ENV);
+        if (p->pcrel) {
+            xwd_local(&e, 0x20, XD_ENV);
+            xwd_mem(&e, 0x28, e.layout->eip);
+        } else {
+            xwd_const(&e, r->member[i].t.capture.pc);
+        }
+        xwd_byte(&e, 0x10); xwd_uleb(&e, r->mem_begin);
+    } else if (!xwd_bank_step(&e, p, true)) {
         return false;
     }
     xwd_const(&e, 1);
-    xwd_local(&e, 0x21, XWR_EXTRA_LOCALS);
+    xwd_local(&e, 0x21, r->pending);
     return xwr_flush(b, &e);
 }
 
@@ -211,10 +326,17 @@ static bool xwr_shadow_verify(ByteBuf *b, XwdRegion *r, unsigned i,
     uint32_t scratch = (uintptr_t)&wasm_region_expected;
     unsigned check = XWD_CHECK_PC;
 
-    xwd_local(&e, 0x20, XWR_EXTRA_LOCALS);
+    xwd_local(&e, 0x20, r->pending);
     xwd_byte(&e, 0x04); xwd_byte(&e, 0x40);
     xwd_const(&e, 0);
-    xwd_local(&e, 0x21, XWR_EXTRA_LOCALS);
+    xwd_local(&e, 0x21, r->pending);
+    if (p->accesses) {
+        if (!xwd_bank_step(&e, p, true)) {
+            return false;
+        }
+        xwd_local(&e, 0x20, XD_ENV);
+        xwd_byte(&e, 0x10); xwd_uleb(&e, r->mem_end);
+    }
     xwd_bank_store(&e, true, scratch);
     xwd_const(&e, scratch); xwd_const(&e, 1);
     xwd_mem(&e, 0x36, offsetof(XwdState, pending));

@@ -30,6 +30,7 @@
 #include "wasm32.h"
 #include "exec/translation-block.h"
 #include "system/memory.h"
+#include "wasm32-direct-memory-runtime.c.inc"
 
 /*
  * Adaptive JIT threshold: a TB runs in the interpreter until it has run
@@ -1057,7 +1058,7 @@ rebuild_group:
     bool tlb_hint = wasm32_tlb_hint_enabled();
     bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
     bb_u8(&code, (region_shared ? 2 : 1) + (tlb_hint ? 2 : 0) +
-                  (direct ? XWR_EXTRA_LOCALS : 0));
+                  (direct ? direct->locals : 0));
     bb_u8(&code, 0x7f);
     unsigned code_start = code.len;
     if (region_shared) {
@@ -1114,6 +1115,11 @@ rebuild_group:
                 direct_ok &= xwr_shadow_begin(&code, direct, i);
             } else if (direct && rl->kind == WASM_RELOC_DIRECT_VERIFY) {
                 direct_ok &= xwr_shadow_verify(&code, direct, i, rl->arg);
+            } else if (direct && (rl->kind == WASM_RELOC_MEM_BEGIN ||
+                                  rl->kind == WASM_RELOC_MEM_RESUME ||
+                                  rl->kind == WASM_RELOC_MEM_END)) {
+                direct_ok &= xwr_observation(&code, direct, i, rl->arg,
+                                              rl->kind);
             } else if (rl->kind == WASM_RELOC_CALL) {
                 uint32_t idx = REGION_HELPER_START + map[i][rl->arg];
                 for (int k = 0; k < 5; k++) {
@@ -1274,6 +1280,10 @@ rebuild_group:
     if (direct) {
         XSTAT_INC(n_direct_region_build);
         XSTAT_ADD(n_direct_region_members, n);
+        if (direct->memory_members) {
+            XSTAT_INC(n_direct_memory_build);
+            XSTAT_ADD(n_direct_memory_members, direct->memory_members);
+        }
         XSTAT_ADD(n_direct_build, n);
         for (int i = 0; i < n; i++) {
             XSTAT_ADD(n_direct_flags_build, direct->member[i].plan.needs_flags);
