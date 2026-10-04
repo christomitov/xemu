@@ -51,6 +51,8 @@ typedef struct XwdInsn {
      * MOV [m] writes it; PUSH/POP access [ESP-4]/[ESP] (no ModRM).
      */
     bool mem, mem_store;
+    /* read-modify-write: load [m], operate, store [m] (two accesses) */
+    bool mem_rmw;
     uint8_t mem_width;
     uint32_t disp;
 } XwdInsn;

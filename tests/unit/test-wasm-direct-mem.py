@@ -62,6 +62,10 @@ static void mark(XwdEmitter *e, uint32_t flag, uint32_t load, uint32_t store,
  xwd_const(e, addr); xwd_local(e, 0x20, al); xwd_memop(e, 0x36, 2, 0);
  if (a->store) {
   xwd_const(e, store); xwd_local(e, 0x20, vl); xwd_memop(e, 0x36, 2, 0);
+  /* the lazy-CC packet must still be untouched when a store can miss */
+  xwd_const(e, flag + 40); xwd_local(e, 0x20, XD_DST); xwd_memop(e, 0x36, 2, 0);
+  xwd_const(e, flag + 44); xwd_local(e, 0x20, XD_SRC); xwd_memop(e, 0x36, 2, 0);
+  xwd_const(e, flag + 48); xwd_local(e, 0x20, XD_SRC2); xwd_memop(e, 0x36, 2, 0);
  } else {
   xwd_const(e, load); xwd_memop(e, 0x28, 2, 0); xwd_local(e, 0x21, vl);
  }
@@ -161,6 +165,38 @@ for(const c of d.cases){
    assert.equal(mm[verify].exports.start(128),0,c.hex);
    const got=state(verify?8192:M.ENV);
    const fast=mode==='hit' && !t.cross;
+   if(c.kind==='rmw'){
+    // reference: the register form with the old memory value in X
+    const old=fast?(()=>{let x=0;for(let i=0;i<c.width/8;i++)x|=t.page[t.addr-M.PAGE+i]<<(8*i);return x>>>0;})():t.slow>>>0;
+    const after=bytes.slice();
+    const hb=verify?M.SHADOW:M.SLOW;
+    const hookFlag=v.getUint32(hb,true), hookStore=v.getUint32(hb+8,true);
+    const pkt=[40,44,48].map(o=>v.getUint32(hb+o,true));
+    const regs=t.regs.slice();regs[t.x]=old;
+    setup(t,regs);tlb(M.PAGE,M.PAGE);
+    assert.equal(rm[verify].exports.start(128),0);
+    const want=state(verify?8192:M.ENV);
+    const wm=c.width===32?0xffffffff:(1<<c.width)-1;
+    const newv=(want.r[t.x]&wm)>>>0;
+    for(let i=0;i<8;i++)if(i!==t.x)
+     assert.equal(got.r[i],want.r[i],'rmw GPR '+i+' '+mode+' '+c.hex);
+    assert.equal(got.r[t.x],t.regs[t.x],'rmw spare '+c.hex);
+    assert.equal(got.cc,want.cc,'rmw flags '+mode+' '+c.hex);
+    const off=t.addr-M.PAGE,w=c.width/8;
+    if(fast){
+     let st=0;for(let i=0;i<w;i++)st|=after[M.HOST+off+i]<<(8*i);
+     assert.equal((st&wm)>>>0,newv,'rmw stored '+c.hex);
+     for(let i=0;i<4096;i++)if(i<off||i>=off+w)
+      assert.equal(after[M.HOST+i],before[M.HOST+i],'rmw page '+c.hex);
+    }else{
+     assert.equal(hookFlag,2,'rmw: both accesses via hook '+c.hex);
+     assert.deepEqual(pkt,[0,0,0],'rmw: CC packet changed before the store '+c.hex);
+     assert.equal((hookStore&wm)>>>0,newv,'rmw hook store '+c.hex);
+     for(let i=0;i<4096;i++)assert.equal(after[M.HOST+i],before[M.HOST+i]);
+    }
+    assert.equal(got.eip,(0x40000000+c.len)>>>0);
+    probes++;continue;
+   }
    if(c.kind==='pushm'){
     // two accesses: load [m] (old ESP), store to [ESP-4]; ESP -= 4
     const r=t.regs.slice();r[4]=(r[4]-4)>>>0;
@@ -297,9 +333,9 @@ def forms():
 
 
 DECLINE = [
-    '0118',          # ADD [eax], ebx (read-modify-write)
-    '830001',        # ADD dword [eax], 1
-    'ff00',          # INC dword [eax]
+    'd100',          # ROL dword [eax], 1 (memory shift)
+    'c12001',        # SHL dword [eax], 1
+    'ff10',          # CALL [eax] (indirect)
     '0f4400',        # CMOVZ eax, [eax]
     '0f9400',        # SETZ [eax]
     '648b00',        # MOV eax, fs:[eax]
@@ -308,7 +344,7 @@ DECLINE = [
     '8700',          # XCHG [eax], eax
     'f600ff',        # TEST... ok (allowed) -> replaced below
 ]
-DECLINE = DECLINE[:-1] + ['f61000']   # NOT byte [eax]
+DECLINE = DECLINE[:-1] + ['f63000']   # DIV byte [eax]
 
 
 def main():
@@ -379,6 +415,45 @@ def main():
                          mem=bytes([(0x50 if push else 0x58) + n]).hex(),
                          reg=None, regs=regs, addr=addr, x=0, dst=n,
                          cross=False, store=push, value=value))
+    # read-modify-write [m]: ALU [m],r; ALU [m],imm; INC/DEC; NOT/NEG
+    rmw = []
+    for g in range(7):
+        rmw.append((32, bytes([g << 3 | 1]), g, False, 0, lambda r, x, g=g:
+                    bytes([g << 3 | 1, 0xc0 | r << 3 | x])))
+        rmw.append((8, bytes([g << 3 | 0]), g, False, 0, lambda r, x, g=g:
+                    bytes([g << 3 | 0, 0xc0 | r << 3 | x])))
+        for b, imm, w in [(0x83, 1, 32), (0x81, 4, 32), (0x80, 1, 8)]:
+            rmw.append((w, bytes([b]), g, True, imm, lambda r, x, b=b, g=g:
+                        bytes([b, 0xc0 | g << 3 | x])))
+    for b, w in [(0xff, 32), (0xfe, 8)]:
+        for g in (0, 1):
+            rmw.append((w, bytes([b]), g, True, 0, lambda r, x, b=b, g=g:
+                        bytes([b, 0xc0 | g << 3 | x])))
+    for b, w in [(0xf7, 32), (0xf6, 8)]:
+        for g in (2, 3):
+            rmw.append((w, bytes([b]), g, True, 0, lambda r, x, b=b, g=g:
+                        bytes([b, 0xc0 | g << 3 | x])))
+    for w, op, g, fixed, imm, regf in rmw:
+        for t in range(max(2, args.tests // 3)):
+            x = rng.choice([0, 1, 2, 3])
+            pool = [n for n in range(8) if n not in (x, 4)]
+            r, b = rng.sample(pool, 2)
+            if w == 8 and (r & 3) == x:
+                r = rng.choice([n for n in range(8) if n not in (b, 4, x)
+                                and (n & 3) != x])
+            regs = [rng.getrandbits(32) for _ in range(8)]
+            regs[4] = PAGE + 0x800
+            addr = PAGE + rng.randrange(4096 - 4)
+            disp = rng.randrange(-0x400, 0x400)
+            regs[b] = (addr - disp) & 0xffffffff
+            m = modrm_mem(g if fixed else r, b, None, 0, disp)
+            immb = rng.getrandbits(8 * imm).to_bytes(imm, 'little') if imm \
+                else b''
+            meta.append(dict(name='rmw', kind='rmw', width=w,
+                             mem=(op + m + immb).hex(),
+                             reg=(regf(r, x) + immb).hex(), regs=regs,
+                             addr=addr, x=x, dst=r, cross=False, store=False,
+                             value=0))
     # PUSH [m]: [base + disp], source inside the page, stack elsewhere in it
     for t in range(args.tests * 2):
         regs = [rng.getrandbits(32) for _ in range(8)]
@@ -491,8 +566,8 @@ def main():
             if item['kind'] == 'decline':
                 assert not ok, 'must decline: ' + item['mem']
                 continue
-            assert ok and accesses == (2 if item['kind'] == 'pushm' else 1), \
-                item['name']
+            assert ok and accesses == (2 if item['kind'] in ('pushm', 'rmw')
+                                       else 1), item['name']
             assert store == item['store'] and width == item['width'], item
             admitted += 1
             page = [rng.getrandbits(8) for _ in range(4096)]
@@ -525,7 +600,9 @@ def main():
         (tmp/'run.cjs').write_text(JS)
         res = subprocess.run([*shlex.split(os.environ.get('NODE', 'node')),
                               str(tmp/'run.cjs'), str(tmp/'cases.json')],
-                             check=True, capture_output=True, text=True)
+                             capture_output=True, text=True)
+        if res.returncode:
+            raise SystemExit(res.stderr[-2500:])
         print(res.stdout.strip())
         print(f'PASS: {admitted} memory forms admitted, {len(DECLINE)} '
               f'declined; register-only decode rejects all memory forms')
