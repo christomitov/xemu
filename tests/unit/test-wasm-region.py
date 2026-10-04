@@ -49,6 +49,9 @@ typedef struct CPUArchState CPUArchState;
 #define QEMU_BUILD_BUG_ON(c) _Static_assert(!(c), #c)
 #include "tcg/wasm32.h"
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define g_new0(type, count) ((type *)calloc(count, sizeof(type)))
+#define tcg_splitwx_to_rx(p) ((void *)(p))
+#define TB_EXIT_REQUESTED 3
 #define g_realloc realloc
 #define g_free free
 #define g_assert assert
@@ -66,6 +69,12 @@ static struct {
     uint64_t n_tb_exec, n_tb_region, n_tci_dropped, n_jit_evict;
     uint64_t n_region_shared, n_region_aliases, n_region_cap;
     uint64_t n_region_bytes_max, n_region_cfg_max, n_region_depth_max;
+    uint64_t n_direct_region_build, n_direct_region_members, n_direct_build;
+    uint64_t n_direct_flags_build, n_direct_jcc_build, n_direct_exec;
+    uint64_t n_jit_exit_direct, n_jit_exit_chain0, n_jit_exit_chain1;
+    uint64_t n_jit_exit_requested, n_tb_selfloop;
+    uint64_t n_direct_checked, n_direct_flags_checked, n_direct_jcc_checked;
+    uint64_t n_direct_region_checked, n_direct_mismatch;
 } xemu_wasm_stats;
 #define MAX_INSTANCES 16
 static WasmInstance instances[MAX_INSTANCES];
@@ -76,6 +85,7 @@ static bool direct_metadata;
 static double jit_debt_ms;
 int wasm32_jit_threshold = 64;
 bool wasm32_ic_enabled(void) { return false; }
+bool wasm32_ic_for_exit(bool indirect) { return false; }
 static void jit_budget_update(double now) { (void)now; }
 #define TB_JMP_OFFSET_INVALID UINT16_MAX
 typedef struct TranslationBlock {
@@ -291,13 +301,16 @@ def main():
     policy = re.search(r'static inline bool xemu_wasm_tb_stats_enabled\(void\)'
                        r'.*?\n}', stats, re.S).group()
     code = (PREFIX + policy + "\n" + defines + "\n" +
-            "\n".join(function(n) for n in names) + SUFFIX)
+            "\n".join(function(n) for n in names if n != 'compile_region') +
+            '\n#include "tcg/wasm32-direct-region.c.inc"\n' +
+            function('compile_region') + SUFFIX)
     with tempfile.TemporaryDirectory(prefix="test-wasm-region-") as tmp:
         src = Path(tmp) / "test.c"
         out = Path(tmp) / "test.js"
         src.write_text(code)
         subprocess.run([*shlex.split(os.environ.get("CC", "emcc")), "-O1",
-                        "-I", str(ROOT), "-pthread", "-sENVIRONMENT=node",
+                        "-I", str(ROOT), "-I", str(ROOT/'include'),
+                        "-pthread", "-sENVIRONMENT=node",
                         "-sINITIAL_MEMORY=32MB", "-sALLOW_TABLE_GROWTH=1",
                         "-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction",
                         "-sEXIT_RUNTIME=1", str(src), "-o", str(out)],

@@ -170,7 +170,10 @@
     X(n_direct_flags_build)                                             \
     X(n_direct_flags_checked)                                           \
     X(n_direct_jcc_build)                                               \
-    X(n_direct_jcc_checked)
+    X(n_direct_jcc_checked)                                             \
+    X(n_direct_region_build)                                            \
+    X(n_direct_region_members)                                          \
+    X(n_direct_region_checked)
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;

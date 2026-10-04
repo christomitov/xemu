@@ -5,7 +5,8 @@
  * Function words are main-module Wasm table indices, never guest addresses.
  * Include after wasm32-direct.c.inc; native fixtures use synthetic indices.
  */
-#define XWD_BLUEPRINT_VERSION 1u
+/* Version2 certifies that all resumable sites have DIRECT_SUSPEND relocs. */
+#define XWD_BLUEPRINT_VERSION 2u
 #define XWD_BLUEPRINT_NAME "xemu.direct-region"
 
 #define XWD_LAYOUT_SCALARS(F) \

@@ -1299,6 +1299,9 @@ static void wasm_new_block(TCGContext *s)
  */
 static void wasm_new_resumable_block(TCGContext *s)
 {
+    if (wasm_direct_blueprint) {
+        wasm_add_reloc(WASM_RELOC_DIRECT_SUSPEND, 0, 0);
+    }
     wasm_i64_const(s, block_idx + 1);
     wasm_var(s, W_LOCAL_SET, LBLOCK);
     wasm_new_block(s);

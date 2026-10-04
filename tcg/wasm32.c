@@ -834,7 +834,8 @@ static void region_guard(ByteBuf *b, WasmTBHeader *t_hdr, int t, int br_depth)
  * our function ID AND its indexed member pointer matches. The latter rejects
  * old header aliases after eviction/slot reuse. No linear search on hot rets.
  */
-static void region_shared_guard(ByteBuf *b, int n, int br_depth)
+static void region_shared_guard(ByteBuf *b, int n, int br_depth,
+                                bool count_self)
 {
     bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
     bb_u8(b, 0x04); bb_u8(b, 0x40);              /* target != NULL */
@@ -863,6 +864,18 @@ static void region_shared_guard(ByteBuf *b, int n, int br_depth)
     bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
     bb_u8(b, 0x46);
     bb_u8(b, 0x04); bb_u8(b, 0x40);              /* live member slot */
+    if (count_self) {
+        bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
+        bb_u8(b, 0x20); bb_u8(b, 0);
+        bb_u8(b, 0x28); bb_u8(b, 2); bb_uleb(b, WASM_CTX_TB_PTR_OFF);
+        bb_u8(b, 0x46); bb_u8(b, 0x04); bb_u8(b, 0x40);
+        bb_count(b, &xemu_wasm_stats.n_tb_selfloop);
+        bb_u8(b, 0x05);
+        bb_count(b, &xemu_wasm_stats.n_tb_region);
+        bb_u8(b, 0x0b);
+    } else {
+        bb_count(b, &xemu_wasm_stats.n_tb_region);
+    }
     bb_u8(b, 0x20); bb_u8(b, 0);
     bb_u8(b, 0x20); bb_uleb(b, REGION_L32_0);
     bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_TB_PTR_OFF);
@@ -870,7 +883,6 @@ static void region_shared_guard(ByteBuf *b, int n, int br_depth)
     bb_u8(b, 0x41); bb_u8(b, 1);
     bb_u8(b, 0x36); bb_u8(b, 2); bb_uleb(b, WASM_CTX_DO_INIT_OFF);
     bb_count(b, &xemu_wasm_stats.n_tb_exec);
-    bb_count(b, &xemu_wasm_stats.n_tb_region);
     bb_u8(b, 0x0c); bb_uleb(b, br_depth + 5);
     for (int i = 0; i < 5; i++) {
         bb_u8(b, 0x0b);
@@ -878,6 +890,8 @@ static void region_shared_guard(ByteBuf *b, int n, int br_depth)
 }
 
 /* Compile @h as a region with its hot chained successors; 0 if not worth it. */
+#include "wasm32-direct-region.c.inc"
+
 static int compile_region(WasmTBHeader *h)
 {
     WasmTBHeader *m[REGION_MAX];
@@ -890,6 +904,8 @@ static int compile_region(WasmTBHeader *h)
     ByteBuf mod = { 0 }, sec = { 0 }, code = { 0 }, hints = { 0 };
     int nhints = 0;
     int fidx;
+    XwdRegion *direct = NULL;
+    bool try_direct = true, direct_ok = true;
 
     double t_start = emscripten_get_now();
     uint32_t bytes = h->body_len + h->body_b_len;
@@ -929,6 +945,10 @@ static int compile_region(WasmTBHeader *h)
         return 0;
     }
 
+    /* Retry exactly this selected group, never a smaller direct subcluster. */
+rebuild_group:
+    nh = nhints = ic_count = 0;
+    direct_ok = true;
     /* per member: its helper k -> union index */
     uint8_t map[REGION_MAX][256];
     for (int i = 0; i < n; i++) {
@@ -958,6 +978,15 @@ static int compile_region(WasmTBHeader *h)
         }
     }
 
+    if (try_direct) {
+        int legacy_nh = nh;
+        direct = xwr_prepare(m, n);
+        if (direct && !xwr_imports(direct, hq, hty, htylen, &nh)) {
+            g_free(direct);
+            direct = NULL;
+            nh = legacy_nh;
+        }
+    }
     bb_bytes(&mod, "\0asm\x01\0\0\0", 8);
     /* types: TB function, helper.u, chain.call, helpers */
     bb_uleb(&sec, 3 + nh);
@@ -1027,7 +1056,8 @@ static int compile_region(WasmTBHeader *h)
     /* the function: TB locals + cur (+ ownership scratch for shared groups) */
     bool tlb_hint = wasm32_tlb_hint_enabled();
     bb_bytes(&code, "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e", 9);
-    bb_u8(&code, (region_shared ? 2 : 1) + (tlb_hint ? 2 : 0));
+    bb_u8(&code, (region_shared ? 2 : 1) + (tlb_hint ? 2 : 0) +
+                  (direct ? XWR_EXTRA_LOCALS : 0));
     bb_u8(&code, 0x7f);
     unsigned code_start = code.len;
     if (region_shared) {
@@ -1052,6 +1082,9 @@ static int compile_region(WasmTBHeader *h)
         bb_u8(&code, 0x21); bb_uleb(&code, REGION_CUR_LOCAL);
         bb_u8(&code, 0x0b);
     }
+    if (direct) {
+        direct_ok &= xwr_init(&code, direct);
+    }
     bb_u8(&code, 0x03); bb_u8(&code, 0x40);         /* loop top */
     for (int j = 0; j < n; j++) {
         bb_u8(&code, 0x02); bb_u8(&code, 0x40);     /* block */
@@ -1069,11 +1102,19 @@ static int compile_region(WasmTBHeader *h)
         int top = n - 1 - i;        /* blocks between the body and top */
 
         bb_u8(&code, 0x0b);                         /* end block i */
+        if (direct && direct->mode == 1) {
+            direct_ok &= xwr_active_member(&code, direct, i, top);
+            continue;
+        }
         for (uint32_t r = 0; r < m[i]->reloc_count; r++) {
             const WasmReloc *rl = &m[i]->reloc_ptr[r];
             bb_bytes(&code, body + pos, rl->off - pos);
             pos = rl->off;
-            if (rl->kind == WASM_RELOC_CALL) {
+            if (direct && rl->kind == WASM_RELOC_DIRECT_BEGIN) {
+                direct_ok &= xwr_shadow_begin(&code, direct, i);
+            } else if (direct && rl->kind == WASM_RELOC_DIRECT_VERIFY) {
+                direct_ok &= xwr_shadow_verify(&code, direct, i, rl->arg);
+            } else if (rl->kind == WASM_RELOC_CALL) {
                 uint32_t idx = REGION_HELPER_START + map[i][rl->arg];
                 for (int k = 0; k < 5; k++) {
                     bb_u8(&code, (idx & 0x7f) | (k < 4 ? 0x80 : 0));
@@ -1111,7 +1152,7 @@ static int compile_region(WasmTBHeader *h)
                 int d = rl->depth + 1 + top;
                 if (rl->arg == 0xff) {
                     if (region_shared) {
-                        region_shared_guard(&code, n, d);
+                        region_shared_guard(&code, n, d, false);
                     } else {
                         for (int t = 0; t < n; t++) {
                             region_guard(&code, m[t], t, d);
@@ -1133,7 +1174,7 @@ static int compile_region(WasmTBHeader *h)
     bb_u8(&code, 0x00);                             /* unreachable */
     bb_u8(&code, 0x0b);                             /* end func */
     if (region_shared &&
-        (code.len > REGION_ENTRY_MAX ||
+        (!direct_ok || code.len > REGION_ENTRY_MAX ||
          !region_cfg(code.p + code_start, code.len - code_start - 1,
                      &score, &max_depth))) {
         XSTAT_INC(n_region_cap);
@@ -1141,6 +1182,13 @@ static int compile_region(WasmTBHeader *h)
         g_free(sec.p);
         g_free(code.p);
         g_free(hints.p);
+        if (direct) {
+            g_free(direct);
+            direct = NULL;
+            mod = sec = code = hints = (ByteBuf){0};
+            try_direct = false;
+            goto rebuild_group;
+        }
         return 0;
     }
     /* members' rewind functions: B bodies with their helper calls remapped */
@@ -1223,6 +1271,16 @@ static int compile_region(WasmTBHeader *h)
     XSTAT_INC(n_jit_compile);
     XSTAT_INC(n_region_compile);
     XSTAT_ADD(n_region_members, n);
+    if (direct) {
+        XSTAT_INC(n_direct_region_build);
+        XSTAT_ADD(n_direct_region_members, n);
+        XSTAT_ADD(n_direct_build, n);
+        for (int i = 0; i < n; i++) {
+            XSTAT_ADD(n_direct_flags_build, direct->member[i].plan.needs_flags);
+            XSTAT_ADD(n_direct_jcc_build, direct->member[i].plan.conditional);
+        }
+        g_free(direct);
+    }
     if (region_shared) {
         XSTAT_INC(n_region_shared);
         XSTAT_ADD(n_region_aliases, n - 1);

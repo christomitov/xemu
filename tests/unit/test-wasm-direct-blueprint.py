@@ -134,7 +134,7 @@ int main(void) {
     t = translation(2, 1); roundtrip(&t, &code);
     /* Independent LE field vector: no native layout/padding assumptions. */
     const uint32_t expected[] = {
-        1, XWD_VERSION, t.capture.pc, 10, 2, 1, 1,
+        XWD_BLUEPRINT_VERSION, XWD_VERSION, t.capture.pc, 10, 2, 1, 1,
         t.capture.pc + 10, 0, 17, 23, 0, 32, 40, 44, 48, 52,
         0xfffffffcu, 0xfffffff8u, CC_OP_EFLAGS, 9000, 0x1111, 0x2222,
         CC_OP_ADDB, CC_OP_ADDW, CC_OP_ADDL,
@@ -151,7 +151,8 @@ int main(void) {
         assert(!memcmp(code.bytes + i * 4, want, 4));
     }
     const struct { unsigned index; uint32_t value; } invalid[] = {
-        {0, 0}, {0, 2}, {1, 0}, {1, XWD_VERSION + 1},
+        {0, 0}, {0, XWD_BLUEPRINT_VERSION + 1}, {1, 0},
+        {1, XWD_VERSION + 1},
         {3, 0}, {3, 513}, {3, UINT32_MAX}, {4, 0}, {4, 65},
         {4, UINT32_MAX}, {5, 4}, {5, UINT32_MAX}, {6, 4},
         {6, UINT32_MAX}, {9, 0}, {10, 0}, {44, 0}, {44, 11},
