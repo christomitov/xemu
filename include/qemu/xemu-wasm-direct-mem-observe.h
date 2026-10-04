@@ -70,7 +70,7 @@ typedef struct XwmoAccess {
 } XwmoAccess;
 
 typedef struct XwmoLog {
-    uint32_t inv;           /* current invocation id; 0 = none yet */
+    uint64_t inv;           /* current invocation id; 0 = none yet */
     uint32_t count;         /* accesses observed this invocation */
     uint32_t cursor;        /* next access the shadow consumes */
     bool active;            /* between begin and end */
@@ -111,11 +111,14 @@ static inline void xwmo_fail(XwmoLog *log, XwmoResult r)
     }
 }
 
-/* Start invocation @inv. Ids must strictly increase (0 is never valid). */
-static inline XwmoResult xwmo_begin(XwmoLog *log, uint32_t inv)
+/*
+ * Start invocation @inv. Ids must strictly increase (0 is never valid), and
+ * the previous invocation must have been closed (xwmo_end): a begin while
+ * one is open is rejected and leaves that one untouched.
+ */
+static inline XwmoResult xwmo_begin(XwmoLog *log, uint64_t inv)
 {
-    if (inv == 0 || inv <= log->inv) {
-        log->active = false;
+    if (log->active || inv == 0 || inv <= log->inv) {
         return XWMO_STALE;
     }
     log->inv = inv;
@@ -127,7 +130,7 @@ static inline XwmoResult xwmo_begin(XwmoLog *log, uint32_t inv)
 }
 
 /* The original completed one access (a load's @value is what it returned). */
-static inline XwmoResult xwmo_observe(XwmoLog *log, uint32_t inv, uint64_t pc,
+static inline XwmoResult xwmo_observe(XwmoLog *log, uint64_t inv, uint64_t pc,
                                       uint64_t addr, uint32_t oi,
                                       XwmoKind kind, uint64_t value)
 {
@@ -150,14 +153,14 @@ static inline XwmoResult xwmo_observe(XwmoLog *log, uint32_t inv, uint64_t pc,
 }
 
 /* The invocation faulted or was cancelled: nothing it did can be verified. */
-static inline void xwmo_cancel(XwmoLog *log, uint32_t inv)
+static inline void xwmo_cancel(XwmoLog *log, uint64_t inv)
 {
     if (log->active && inv == log->inv) {
         log->cancelled = true;
     }
 }
 
-static inline XwmoResult xwmo_take(XwmoLog *log, uint32_t inv, uint64_t pc,
+static inline XwmoResult xwmo_take(XwmoLog *log, uint64_t inv, uint64_t pc,
                                    uint64_t addr, uint32_t oi, XwmoKind kind,
                                    const XwmoAccess **out)
 {
@@ -195,7 +198,7 @@ static inline XwmoResult xwmo_take(XwmoLog *log, uint32_t inv, uint64_t pc,
 }
 
 /* Shadow load: on XWMO_OK, *value is the original's normalized result. */
-static inline XwmoResult xwmo_shadow_load(XwmoLog *log, uint32_t inv,
+static inline XwmoResult xwmo_shadow_load(XwmoLog *log, uint64_t inv,
                                           uint64_t pc, uint64_t addr,
                                           uint32_t oi, uint64_t *value)
 {
@@ -209,7 +212,7 @@ static inline XwmoResult xwmo_shadow_load(XwmoLog *log, uint32_t inv,
 }
 
 /* Shadow store: compares the bits the access writes. */
-static inline XwmoResult xwmo_shadow_store(XwmoLog *log, uint32_t inv,
+static inline XwmoResult xwmo_shadow_store(XwmoLog *log, uint64_t inv,
                                            uint64_t pc, uint64_t addr,
                                            uint32_t oi, uint64_t value)
 {
@@ -227,7 +230,7 @@ static inline XwmoResult xwmo_shadow_store(XwmoLog *log, uint32_t inv,
  * End invocation @inv: the first error, else UNVERIFIED if cancelled, else
  * EXTRA if the original made accesses the shadow never consumed, else OK.
  */
-static inline XwmoResult xwmo_end(XwmoLog *log, uint32_t inv)
+static inline XwmoResult xwmo_end(XwmoLog *log, uint64_t inv)
 {
     XwmoResult r;
 
