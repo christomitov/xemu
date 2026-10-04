@@ -25,6 +25,21 @@
 #include "ui/xemu-settings.h"
 #include "ui/xemu-snapshots.h"
 #include <emscripten.h>
+
+/*
+ * get_clock() (include/qemu/timer.h): performance.timeOrigin +
+ * performance.now(), like emscripten_get_now(), but with this worker's
+ * constant timeOrigin read once instead of on every call. Same value, one
+ * DOM property read less: the guest TSC (rdtsc) and every QEMU timer read
+ * the clock this way, hundreds of thousands of times a second.
+ */
+EM_JS(double, xemu_wasm_now_ms, (void), {
+    var o = globalThis.__xemuTimeOrigin;
+    if (o === undefined) {
+        o = globalThis.__xemuTimeOrigin = performance.timeOrigin;
+    }
+    return o + performance.now();
+});
 #include <emscripten/threading.h>
 #include <emscripten/stack.h>
 

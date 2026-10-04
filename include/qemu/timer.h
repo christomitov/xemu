@@ -856,7 +856,8 @@ static inline int64_t get_clock(void)
     if (coarse) {
         return get_clock_realtime();
     }
-    return (int64_t)(emscripten_get_now() * 1e6);
+    extern double xemu_wasm_now_ms(void);
+    return (int64_t)(xemu_wasm_now_ms() * 1e6);
 #else
     if (use_rt_clock) {
         struct timespec ts;
