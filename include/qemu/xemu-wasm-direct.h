@@ -56,6 +56,12 @@ typedef struct XwdLayout {
     uint32_t phase_ptr, phase_cc, phase_generated;
 } XwdLayout;
 
+#define XWD_CHECK_PC 1u
+#define XWD_CHECK_EDGE 2u
+#define XWD_CHECK_TAKEN 4u
+#define XWD_FEATURE_REGION 4u
+#define XWD_FEATURE_TAKEN 8u
+
 typedef struct XwdState {
     uint32_t regs[8], cc_dst, cc_src, cc_src2, cc_op, eip, pending, features;
 } XwdState;

@@ -24,7 +24,10 @@ static void x86_wasm_direct_verify(void *opaque, XwdState *state,
                                    env->cc_op) ==
              helper_cc_compute_all(state->cc_dst, state->cc_src, state->cc_src2,
                                    state->cc_op);
-    equal &= !check_pc || actual_pc == state->eip;
+    equal &= !(check_pc & XWD_CHECK_PC) || actual_pc == state->eip;
+    equal &= !(check_pc & XWD_CHECK_EDGE) ||
+             !!(state->features & XWD_FEATURE_TAKEN) ==
+             !!(check_pc & XWD_CHECK_TAKEN);
     equal &= env_cpu(env)->neg.can_do_io;
     XSTAT_INC(n_direct_checked);
     if (state->features & 1) {
@@ -32,6 +35,9 @@ static void x86_wasm_direct_verify(void *opaque, XwdState *state,
     }
     if (state->features & 2) {
         XSTAT_INC(n_direct_jcc_checked);
+    }
+    if (state->features & XWD_FEATURE_REGION) {
+        XSTAT_INC(n_direct_region_checked);
     }
     if (!equal) {
         XSTAT_INC(n_direct_mismatch);

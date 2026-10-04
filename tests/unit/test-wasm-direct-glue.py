@@ -38,7 +38,8 @@ typedef struct CPUX86State {
 #define env_cpu(env) (&(env)->cpu)
 static struct { unsigned n_direct_checked,n_direct_mismatch,
  n_direct_flags_checked,n_direct_jcc_checked,n_direct_decline,
- n_direct_build,n_direct_flags_build,n_direct_jcc_build; } stats;
+ n_direct_build,n_direct_flags_build,n_direct_jcc_build,
+ n_direct_region_checked; } stats;
 #define XSTAT_INC(name) (++stats.name)
 ''' + D['frontend_function']('x86_wasm_direct_verify') + r'''
 static void test_verify(unsigned bad) {
@@ -50,8 +51,10 @@ static void test_verify(unsigned bad) {
  if(bad==2)env.cc_src^=1;
  if(bad==3)state.eip^=1;
  if(bad==4)env.cpu.neg.can_do_io=false;
+ if(bad==5)state.features|=XWD_FEATURE_REGION|XWD_FEATURE_TAKEN;
  /* Canonical chosen PC may deliberately differ from stale env->eip. */
- x86_wasm_direct_verify(&env,&state,1,0x12345678);
+ x86_wasm_direct_verify(&env,&state,
+     XWD_CHECK_PC|(bad==5?XWD_CHECK_EDGE:0),0x12345678);
  assert(!bad && !state.pending && stats.n_direct_checked==1 &&
         stats.n_direct_flags_checked==1 && stats.n_direct_jcc_checked==1);
  env.regs[0]=1;env.cpu.neg.can_do_io=false;
@@ -254,7 +257,7 @@ def main():
             '-I'+str(ROOT/'include'), '-I'+str(ROOT), str(src), '-o', str(exe)],
             check=True)
         output = subprocess.check_output([str(exe)])
-        for bad in range(1,5):
+        for bad in range(1,6):
             failed = subprocess.run([str(exe),str(bad)],capture_output=True)
             assert failed.returncode != 0
             assert b'differential mismatch' in failed.stderr
