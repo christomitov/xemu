@@ -173,7 +173,14 @@
     X(n_direct_jcc_checked)                                             \
     X(n_direct_region_build)                                            \
     X(n_direct_region_members)                                          \
-    X(n_direct_region_checked)
+    X(n_direct_region_checked)                                          \
+    X(n_direct_memory_build)                                            \
+    X(n_direct_memory_members)                                          \
+    X(n_direct_memory_observed)                                         \
+    X(n_direct_memory_checked)                                          \
+    X(n_direct_memory_tb_checked)                                       \
+    X(n_direct_memory_unverified)                                       \
+    X(n_direct_memory_miss)
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;

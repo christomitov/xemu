@@ -7147,6 +7147,10 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, uint64_t pc_start)
                 s->gen_insn_data[num_insns * INSN_START_WORDS + i] =
                     tcg_get_insn_start_param(op, i);
             }
+#ifdef CONFIG_TCG_WASM_JIT
+            wasm_direct_memory_insn(num_insns,
+                &s->gen_insn_data[num_insns * INSN_START_WORDS]);
+#endif
             break;
         case INDEX_op_discard:
             temp_dead(s, arg_temp(op->args[0]));

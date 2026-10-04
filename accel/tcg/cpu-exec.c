@@ -33,6 +33,9 @@
 #include "exec/mmap-lock.h"
 #include "exec/translation-block.h"
 #include "tcg/tcg.h"
+#ifdef CONFIG_TCG_WASM_JIT
+#include "tcg/wasm32.h"
+#endif
 #include "qemu/atomic.h"
 #include "qemu/rcu.h"
 #include "exec/log.h"
@@ -1066,6 +1069,9 @@ static int cpu_exec_setjmp(CPUState *cpu, SyncClocks *sc)
     /* Prepare setjmp context for exception handling. */
     if (unlikely(sigsetjmp(cpu->jmp_env, 0) != 0)) {
         XSTAT_INC(n_cpu_exit);
+#ifdef CONFIG_TCG_WASM_JIT
+        wasm32_direct_mem_cancel();
+#endif
         XTBPHASE_SET("dispatch");
 #ifdef EMSCRIPTEN
         {

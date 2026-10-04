@@ -112,7 +112,9 @@ enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3,
         */
        WASM_RELOC_DIRECT_BEGIN = 6, WASM_RELOC_DIRECT_VERIFY = 7,
        /* Reference continuation would need a saved architectural bank. */
-       WASM_RELOC_DIRECT_SUSPEND = 8 };
+       WASM_RELOC_DIRECT_SUSPEND = 8,
+       WASM_RELOC_MEM_BEGIN = 9, WASM_RELOC_MEM_RESUME = 10,
+       WASM_RELOC_MEM_END = 11 };
 #define WASM_TB_LOCALS_LEN 9    /* without the optional TLB hint locals */
 #define WASM_TB_LOCALS "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e"
 #define WASM_TB_HINT_LOCALS "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e\x02\x7f"
@@ -202,6 +204,19 @@ static inline const uint32_t *wasm32_tci_chain(void *next)
     }
     return NULL;
 }
+
+/* Single-original-execution memory verification and canonical miss retry. */
+void wasm32_direct_mem_begin(CPUArchState *env, uint32_t pc);
+void wasm32_direct_mem_observe(CPUArchState *env, uint32_t offset,
+                              uint32_t addr, uint32_t oi, uint32_t store,
+                              uint64_t value);
+uint32_t wasm32_direct_mem_load(CPUArchState *env, uint32_t pc,
+                               uint32_t addr, uint32_t oi);
+void wasm32_direct_mem_store(CPUArchState *env, uint32_t pc, uint32_t addr,
+                            uint32_t oi, uint32_t value);
+void wasm32_direct_mem_end(CPUArchState *env);
+void wasm32_direct_mem_cancel(void);
+void wasm32_direct_mem_miss(CPUArchState *env);
 
 /* The TCI entry point, in tci.c. */
 uintptr_t tci_exec_tb(CPUArchState *env, const void *tci_ptr);

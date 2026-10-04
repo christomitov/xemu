@@ -33,7 +33,9 @@
 #include "../wasm32.h"
 #include "qemu/xemu-wasm-stats.h"
 #include "qemu/xemu-wasm-direct.h"
+#include "qemu/xemu-wasm-direct-memory.h"
 
+static XwdMemoryCapture *wasm_direct_memory;
 static const XwdTranslation *wasm_direct_translation;
 static XwdCode *wasm_direct_code;
 static XwdCode *wasm_direct_blueprint;
@@ -2235,6 +2237,8 @@ static int wasm_ldst_helper_idx(MemOp mop, bool is_ld)
     return idx;
 }
 
+#include "../wasm32-direct-memory-meta.c.inc"
+
 static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
 {
     MemOp mop = get_memop(oi);
@@ -2249,6 +2253,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
         [MO_UQ] = W_I64_LOAD,
     };
 
+    wasm_direct_memory_mark(WASM_RELOC_MEM_BEGIN);
     wasm_jit_phase(s, 2, "jit:ld");
     wasm_tlb_load(s, addr, oi, true);
 
@@ -2266,6 +2271,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
      * locals cleared, which again selects the helper call.
      */
     wasm_new_resumable_block(s);
+    wasm_direct_memory_mark(WASM_RELOC_MEM_RESUME);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
@@ -2281,6 +2287,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_set_r(s, data);
     wasm_handle_unwinding(s);
     wasm8(s, W_END);
+    wasm_direct_memory_mark(WASM_RELOC_MEM_END);
 }
 
 static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
@@ -2294,6 +2301,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
         [MO_64] = W_I64_STORE,
     };
 
+    wasm_direct_memory_mark(WASM_RELOC_MEM_BEGIN);
     wasm_jit_phase(s, 2, "jit:st");
     wasm_tlb_load(s, addr, oi, false);
 
@@ -2306,6 +2314,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_jit_phase(s, 2, NULL);
 
     wasm_new_resumable_block(s);
+    wasm_direct_memory_mark(WASM_RELOC_MEM_RESUME);
     wasm_var(s, W_LOCAL_GET, L32_1);
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
@@ -2325,6 +2334,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm_phase(s, NULL);
     wasm_handle_unwinding(s);
     wasm8(s, W_END);
+    wasm_direct_memory_mark(WASM_RELOC_MEM_END);
 }
 
 static void wasm_exit_tb(TCGContext *s, uintptr_t arg)
@@ -2525,6 +2535,7 @@ static void wasm_goto_tb(TCGContext *s, int which, uintptr_t reset_ptr)
 }
 
 #include "../wasm32-direct-glue.c.inc"
+#include "../wasm32-direct-memory-codec.c.inc"
 
 /*
  * ---------------------------------------------------------------------
@@ -3690,6 +3701,7 @@ static void tgen_qemu_ld(TCGContext *s, TCGType type, TCGReg data,
     } else {
         tcg_out_op_rrm(s, INDEX_op_qemu_ld, data, addr, oi);
     }
+    wasm_direct_memory_site(s, data, addr, oi, false);
     wasm_qemu_ld(s, data, addr, oi);
 }
 
@@ -3712,6 +3724,7 @@ static void tgen_qemu_st(TCGContext *s, TCGType type, TCGReg data,
     } else {
         tcg_out_op_rrm(s, INDEX_op_qemu_st, data, addr, oi);
     }
+    wasm_direct_memory_site(s, data, addr, oi, true);
     wasm_qemu_st(s, data, addr, oi);
 }
 
@@ -4786,6 +4799,7 @@ static void tcg_out_tb_start(TCGContext *s)
     wasm_direct_translation = NULL;
     wasm_direct_code = NULL;
     wasm_direct_blueprint = NULL;
+    wasm_direct_memory = NULL;
     code_buf_root = code_buf_cur = new_linked_buf();
     types_buf_root = types_buf_cur = new_linked_buf();
     label_info = NULL;
@@ -5335,6 +5349,15 @@ static int tcg_out_tb_end(TCGContext *s)
         mod_bytes(&w, wasm_direct_blueprint->bytes,
                   wasm_direct_blueprint->size);
         mod_section_end(&w, sec);
+        if (wasm_direct_memory && wasm_direct_memory->valid) {
+            XwdCode *memory = tcg_malloc(sizeof(*memory));
+            if (xwd_memory_write(wasm_direct_memory, memory)) {
+                sec = mod_section_begin(&w, 0);
+                mod_name(&w, XWD_MEMORY_NAME);
+                mod_bytes(&w, memory->bytes, memory->size);
+                mod_section_end(&w, sec);
+            }
+        }
     }
     if (wasm_direct_code) {
         sec = mod_section_begin(&w, 0);
