@@ -153,7 +153,10 @@ def main():
                         for profile in [0, 4, 6]:
                             configs.append(('1', None, profile, hint,
                                             sz | atom | align, mmu, 0, True))
-    for mode in [None, '', '0', 'invalid']:
+    # unset = default on; any explicit value other than '1' disables
+    configs.append((None, None, 0, 0, 2, 0, 0, True))
+    configs.append((None, '1234', 0, 0, 2, 0, 0, False))
+    for mode in ['', '0', 'invalid']:
         configs.append((mode, None, 0, 0, 2, 0, 0, False))
     for dump in ['', '0', '1234']:
         configs.append(('1', dump, 0, 0, 2, 0, 0, False))

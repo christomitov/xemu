@@ -1947,8 +1947,12 @@ static bool wasm_notdirty_inline(TCGContext *s, MemOpIdx oi)
     int idx;
 
     if (enabled < 0) {
+        /*
+         * Default on (Mac A/B Oct 4: GR +1.6/+2.2 fps, SC/R6 neutral);
+         * any explicit value other than "1" (e.g. =0) disables it.
+         */
         const char *e = getenv("XEMU_WASM_NOTDIRTY_INLINE");
-        enabled = e && *e == '1' && !getenv("XEMU_WASM_SMC_DUMP");
+        enabled = (!e || *e == '1') && !getenv("XEMU_WASM_SMC_DUMP");
     }
     if (!enabled || (s->gen_tb->cflags & CF_PARALLEL) ||
         (mop & MO_SIZE) > MO_32 ||
