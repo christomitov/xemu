@@ -311,12 +311,17 @@ enum {
     XD_ENV = 1, XD_REG = 2, XD_DST = 10, XD_SRC = 11,
     XD_LEFT = 12, XD_RIGHT = 13, XD_RESULT = 14, XD_TMP = 15,
     XD_SRC2 = 16, XD_FLAGS = 17, XD_DELTA = 18,
+    /* Region-only architectural packet and selected edge. */
+    XD_CC_OP = 19, XD_PC = 20, XD_TAKEN = 21,
 };
 typedef struct XwdEmitter {
     XwdCode *code;
     const XwdLayout *layout;
     uint8_t valid, dirty;
     bool flags_dirty, flags_cached, src2_dirty;
+    bool resident;
+    /* ctx stays at zero; private locals may be relocated. */
+    unsigned local_bias;
     uint32_t cc, cc_helper;
 } XwdEmitter;
 
@@ -356,7 +361,7 @@ static void xwd_const(XwdEmitter *e, uint32_t value)
 static void xwd_local(XwdEmitter *e, uint8_t op, unsigned n)
 {
     xwd_byte(e, op);
-    xwd_uleb(e, n);
+    xwd_uleb(e, n ? n + e->local_bias : 0);
 }
 
 static void xwd_mem(XwdEmitter *e, uint8_t op, unsigned off)
@@ -449,7 +454,7 @@ static void xwd_flags(XwdEmitter *e)
 {
     const XwdLayout *l = e->layout;
     const uint32_t off[] = { l->cc_dst, l->cc_src, l->cc_src2, l->cc_op };
-    const unsigned local[] = { XD_DST, XD_SRC, XD_SRC2 };
+    const unsigned local[] = { XD_DST, XD_SRC, XD_SRC2, XD_CC_OP };
 
     if (e->flags_cached) {
         return;
@@ -462,6 +467,8 @@ static void xwd_flags(XwdEmitter *e)
                 xwd_local(e, 0x20, local[n]);
             } else if (e->flags_dirty && n == 3) {
                 xwd_const(e, e->cc);
+            } else if (e->resident) {
+                xwd_local(e, 0x20, local[n]);
             } else {
                 xwd_local(e, 0x20, XD_ENV);
                 xwd_mem(e, 0x28, off[n]);
@@ -510,22 +517,16 @@ static void xwd_condition(XwdEmitter *e, unsigned cond)
     }
 }
 
-static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
-                     uint32_t scratch, uint32_t cc_helper, XwdCode *code)
+/* No function prologue/epilogue: also used by the resident region bank. */
+static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
 {
-    XwdEmitter e = { .code = code, .layout = l, .cc_helper = cc_helper };
+    XwdEmitter e = *out;
+    const XwdLayout *l = e.layout;
 
-    memset(code, 0, sizeof(*code));
     if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS ||
-        (p->needs_flags && cc_helper == UINT32_MAX)) {
+        (p->needs_flags && e.cc_helper == UINT32_MAX)) {
         return false;
     }
-    code->valid = true;
-    /* The body includes its local declaration and final end. */
-    xwd_byte(&e, 1); xwd_byte(&e, XD_DELTA); xwd_byte(&e, 0x7f);
-    xwd_local(&e, 0x20, 0);
-    xwd_mem(&e, 0x28, 0); /* WasmContext.env, unchanged external ABI */
-    xwd_local(&e, 0x21, XD_ENV);
     for (unsigned i = 0; i < p->count; i++) {
         const XwdInsn *o = &p->insn[i];
         unsigned wi = o->width == 8 ? 0 : o->width == 16 ? 1 : 2;
@@ -539,6 +540,10 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
             xwd_const(&e, p->delta);
             xwd_const(&e, p->fall_delta);
             xwd_condition(&e, o->cond);
+            if (e.resident) {
+                /* Equal target PCs do not make Jcc slots interchangeable. */
+                xwd_local(&e, 0x22, XD_TAKEN);
+            }
             xwd_byte(&e, 0x1b);
             xwd_local(&e, 0x21, XD_DELTA);
             continue;
@@ -685,6 +690,30 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
         if (o->op != XWD_CMP && o->op != XWD_TEST) {
             xwd_put(&e, o->dst, o->width);
         }
+    }
+    *out = e;
+    return e.code->valid;
+}
+
+static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
+                     uint32_t scratch, uint32_t cc_helper, XwdCode *code)
+{
+    XwdEmitter e = { .code = code, .layout = l, .cc_helper = cc_helper };
+
+    memset(code, 0, sizeof(*code));
+    if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS ||
+        (p->needs_flags && cc_helper == UINT32_MAX)) {
+        return false;
+    }
+    code->valid = true;
+    /* The body includes its local declaration and final end. */
+    xwd_byte(&e, 1); xwd_byte(&e, XD_DELTA); xwd_byte(&e, 0x7f);
+    xwd_local(&e, 0x20, 0);
+    xwd_mem(&e, 0x28, 0); /* WasmContext.env, unchanged external ABI */
+    xwd_local(&e, 0x21, XD_ENV);
+    if (!xwd_emit_insns(&e, p, verify)) {
+        code->valid = false;
+        return false;
     }
     for (unsigned n = 0; n < 8; n++) {
         if (verify || (e.dirty & (1u << n))) {
