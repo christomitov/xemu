@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Actual-source telemetry gates/emission; --wasm executes emitted snippets.
 
-Not an emulator/rewind test. Unset retains telemetry for rollout. TB_STATS=0
+Not an emulator/rewind test. Unset is lean (same as TB_STATS=0); TB_STATS=1 restores telemetry.
 omits hot counters and defaults phase sampling off; PROFILE=1 restores phases,
 PROFILE=0 removes only phases, and nonzero JIT_PROFILE attribution needs phases.
 Counts below are Wasm opcodes, not native instructions or throughput estimates.
@@ -152,16 +152,17 @@ def main():
     parser.add_argument('--validate', action='store_true',
                         help='validate emitted modules with wasm-validate')
     args = parser.parse_args()
-    cases = [(None, None, None, None, 1, 1),
-             ('1', '1', None, None, 1, 1),
+    cases = [(None, None, None, None, 0, 0),
              ('0', None, None, None, 0, 0),
+             ('1', '1', None, None, 1, 1),
+             ('1', None, None, None, 1, 1),
              ('0', '1', None, None, 0, 1),
              ('1', '0', None, None, 1, 0),
              ('0', '0', '4', None, 0, 1),
              ('0', None, '8', None, 0, 1),
              ('0', None, '0', '1', 0, 0),
-             ('invalid', None, None, None, 1, 1),
-             ('', None, None, None, 1, 1)]
+             ('invalid', None, None, None, 0, 0),
+             ('', None, None, None, 0, 0)]
     text = (PREFIX + function(TCI, 'helper_prof_hit') + CHECK_C +
             function(BACKEND, 'wasm_count') +
             function(BACKEND, 'wasm_count_tb_stat') +
@@ -198,7 +199,7 @@ def main():
             if index == 0:
                 baseline = codes
             elif index == 1:
-                assert codes == baseline, 'unset must retain emitted bytes'
+                assert codes == baseline, 'unset must equal the lean TB_STATS=0 bytes'
             for name, code in codes.items():
                 f = directory/(name+'.wasm')
                 f.write_bytes(module(code))

@@ -165,14 +165,19 @@ typedef struct XemuWasmStats {
 #ifdef EMSCRIPTEN
 extern XemuWasmStats xemu_wasm_stats;
 
-/* Rollout: unset retains legacy telemetry; explicit 0 tests the lean path. */
+/*
+ * Per-TB hot counters and the phase sampler cost 1-2 fps in gameplay (Mac
+ * A/B, Oct 3: SC/GR/R6 all faster without them), so they are off by default.
+ * XEMU_WASM_TB_STATS=1 restores them; XEMU_WASM_PROFILE=1 restores only the
+ * jit/dispatch phase breakdown.
+ */
 static inline bool xemu_wasm_tb_stats_enabled(void)
 {
     static int enabled = -1;
 
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_TB_STATS");
-        enabled = !(e && *e == '0');
+        enabled = e && *e == '1';
     }
     return enabled;
 }
