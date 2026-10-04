@@ -593,7 +593,11 @@ static void wasm_count_tb_stat(TCGContext *s, uint64_t *ctr)
 /* One entry marker survives self-loops, IC tails and copied region bodies. */
 static void wasm_census(TCGContext *s, uint32_t word)
 {
-    tcg_debug_assert(word < (1u << 24));
+    tcg_debug_assert(!(word & ~(XWC_COUNTER_MASK | XWC_SELFLOOP | XWC_NOCOUNT)));
+    if (word & XWC_NOCOUNT) {
+        return;
+    }
+    word &= XWC_COUNTER_MASK;
     tcg_out32(s, INDEX_op_wasm_census | (word << 8));
 #ifdef EMSCRIPTEN
     unsigned buckets[3] = { word & XWC_MASK, 0x40, 0x41 };
@@ -744,7 +748,7 @@ static const char *wasm_helper_phase_name(const TCGHelperInfo *info)
     const char *n = info->name;
 
     if (!n) {
-        return NULL;
+        return xemu_wasm_insn_profile_enabled() ? "helper:unknown" : NULL;
     }
     if (g_str_has_prefix(n, "gvec_")) {
         return "gvec";
@@ -766,6 +770,52 @@ static const char *wasm_helper_phase_name(const TCGHelperInfo *info)
     return n;
 }
 
+static XemuWasmInsnPhase wasm_tb_insn_class = XWIP_UNKNOWN;
+
+/* Final frontend metadata is available before emitting even the prologue. */
+static void wasm_insn_profile_start(TCGContext *s)
+{
+    TCGOp *op;
+
+    wasm_tb_insn_class = XWIP_UNKNOWN;
+    if (!xemu_wasm_insn_profile_enabled()) {
+        return;
+    }
+    QTAILQ_FOREACH(op, &s->ops, link) {
+        if (op->opc == INDEX_op_wasm_census) {
+            uint32_t word = *(const uint32_t *)op->args[0];
+            bool loop = word & XWC_SELFLOOP;
+
+            wasm_tb_insn_class = (word & XWC_ELIGIBLE) ?
+                (loop ? XWIP_ELIGIBLE_LOOP : XWIP_ELIGIBLE) :
+                (loop ? XWIP_OTHER_LOOP : XWIP_OTHER);
+            break;
+        }
+    }
+}
+
+/* Rename generated scopes only; C helpers/slow paths stay separate. */
+static const char *wasm_insn_phase_name(const char *name)
+{
+#ifdef EMSCRIPTEN
+    if (xemu_wasm_insn_profile_enabled()) {
+        bool self_edge = name && !strcmp(name, "spin");
+        XemuWasmInsnPhase c = wasm_tb_insn_class;
+
+        if (!name || self_edge || !strncmp(name, "jit:", 4)) {
+            /* A runtime self-edge can additionally reveal an indirect loop. */
+            if (self_edge && c == XWIP_ELIGIBLE) {
+                c = XWIP_ELIGIBLE_LOOP;
+            } else if (self_edge && c == XWIP_OTHER) {
+                c = XWIP_OTHER_LOOP;
+            }
+            return xemu_wasm_insn_phase_names[c];
+        }
+    }
+#endif
+    return name;
+}
+
 /* publish what the vCPU is doing for the sampling profile (NULL = jit) */
 static void wasm_phase(TCGContext *s, const char *name)
 {
@@ -773,6 +823,7 @@ static void wasm_phase(TCGContext *s, const char *name)
     if (!xemu_wasm_profile_enabled()) {
         return;
     }
+    name = wasm_insn_phase_name(name);
     wasm_i32_const(s, (int32_t)(uintptr_t)&xemu_wasm_phase[XPHASE_VCPU]);
     wasm_i32_const(s, (int32_t)(uintptr_t)name);
     wasm_mem(s, W_I32_STORE, 0);
@@ -4711,6 +4762,7 @@ static void tcg_out_tb_start(TCGContext *s)
 {
     WasmTBHeader *h = (WasmTBHeader *)s->code_buf;
 
+    wasm_insn_profile_start(s);
     code_buf_root = code_buf_cur = new_linked_buf();
     types_buf_root = types_buf_cur = new_linked_buf();
     label_info = NULL;
@@ -4811,7 +4863,7 @@ static void tcg_out_tb_start(TCGContext *s)
     /* Also runs for copied region-member entries and actual B rewinds. */
     wasm_tlb_hint_drop(s);
 
-    /* entering a TB: profile as "jit" (a self loop marks itself "spin") */
+    /* Entering a TB/member or rewind: its own class, or legacy jit/spin. */
     wasm_phase(s, NULL);
 
     /* loop $top; the region blocks and dispatch go here at the TB end */

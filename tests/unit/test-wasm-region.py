@@ -85,7 +85,7 @@ typedef struct TranslationBlock {
 } TranslationBlock;
 static WasmTBHeader headers[8];
 static TranslationBlock tbs[8];
-static uint32_t next_header[8], visits[8];
+static uint32_t next_header[8], visits[8], member_phase;
 static TranslationBlock *tcg_tb_lookup(uintptr_t h) {
     for (int i = 0; i < 8; i++) {
         if (h == (uintptr_t)&headers[i]) { return &tbs[i]; }
@@ -132,6 +132,10 @@ static void fixture(int id, int successor)
         bb_u8(&body, 0x41); bb_sleb(&body, 7);
         bb_u8(&body, 0x21); bb_uleb(&body, WASM_TLB_HINT_MMU_LOCAL);
     }
+    /* Same three-op shape as emitted class entry/rewind phase stores. */
+    bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&member_phase);
+    bb_u8(&body, 0x41); bb_sleb(&body, id + 1);
+    bb_u8(&body, 0x36); bb_u8(&body, 2); bb_u8(&body, 0);
     bb_u8(&body, 0x03); bb_u8(&body, 0x40); /* own TB loop */
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
@@ -188,10 +192,13 @@ int main(int argc, char **argv)
     /* Never recompile a live member. */
     assert(compile_region(&headers[1]) == 0);
     assert(run(1, ab) == 22 && visits[0] == 0 && visits[1] == 1);
+    assert(member_phase == 2);
     next_header[0] = (uintptr_t)&headers[1];
     assert(run(0, ab) == 22 && visits[0] == 1 && visits[1] == 2);
+    assert(member_phase == 2); /* root's phase must not leak into child */
     next_header[0] = (uintptr_t)&headers[2];
     assert(run(0, ab) == 11 && visits[2] == 0); /* foreign region */
+    assert(member_phase == 1);
     WasmInstance *old = headers[0].instance;
     headers[6].instance = old; headers[6].instance_member = 1;
     next_header[0] = (uintptr_t)&headers[6];
@@ -219,6 +226,14 @@ int main(int argc, char **argv)
     assert(get_instance(&headers[1]) == 0);
     next_header[4] = (uintptr_t)&headers[5];
     assert(run(4, ef) == 66);
+    assert(member_phase == 6);
+    /* Exercise real region B-body selection, not actual Asyncify suspension. */
+    next_header[5] = 0;
+    WasmContext rewind = { .tb_ptr = &headers[5], .do_init = 0,
+                          .rewind_func = ef };
+    member_phase = 0;
+    assert(((uint32_t (*)(WasmContext *))(uintptr_t)ef)(&rewind) == 66);
+    assert(member_phase == 6);
     memset(&headers[5], 0, sizeof(headers[5]));
     assert(get_instance(&headers[5]) == 0); /* new header after TB flush */
     unsigned score, depth;

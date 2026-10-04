@@ -154,7 +154,14 @@
     X(n_flip)            /* guest buffer flips (frames) */                   \
     XEMU_WASM_CENSUS_FIELDS(X)                                            \
     X(n_notdirty_inline) /* opt-in: bitmap-miss inline stores admitted */   \
-    X(n_notdirty_inline_miss) /* leaf declines; original helper required */
+    X(n_notdirty_inline_miss) /* leaf declines; original helper required */ \
+    /* INSN_PROFILE: sampler observations, independent of TB counters. */  \
+    X(n_insn_sample_total)                                               \
+    X(n_insn_sample_eligible)                                            \
+    X(n_insn_sample_eligible_loop)                                       \
+    X(n_insn_sample_other)                                               \
+    X(n_insn_sample_other_loop)                                          \
+    X(n_insn_sample_unknown)
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;
@@ -162,8 +169,25 @@ typedef struct XemuWasmStats {
 #undef XEMU_WASM_STATS_DECL
 } XemuWasmStats;
 
+/* Opt-in generated-code time attribution; no extra guest work. */
+static inline bool xemu_wasm_insn_profile_enabled(void)
+{
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_INSN_PROFILE");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 #ifdef EMSCRIPTEN
 extern XemuWasmStats xemu_wasm_stats;
+extern const char *const xemu_wasm_insn_phase_names[XWIP_COUNT];
 
 /*
  * Per-TB hot counters and the phase sampler cost 1-2 fps in gameplay (Mac
@@ -190,7 +214,8 @@ static inline bool xemu_wasm_profile_enabled(void)
     if (enabled < 0) {
         const char *p = getenv("XEMU_WASM_PROFILE");
         const char *j = getenv("XEMU_WASM_JIT_PROFILE");
-        enabled = (j && (atoi(j) & 15)) ||
+        enabled = xemu_wasm_insn_profile_enabled() ||
+                  (j && (atoi(j) & 15)) ||
                   (p ? *p == '1' : xemu_wasm_tb_stats_enabled());
     }
     return enabled;

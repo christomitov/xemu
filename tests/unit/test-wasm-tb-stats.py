@@ -35,6 +35,8 @@ PREFIX = r'''
 #include "qemu/xemu-wasm-stats.h"
 XemuWasmStats xemu_wasm_stats;
 const char *volatile xemu_wasm_phase[2];
+const char *const xemu_wasm_insn_phase_names[XWIP_COUNT] = {0};
+static XemuWasmInsnPhase wasm_tb_insn_class = XWIP_UNKNOWN;
 #define HELPER_PROF_SLOTS 512
 static struct { const char *name; uint64_t calls; } helper_prof[512];
 '''
@@ -166,6 +168,7 @@ def main():
     text = (PREFIX + function(TCI, 'helper_prof_hit') + CHECK_C +
             function(BACKEND, 'wasm_count') +
             function(BACKEND, 'wasm_count_tb_stat') +
+            function(BACKEND, 'wasm_insn_phase_name') +
             function(BACKEND, 'wasm_phase') +
             function(DRIVER, 'bb_count') + MAIN)
     with tempfile.TemporaryDirectory(prefix='wasm-tb-stats-') as tmp:
