@@ -25,20 +25,35 @@ typedef enum XwdOp {
     XWD_NOT, XWD_NEG, XWD_JMP,
     XWD_ADC, XWD_SBB, XWD_INC, XWD_DEC, XWD_CLC, XWD_STC, XWD_CMC,
     XWD_JCC, XWD_CMOV, XWD_SETCC,
+    /* Memory stage (xwd_decode_ex with allow_memory). */
+    XWD_PUSH, XWD_POP,
 } XwdOp;
 
 typedef struct XwdInsn {
     uint32_t imm;
     uint8_t op, width, src_width, dst, src, cond;
     bool immediate;
-    /* LEA only: 0xff means absent, no guest memory access. */
+    /*
+     * LEA and memory operands: 0xff means absent. LEA computes the address
+     * (displacement in imm) without accessing memory; a memory operand
+     * (mem) keeps its displacement in disp so imm stays the immediate.
+     */
     uint8_t base, index, scale;
+    /*
+     * Memory operand (rm side of ModRM): mem_store is the one access's
+     * direction, mem_width its size. MOV/MOVZX/MOVSX/ALU/CMP/TEST read it,
+     * MOV [m] writes it; PUSH/POP access [ESP-4]/[ESP] (no ModRM).
+     */
+    bool mem, mem_store;
+    uint8_t mem_width;
+    uint32_t disp;
 } XwdInsn;
 
 typedef struct XwdPlan {
     uint32_t version, pc, delta, fall_delta;
     uint16_t count;
     bool pcrel, conditional, needs_flags;
+    uint16_t accesses;      /* guest memory accesses (one per mem insn) */
     XwdInsn insn[XWD_MAX_INSNS];
 } XwdPlan;
 
