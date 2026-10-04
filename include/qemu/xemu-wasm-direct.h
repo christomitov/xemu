@@ -3,7 +3,7 @@
 #define QEMU_XEMU_WASM_DIRECT_H
 
 /* Pool-owned translation metadata; never a guest/TB-header pointer cache. */
-#define XWD_VERSION 1
+#define XWD_VERSION 2
 #define XWD_MAX_BYTES 512u
 #define XWD_MAX_INSNS 64u
 #define XWD_MAX_CODE 16384u
@@ -12,6 +12,9 @@ typedef struct XwdCapture {
     uint32_t version, pc;
     uint16_t size, count;
     bool valid, fallthrough, pcrel;
+    /* Original frontend's canonical non-PCREL goto targets for checking. */
+    uint8_t jump_valid;
+    uint32_t jump_pc[2];
     uint16_t end[XWD_MAX_INSNS];
     uint8_t bytes[XWD_MAX_BYTES];
 } XwdCapture;
@@ -20,34 +23,41 @@ typedef enum XwdOp {
     XWD_MOV, XWD_MOVZX, XWD_MOVSX, XWD_XCHG, XWD_LEA, XWD_NOP,
     XWD_ADD, XWD_SUB, XWD_AND, XWD_OR, XWD_XOR, XWD_CMP, XWD_TEST,
     XWD_NOT, XWD_NEG, XWD_JMP,
+    XWD_ADC, XWD_SBB, XWD_INC, XWD_DEC, XWD_CLC, XWD_STC, XWD_CMC,
+    XWD_JCC, XWD_CMOV, XWD_SETCC,
 } XwdOp;
 
 typedef struct XwdInsn {
     uint32_t imm;
-    uint8_t op, width, src_width, dst, src;
+    uint8_t op, width, src_width, dst, src, cond;
     bool immediate;
     /* LEA only: 0xff means absent, no guest memory access. */
     uint8_t base, index, scale;
 } XwdInsn;
 
 typedef struct XwdPlan {
-    uint32_t version, pc, delta;
+    uint32_t version, pc, delta, fall_delta;
     uint16_t count;
-    bool pcrel;
+    bool pcrel, conditional, needs_flags;
     XwdInsn insn[XWD_MAX_INSNS];
 } XwdPlan;
 
 /* Target offsets/constants, supplied by the real x86 frontend. */
 struct XwdState;
 typedef struct XwdLayout {
-    void (*verify)(void *env, struct XwdState *state, uint32_t check_pc);
+    void (*verify)(void *env, struct XwdState *state, uint32_t check_pc,
+                   uint32_t actual_pc);
+    uint32_t (*cc_all)(uint32_t dst, uint32_t src, uint32_t src2, int op);
     uint32_t regs, eip, cc_dst, cc_src, cc_src2, cc_op;
     int32_t can_do_io;
     uint32_t cc_add[3], cc_sub[3], cc_logic[3];
+    uint32_t cc_adc[3], cc_sbb[3], cc_inc[3], cc_dec[3], cc_eflags;
+    /* Optional sampler scope, resolved at code generation; zero disables. */
+    uint32_t phase_ptr, phase_cc, phase_generated;
 } XwdLayout;
 
 typedef struct XwdState {
-    uint32_t regs[8], cc_dst, cc_src, cc_src2, cc_op, eip, pending;
+    uint32_t regs[8], cc_dst, cc_src, cc_src2, cc_op, eip, pending, features;
 } XwdState;
 
 typedef struct XwdTranslation {
@@ -72,6 +82,21 @@ static inline int xemu_wasm_direct_mode(void)
     return mode;
 #else
     return 0;
+#endif
+}
+
+/* Independently gate the carry/condition stage over the register scaffold. */
+static inline bool xemu_wasm_direct_flags_enabled(void)
+{
+#if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_DIRECT_FLAGS");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
 #endif
 }
 

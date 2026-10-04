@@ -38,7 +38,7 @@ static const XwdTranslation *wasm_direct_translation;
 static XwdCode *wasm_direct_code;
 static uint32_t wasm_direct_call_pos;
 static XwdState wasm_direct_expected;
-static void wasm_direct_verify(TCGContext *s, bool pc);
+static void wasm_direct_verify(TCGContext *s, int slot);
 #include "exec/tlb-flags.h"
 
 /* Used for function call generation. */
@@ -2917,7 +2917,7 @@ static void tcg_out_exit_tb(TCGContext *s, uintptr_t arg)
 {
     WASM_CLASS(14);
     tcg_out_op_p(s, INDEX_op_exit_tb, (void *)arg);
-    wasm_direct_verify(s, true);
+    wasm_direct_verify(s, -1);
     wasm_exit_tb(s, arg);
 }
 
@@ -2927,8 +2927,7 @@ static void tcg_out_goto_tb(TCGContext *s, int which)
     /* indirect jump method. */
     tcg_out_op_p(s, INDEX_op_goto_tb, (void *)get_jmp_target_addr(s, which));
     set_jmp_reset_offset(s, which);
-    wasm_direct_verify(s, wasm_direct_translation &&
-                       wasm_direct_translation->capture.pcrel);
+    wasm_direct_verify(s, which);
     wasm_goto_tb(s, which, (uintptr_t)s->code_ptr);
 }
 
@@ -2936,7 +2935,7 @@ static void tcg_out_goto_ptr(TCGContext *s, TCGReg a0)
 {
     WASM_CLASS(12);
     tcg_out_op_r(s, INDEX_op_goto_ptr, a0);
-    wasm_direct_verify(s, true);
+    wasm_direct_verify(s, -1);
     wasm_goto_ptr(s, a0);
 }
 

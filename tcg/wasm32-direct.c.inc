@@ -42,6 +42,12 @@ static bool xwd_alu(unsigned group, XwdInsn *o)
     case 1:
         o->op = XWD_OR;
         break;
+    case 2:
+        o->op = XWD_ADC;
+        break;
+    case 3:
+        o->op = XWD_SBB;
+        break;
     case 4:
         o->op = XWD_AND;
         break;
@@ -55,7 +61,7 @@ static bool xwd_alu(unsigned group, XwdInsn *o)
         o->op = XWD_CMP;
         break;
     default:
-        return false; /* ADC/SBB need incoming carry: later slice. */
+        return false;
     }
     return true;
 }
@@ -104,7 +110,7 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
     p->pc = c->pc;
     p->pcrel = c->pcrel;
     p->count = c->count;
-    p->delta = c->size;
+    p->delta = p->fall_delta = c->size;
     for (unsigned i = 0; i < c->count; i++) {
         XwdInsn *o = &p->insn[i];
         XwdReader r = { .bytes = c->bytes, .pos = start,
@@ -215,14 +221,54 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
             }
         } else if (b == 0x0f) {
             b = xwd_read(&r, 1);
-            if ((b != 0xb6 && b != 0xb7 && b != 0xbe && b != 0xbf) ||
-                !xwd_modrm(&r, &reg, &rm)) {
+            if (b >= 0x80 && b <= 0x8f && !prefix) {
+                o->op = XWD_JCC;
+                o->cond = b & 15;
+                o->imm = xwd_read(&r, 4);
+                p->delta = r.end + o->imm;
+                p->conditional = terminal = true;
+            } else {
+                if (!xwd_modrm(&r, &reg, &rm)) {
+                    return false;
+                }
+                o->dst = reg;
+                o->src = rm;
+                if (b >= 0x40 && b <= 0x4f) {
+                    o->op = XWD_CMOV;
+                    o->cond = b & 15;
+                } else if (b >= 0x90 && b <= 0x9f) {
+                    o->op = XWD_SETCC;
+                    o->cond = b & 15;
+                    o->width = 8;
+                    o->dst = rm;
+                } else if (b == 0xb6 || b == 0xb7 ||
+                           b == 0xbe || b == 0xbf) {
+                    o->op = b & 8 ? XWD_MOVSX : XWD_MOVZX;
+                    o->src_width = b & 1 ? 16 : 8;
+                } else {
+                    return false;
+                }
+            }
+        } else if (b >= 0x70 && b <= 0x7f && !prefix) {
+            o->op = XWD_JCC;
+            o->cond = b & 15;
+            o->imm = xwd_signed_byte(&r);
+            p->delta = r.end + o->imm;
+            p->conditional = terminal = true;
+        } else if (b >= 0x40 && b <= 0x4f) {
+            o->op = b & 8 ? XWD_DEC : XWD_INC;
+            o->dst = b & 7;
+        } else if (b == 0xfe || b == 0xff) {
+            if (!xwd_modrm(&r, &reg, &rm) || reg > 1) {
                 return false;
             }
-            o->op = b & 8 ? XWD_MOVSX : XWD_MOVZX;
-            o->dst = reg;
-            o->src = rm;
-            o->src_width = b & 1 ? 16 : 8;
+            o->op = reg ? XWD_DEC : XWD_INC;
+            o->dst = rm;
+            if (b == 0xfe) {
+                o->width = 8;
+            }
+        } else if (b == 0xf8 || b == 0xf9 || b == 0xf5) {
+            o->op = b == 0xf8 ? XWD_CLC : b == 0xf9 ? XWD_STC : XWD_CMC;
         } else if (b == 0x8d) {
             o->op = XWD_LEA;
             if (!xwd_lea(&r, o)) {
@@ -255,6 +301,7 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
         if (!r.valid || r.pos != r.end) {
             return false;
         }
+        p->needs_flags |= o->op >= XWD_ADC;
     }
     return start == c->size && (terminal || c->fallthrough);
 }
@@ -263,11 +310,14 @@ static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
 enum {
     XD_ENV = 1, XD_REG = 2, XD_DST = 10, XD_SRC = 11,
     XD_LEFT = 12, XD_RIGHT = 13, XD_RESULT = 14, XD_TMP = 15,
+    XD_SRC2 = 16, XD_FLAGS = 17, XD_DELTA = 18,
 };
 typedef struct XwdEmitter {
     XwdCode *code;
     const XwdLayout *layout;
     uint8_t valid, dirty;
+    bool flags_dirty, flags_cached, src2_dirty;
+    uint32_t cc, cc_helper;
 } XwdEmitter;
 
 static void xwd_byte(XwdEmitter *e, uint8_t b)
@@ -394,20 +444,85 @@ static void xwd_address(XwdEmitter *e, bool verify, uint32_t scratch)
     }
 }
 
-static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
-                     uint32_t scratch, XwdCode *code)
+/* Exact existing lazy-CC evaluator, bound directly as a pure Wasm import. */
+static void xwd_flags(XwdEmitter *e)
 {
-    XwdEmitter e = { .code = code, .layout = l };
-    bool flags = false;
-    uint32_t cc = 0;
+    const XwdLayout *l = e->layout;
+    const uint32_t off[] = { l->cc_dst, l->cc_src, l->cc_src2, l->cc_op };
+    const unsigned local[] = { XD_DST, XD_SRC, XD_SRC2 };
+
+    if (e->flags_cached) {
+        return;
+    }
+    if (e->flags_dirty && e->cc == l->cc_eflags) {
+        xwd_local(e, 0x20, XD_SRC);
+    } else {
+        for (unsigned n = 0; n < 4; n++) {
+            if (e->flags_dirty && n < 3 && (n != 2 || e->src2_dirty)) {
+                xwd_local(e, 0x20, local[n]);
+            } else if (e->flags_dirty && n == 3) {
+                xwd_const(e, e->cc);
+            } else {
+                xwd_local(e, 0x20, XD_ENV);
+                xwd_mem(e, 0x28, off[n]);
+            }
+        }
+        if (l->phase_ptr) {
+            xwd_const(e, l->phase_ptr); xwd_const(e, l->phase_cc);
+            xwd_mem(e, 0x36, 0);
+        }
+        xwd_byte(e, 0x10);
+        xwd_uleb(e, e->cc_helper);
+        if (l->phase_ptr) {
+            xwd_const(e, l->phase_ptr); xwd_const(e, l->phase_generated);
+            xwd_mem(e, 0x36, 0);
+        }
+    }
+    xwd_local(e, 0x21, XD_FLAGS);
+    e->flags_cached = true;
+}
+
+/* All sixteen x86 conditions; normalized i32 boolean on the value stack. */
+static void xwd_condition(XwdEmitter *e, unsigned cond)
+{
+    static const uint32_t mask[] = { 0x800, 1, 0x40, 0x41, 0x80, 4 };
+    unsigned base = cond >> 1;
+
+    xwd_flags(e);
+    xwd_local(e, 0x20, XD_FLAGS);
+    if (base < 6) {
+        xwd_const(e, mask[base]);
+        xwd_byte(e, 0x71);
+    } else {
+        xwd_local(e, 0x20, XD_FLAGS);
+        xwd_const(e, 4); xwd_byte(e, 0x76);
+        xwd_byte(e, 0x73); /* SF xor (OF >> 4), in bit 7 */
+        xwd_const(e, 0x80); xwd_byte(e, 0x71);
+        if (base == 7) {
+            xwd_local(e, 0x20, XD_FLAGS);
+            xwd_const(e, 0x40); xwd_byte(e, 0x71);
+            xwd_byte(e, 0x72);
+        }
+    }
+    xwd_byte(e, 0x45);
+    if (!(cond & 1)) {
+        xwd_byte(e, 0x45);
+    }
+}
+
+static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
+                     uint32_t scratch, uint32_t cc_helper, XwdCode *code)
+{
+    XwdEmitter e = { .code = code, .layout = l, .cc_helper = cc_helper };
 
     memset(code, 0, sizeof(*code));
-    if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS) {
+    if (p->version != XWD_VERSION || !p->count || p->count > XWD_MAX_INSNS ||
+        (p->needs_flags && cc_helper == UINT32_MAX)) {
         return false;
     }
     code->valid = true;
     /* The body includes its local declaration and final end. */
-    xwd_byte(&e, 1); xwd_byte(&e, 15); xwd_byte(&e, 0x7f);
+    xwd_byte(&e, 1); xwd_byte(&e, XD_DELTA); xwd_byte(&e, 0x7f);
     xwd_local(&e, 0x20, 0);
     xwd_mem(&e, 0x28, 0); /* WasmContext.env, unchanged external ABI */
     xwd_local(&e, 0x21, XD_ENV);
@@ -418,6 +533,26 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
             xwd_io(&e, i + 1 == p->count);
         }
         if (o->op == XWD_NOP || o->op == XWD_JMP) {
+            continue;
+        }
+        if (o->op == XWD_JCC) {
+            xwd_const(&e, p->delta);
+            xwd_const(&e, p->fall_delta);
+            xwd_condition(&e, o->cond);
+            xwd_byte(&e, 0x1b);
+            xwd_local(&e, 0x21, XD_DELTA);
+            continue;
+        }
+        if (o->op == XWD_CLC || o->op == XWD_STC || o->op == XWD_CMC) {
+            xwd_flags(&e);
+            xwd_local(&e, 0x20, XD_FLAGS);
+            xwd_const(&e, o->op == XWD_CLC ? ~1u : 1);
+            xwd_byte(&e, o->op == XWD_CLC ? 0x71 :
+                         o->op == XWD_STC ? 0x72 : 0x73);
+            xwd_local(&e, 0x22, XD_FLAGS);
+            xwd_local(&e, 0x21, XD_SRC);
+            e.cc = l->cc_eflags;
+            e.flags_dirty = true;
             continue;
         }
         if (o->op == XWD_LEA) {
@@ -437,6 +572,13 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
             if (o->op == XWD_MOVSX) {
                 xwd_byte(&e, o->src_width == 8 ? 0xc0 : 0xc1);
             }
+        } else if (o->op == XWD_CMOV) {
+            xwd_get(&e, o->src, o->width);
+            xwd_get(&e, o->dst, o->width);
+            xwd_condition(&e, o->cond);
+            xwd_byte(&e, 0x1b);
+        } else if (o->op == XWD_SETCC) {
+            xwd_condition(&e, o->cond);
         } else if (o->op == XWD_MOV) {
             if (o->immediate) {
                 xwd_const(&e, o->imm);
@@ -448,6 +590,8 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
             xwd_local(&e, 0x21, XD_LEFT);
             if (o->op == XWD_NOT || o->op == XWD_NEG) {
                 xwd_local(&e, 0x20, XD_LEFT);
+            } else if (o->op == XWD_INC || o->op == XWD_DEC) {
+                xwd_const(&e, 1);
             } else if (o->immediate) {
                 xwd_const(&e, o->imm);
                 xwd_mask(&e, o->width);
@@ -461,7 +605,20 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
                 xwd_put(&e, o->src, o->width);
                 xwd_local(&e, 0x20, XD_RIGHT);
             } else {
-                if (o->op != XWD_NOT) {
+                /* Read old carry BEFORE replacing its lazy-CC operands. */
+                if (o->op == XWD_ADC || o->op == XWD_SBB ||
+                    o->op == XWD_INC || o->op == XWD_DEC) {
+                    xwd_flags(&e);
+                    xwd_local(&e, 0x20, XD_FLAGS);
+                    xwd_const(&e, 1); xwd_byte(&e, 0x71);
+                    if (o->op == XWD_ADC || o->op == XWD_SBB) {
+                        xwd_local(&e, 0x21, XD_SRC2);
+                        e.src2_dirty = true;
+                    } else {
+                        xwd_local(&e, 0x21, XD_SRC);
+                    }
+                }
+                if (o->op != XWD_NOT && o->op != XWD_INC && o->op != XWD_DEC) {
                     xwd_local(&e, 0x20, XD_RIGHT);
                     xwd_local(&e, 0x21, XD_SRC);
                 }
@@ -474,26 +631,38 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
                 switch (o->op) {
                 case XWD_ADD:
                     xwd_byte(&e, 0x6a);
-                    cc = l->cc_add[wi];
+                    e.cc = l->cc_add[wi];
                     break;
                 case XWD_SUB:
                 case XWD_CMP:
                 case XWD_NEG:
                     xwd_byte(&e, 0x6b);
-                    cc = l->cc_sub[wi];
+                    e.cc = l->cc_sub[wi];
+                    break;
+                case XWD_ADC:
+                case XWD_SBB:
+                    xwd_byte(&e, o->op == XWD_ADC ? 0x6a : 0x6b);
+                    xwd_local(&e, 0x20, XD_SRC2);
+                    xwd_byte(&e, o->op == XWD_ADC ? 0x6a : 0x6b);
+                    e.cc = o->op == XWD_ADC ? l->cc_adc[wi] : l->cc_sbb[wi];
+                    break;
+                case XWD_INC:
+                case XWD_DEC:
+                    xwd_byte(&e, o->op == XWD_INC ? 0x6a : 0x6b);
+                    e.cc = o->op == XWD_INC ? l->cc_inc[wi] : l->cc_dec[wi];
                     break;
                 case XWD_AND:
                 case XWD_TEST:
                     xwd_byte(&e, 0x71);
-                    cc = l->cc_logic[wi];
+                    e.cc = l->cc_logic[wi];
                     break;
                 case XWD_OR:
                     xwd_byte(&e, 0x72);
-                    cc = l->cc_logic[wi];
+                    e.cc = l->cc_logic[wi];
                     break;
                 case XWD_XOR:
                     xwd_byte(&e, 0x73);
-                    cc = l->cc_logic[wi];
+                    e.cc = l->cc_logic[wi];
                     break;
                 case XWD_NOT:
                     /* Drop the duplicate right operand before complement. */
@@ -507,7 +676,8 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
                 if (o->op != XWD_NOT) {
                     xwd_mask(&e, o->width);
                     xwd_local(&e, 0x22, XD_DST);
-                    flags = true;
+                    e.flags_dirty = true;
+                    e.flags_cached = false;
                 }
             }
         }
@@ -530,14 +700,16 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
         offsetof(XwdState, cc_src), offsetof(XwdState, cc_src2),
         offsetof(XwdState, cc_op) };
     for (unsigned n = 0; n < 4; n++) {
-        if (!verify && (!flags || n == 2)) {
+        if (!verify && (!e.flags_dirty || (n == 2 && !e.src2_dirty))) {
             continue;
         }
         xwd_address(&e, verify, scratch);
-        if (flags && (n == 0 || n == 1)) {
+        if (e.flags_dirty && (n == 0 || n == 1)) {
             xwd_local(&e, 0x20, n == 0 ? XD_DST : XD_SRC);
-        } else if (flags && n == 3) {
-            xwd_const(&e, cc);
+        } else if (e.flags_dirty && n == 2 && e.src2_dirty) {
+            xwd_local(&e, 0x20, XD_SRC2);
+        } else if (e.flags_dirty && n == 3) {
+            xwd_const(&e, e.cc);
         } else {
             xwd_local(&e, 0x20, XD_ENV);
             xwd_mem(&e, 0x28, src_off[n]);
@@ -551,12 +723,20 @@ static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
     } else {
         xwd_const(&e, p->pc);
     }
-    xwd_const(&e, p->delta); xwd_byte(&e, 0x6a);
+    if (p->conditional) {
+        xwd_local(&e, 0x20, XD_DELTA);
+    } else {
+        xwd_const(&e, p->delta);
+    }
+    xwd_byte(&e, 0x6a);
     xwd_mem(&e, 0x36, verify ? offsetof(XwdState, eip) : l->eip);
     if (verify) {
         xwd_const(&e, scratch);
         xwd_const(&e, 1);
         xwd_mem(&e, 0x36, offsetof(XwdState, pending));
+        xwd_const(&e, scratch);
+        xwd_const(&e, p->needs_flags | (p->conditional << 1));
+        xwd_mem(&e, 0x36, offsetof(XwdState, features));
     }
     xwd_const(&e, 0);
     xwd_byte(&e, 0x0b);

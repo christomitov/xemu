@@ -166,7 +166,11 @@
     X(n_direct_decline)                                                 \
     X(n_direct_exec) /* follows TB_STATS, not an always-on hot counter */ \
     X(n_direct_checked)                                                 \
-    X(n_direct_mismatch)
+    X(n_direct_mismatch)                                                \
+    X(n_direct_flags_build)                                             \
+    X(n_direct_flags_checked)                                           \
+    X(n_direct_jcc_build)                                               \
+    X(n_direct_jcc_checked)
 
 typedef struct XemuWasmStats {
 #define XEMU_WASM_STATS_DECL(name) uint64_t name;
