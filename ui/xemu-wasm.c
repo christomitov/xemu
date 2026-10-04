@@ -41,6 +41,7 @@ EM_JS(double, xemu_wasm_now_ms, (void), {
     return o + performance.now();
 });
 #include <emscripten/threading.h>
+#include <math.h>
 #include <emscripten/stack.h>
 
 /* xemu externals (avoid pulling UI headers with epoxy/gl deps) */
@@ -507,6 +508,78 @@ static void xemu_wasm_service_state(void)
     }
 }
 
+/*
+ * Streamed discs: the page keeps the chosen disc image File in a dedicated
+ * "disc worker" instead of copying it into the 2 GB wasm heap (a real game
+ * is 1.5-8 GB). The emulator opens the empty placeholder JS_DISC_PATH;
+ * block/file-posix.c sends its reads here. A request is posted in disc_ctl
+ * (shared wasm memory) and the calling thread sleeps on a futex until the
+ * worker has copied the bytes straight into the buffer:
+ *   ctl[0] state 0 idle, 1 request, 2 done; ctl[1] buffer; ctl[2] length;
+ *   ctl[3..4] offset low/high; ctl[5] bytes read or -1.
+ */
+#define JS_DISC_PATH "/xemu/jsdisc.iso"
+static int32_t disc_ctl[8] __attribute__((aligned(16)));
+static uint64_t js_disc_size;
+static pthread_mutex_t js_disc_lock = PTHREAD_MUTEX_INITIALIZER;
+
+EMSCRIPTEN_KEEPALIVE uintptr_t xemu_wasm_disc_ctl(void)
+{
+    return (uintptr_t)disc_ctl;
+}
+
+/* size > 0: the next disc load uses the streamed disc; 0: MEMFS iso.iso */
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_js_disc(double size)
+{
+    __atomic_store_n(&js_disc_size, (uint64_t)size, __ATOMIC_SEQ_CST);
+}
+
+bool xemu_wasm_is_js_disc(const char *filename)
+{
+    return filename && !strcmp(filename, JS_DISC_PATH);
+}
+
+int64_t xemu_wasm_js_disc_size(void)
+{
+    return __atomic_load_n(&js_disc_size, __ATOMIC_SEQ_CST);
+}
+
+ssize_t xemu_wasm_js_disc_pread(void *buf, size_t len, uint64_t off)
+{
+    uint64_t size = xemu_wasm_js_disc_size();
+    size_t done = 0;
+
+    if (off >= size) {
+        return 0;
+    }
+    len = MIN(len, size - off);
+    pthread_mutex_lock(&js_disc_lock);
+    while (done < len) {
+        size_t n = MIN(len - done, (size_t)8 << 20);
+        uint64_t o = off + done;
+        disc_ctl[1] = (int32_t)(uintptr_t)((char *)buf + done);
+        disc_ctl[2] = (int32_t)n;
+        disc_ctl[3] = (int32_t)(uint32_t)o;
+        disc_ctl[4] = (int32_t)(uint32_t)(o >> 32);
+        __atomic_store_n(&disc_ctl[0], 1, __ATOMIC_SEQ_CST);
+        emscripten_futex_wake(&disc_ctl[0], 1);
+        while (__atomic_load_n(&disc_ctl[0], __ATOMIC_SEQ_CST) == 1) {
+            emscripten_futex_wait(&disc_ctl[0], 1, INFINITY);
+        }
+        int32_t r = disc_ctl[5];
+        __atomic_store_n(&disc_ctl[0], 0, __ATOMIC_SEQ_CST);
+        if (r <= 0) {
+            break;
+        }
+        done += r;
+        if ((size_t)r < n) {
+            break;
+        }
+    }
+    pthread_mutex_unlock(&js_disc_lock);
+    return done ? (ssize_t)done : -EIO;
+}
+
 EMSCRIPTEN_KEEPALIVE void xemu_wasm_request_disc(int mode)
 {
     __atomic_store_n(&disc_req, mode, __ATOMIC_SEQ_CST);
@@ -524,7 +597,9 @@ static void xemu_wasm_service_disc(void)
     if (req == 3) {
         qmp_eject("ide0-cd1", NULL, true, false, &err);
     } else {
-        qmp_blockdev_change_medium("ide0-cd1", NULL, "/xemu/iso.iso", "raw",
+        const char *path = xemu_wasm_js_disc_size() ? JS_DISC_PATH :
+                                                      "/xemu/iso.iso";
+        qmp_blockdev_change_medium("ide0-cd1", NULL, path, "raw",
                                    false, false, false, 0, &err);
     }
     if (err) {
@@ -532,7 +607,9 @@ static void xemu_wasm_service_disc(void)
                 req == 3 ? "eject" : "load", error_get_pretty(err));
         error_free(err);
     } else {
-        fprintf(stderr, "[disc] %s\n", req == 3 ? "ejected" : "loaded /xemu/iso.iso");
+        fprintf(stderr, "[disc] %s\n", req == 3 ? "ejected" :
+                xemu_wasm_js_disc_size() ? "loaded (streamed)" :
+                                           "loaded /xemu/iso.iso");
     }
     xbox_smc_update_tray_state();
     if (req == 2 && !err) {

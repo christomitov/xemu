@@ -115,6 +115,10 @@
 
 #if defined(EMSCRIPTEN) || defined(__EMSCRIPTEN__)
 #include <sys/ioctl.h>
+/* streamed disc images (ui/xemu-wasm.c): reads go to the page's disc worker */
+bool xemu_wasm_is_js_disc(const char *filename);
+int64_t xemu_wasm_js_disc_size(void);
+ssize_t xemu_wasm_js_disc_pread(void *buf, size_t len, uint64_t off);
 #endif
 
 /* OS X does not have O_DSYNC */
@@ -159,6 +163,9 @@
 
 typedef struct BDRVRawState {
     int fd;
+#ifdef EMSCRIPTEN
+    bool js_disc;   /* placeholder file; data comes from the disc worker */
+#endif
     bool use_lock;
     int type;
     int open_flags;
@@ -635,6 +642,9 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
     }
 
     filename = qemu_opt_get(opts, "filename");
+#ifdef EMSCRIPTEN
+    s->js_disc = xemu_wasm_is_js_disc(filename);
+#endif
 
     ret = raw_normalize_devicepath(&filename, errp);
     if (ret != 0) {
@@ -1811,6 +1821,27 @@ static ssize_t handle_aiocb_rw_vector(RawPosixAIOData *aiocb)
     }
 #endif
 
+#ifdef EMSCRIPTEN
+    if (((BDRVRawState *)aiocb->bs->opaque)->js_disc) {
+        if (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) {
+            return -EROFS;
+        }
+        ssize_t total = 0;
+        for (int i = 0; i < aiocb->io.niov; i++) {
+            ssize_t r = xemu_wasm_js_disc_pread(aiocb->io.iov[i].iov_base,
+                                                aiocb->io.iov[i].iov_len,
+                                                aiocb->aio_offset + total);
+            if (r < 0) {
+                return total ? total : r;
+            }
+            total += r;
+            if ((size_t)r < aiocb->io.iov[i].iov_len) {
+                break;
+            }
+        }
+        return total;
+    }
+#endif
     len = RETRY_ON_EINTR(
         (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) ?
             qemu_pwritev(aiocb->aio_fildes,
@@ -1864,6 +1895,15 @@ static ssize_t handle_aiocb_rw_linear(RawPosixAIOData *aiocb, char *buf)
     }
 #endif
 
+#ifdef EMSCRIPTEN
+    if (((BDRVRawState *)aiocb->bs->opaque)->js_disc) {
+        if (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) {
+            return -EROFS;
+        }
+        return xemu_wasm_js_disc_pread(buf, aiocb->aio_nbytes,
+                                       aiocb->aio_offset);
+    }
+#endif
     while (offset < aiocb->aio_nbytes) {
         if (aiocb->aio_type & (QEMU_AIO_WRITE | QEMU_AIO_ZONE_APPEND)) {
             len = pwrite(aiocb->aio_fildes,
@@ -3008,6 +3048,11 @@ static int64_t raw_getlength(BlockDriverState *bs)
     int ret;
     int64_t size;
 
+#ifdef EMSCRIPTEN
+    if (s->js_disc) {
+        return xemu_wasm_js_disc_size();
+    }
+#endif
     ret = fd_open(bs);
     if (ret < 0) {
         return ret;
@@ -3365,7 +3410,11 @@ static int coroutine_fn raw_co_block_status(BlockDriverState *bs,
         return ret;
     }
 
-    if (!(mode & BDRV_WANT_ZERO)) {
+    if (!(mode & BDRV_WANT_ZERO)
+#ifdef EMSCRIPTEN
+        || ((BDRVRawState *)bs->opaque)->js_disc
+#endif
+        ) {
         /* There is no backing file - all bytes are allocated in this file.  */
         *pnum = bytes;
         *map = offset;
