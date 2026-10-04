@@ -161,6 +161,27 @@ for(const c of d.cases){
    assert.equal(mm[verify].exports.start(128),0,c.hex);
    const got=state(verify?8192:M.ENV);
    const fast=mode==='hit' && !t.cross;
+   if(c.kind==='pushm'){
+    // two accesses: load [m] (old ESP), store to [ESP-4]; ESP -= 4
+    const r=t.regs.slice();r[4]=(r[4]-4)>>>0;
+    assert.deepEqual(got.r,r,'pushm regs '+mode+' '+c.hex);
+    const so=t.regs[4]-4-M.PAGE, after=bytes.slice();
+    let src=0;for(let i=0;i<4;i++)src|=t.page[t.addr-M.PAGE+i]<<(8*i);
+    if(fast){
+     let st=0;for(let i=0;i<4;i++)st|=after[M.HOST+so+i]<<(8*i);
+     assert.equal(st>>>0,src>>>0,'pushm stored '+c.hex);
+     for(let i=0;i<4096;i++)if(i<so||i>=so+4)
+      assert.equal(after[M.HOST+i],before[M.HOST+i],'pushm page '+c.hex);
+    }else{
+     const base=verify?M.SHADOW:M.SLOW;
+     assert.equal(v.getUint32(base,true),2,'both accesses via hook '+c.hex);
+     assert.equal(v.getUint32(base+8,true)>>>0,t.slow>>>0,'pushm hook store '+c.hex);
+     assert.equal(v.getUint32(base+12,true),(t.regs[4]-4)>>>0,'pushm store addr');
+     for(let i=0;i<4096;i++)assert.equal(after[M.HOST+i],before[M.HOST+i]);
+    }
+    assert.equal(got.eip,(0x40000000+c.len)>>>0);
+    probes++;continue;
+   }
    const slowRan=v.getUint32(M.SLOW,true), shadowRan=v.getUint32(M.SHADOW,true);
    assert.equal(slowRan, fast||verify?0x5a5a5a5a:1, 'slow '+mode+' '+c.hex);
    assert.equal(shadowRan, verify?1:0x5a5a5a5a, 'shadow '+mode+' '+c.hex);
@@ -358,6 +379,18 @@ def main():
                          mem=bytes([(0x50 if push else 0x58) + n]).hex(),
                          reg=None, regs=regs, addr=addr, x=0, dst=n,
                          cross=False, store=push, value=value))
+    # PUSH [m]: [base + disp], source inside the page, stack elsewhere in it
+    for t in range(args.tests * 2):
+        regs = [rng.getrandbits(32) for _ in range(8)]
+        regs[4] = PAGE + 0xc00 + 4 * rng.randrange(64)
+        b = rng.choice([0, 1, 2, 3, 5, 6, 7])
+        addr = PAGE + 4 * rng.randrange(0x200)
+        disp = rng.randrange(-0x80, 0x80)
+        regs[b] = (addr - disp) & 0xffffffff
+        code = bytes([0xff]) + modrm_mem(6, b, None, 0, disp)
+        meta.append(dict(name='PUSH [m]', kind='pushm', width=32,
+                         mem=code.hex(), reg=None, regs=regs, addr=addr,
+                         x=0, dst=0, cross=False, store=False, value=0))
     # PUSH imm8/imm32 and CALL rel32 (return address = pc + length)
     for t in range(args.tests * 3):
         regs = [rng.getrandbits(32) for _ in range(8)]
@@ -458,7 +491,8 @@ def main():
             if item['kind'] == 'decline':
                 assert not ok, 'must decline: ' + item['mem']
                 continue
-            assert ok and accesses == 1, item['name']
+            assert ok and accesses == (2 if item['kind'] == 'pushm' else 1), \
+                item['name']
             assert store == item['store'] and width == item['width'], item
             admitted += 1
             page = [rng.getrandbits(8) for _ in range(4096)]

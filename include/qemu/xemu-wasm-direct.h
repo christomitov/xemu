@@ -31,6 +31,8 @@ typedef enum XwdOp {
     XWD_CALL,
     /* register shifts by a non-zero immediate count (imm = count) */
     XWD_SHL, XWD_SHR, XWD_SAR,
+    /* PUSH [m]: load [m] (address with the old ESP), store to [ESP-4] */
+    XWD_PUSHM,
 } XwdOp;
 
 typedef struct XwdInsn {

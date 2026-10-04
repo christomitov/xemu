@@ -394,6 +394,15 @@ static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
         } else if (b >= 0x40 && b <= 0x4f) {
             o->op = b & 8 ? XWD_DEC : XWD_INC;
             o->dst = b & 7;
+        } else if (b == 0xff && allow_memory && !prefix &&
+                   r.pos < r.end && ((c->bytes[r.pos] >> 3) & 7) == 6 &&
+                   (c->bytes[r.pos] >> 6) != 3) {
+            /* PUSH r/m32 with a memory operand: two accesses */
+            if (xwd_modrm_ex(&r, &reg, &rm, o, true) != 2) {
+                return false;
+            }
+            o->op = XWD_PUSHM;
+            o->mem_store = false;   /* the first access; the push follows */
         } else if (b == 0xfe || b == 0xff) {
             if (!xwd_modrm(&r, &reg, &rm) || reg > 1) {
                 return false;
@@ -474,7 +483,7 @@ static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
         if (o->mem) {
             o->mem_width = o->op == XWD_MOVZX || o->op == XWD_MOVSX ?
                            o->src_width : o->width;
-            p->accesses++;
+            p->accesses += o->op == XWD_PUSHM ? 2 : 1;
         }
         p->needs_flags |= o->op >= XWD_ADC && o->op <= XWD_SETCC;
     }
@@ -776,7 +785,17 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
             if (!xwd_mem_insn(&e, o, i, p, verify)) {
                 return false;
             }
-            if (o->op == XWD_PUSH || o->op == XWD_CALL) {
+            if (o->op == XWD_PUSHM) {
+                /* the loaded value goes to [ESP-4], then ESP commits */
+                xwd_get(&e, 4, 32);
+                xwd_const(&e, 4);
+                xwd_byte(&e, 0x6b);
+                xwd_local(&e, 0x21, XD_MADDR);
+                if (!xwd_mem_access(&e, i, verify, true, 32)) {
+                    return false;
+                }
+            }
+            if (o->op == XWD_PUSH || o->op == XWD_CALL || o->op == XWD_PUSHM) {
                 xwd_local(&e, 0x20, XD_MADDR);
                 xwd_local(&e, 0x21, XD_RESULT);
                 xwd_put(&e, 4, 32);
