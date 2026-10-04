@@ -170,6 +170,22 @@ static void xwd_note_decline(const XwdCapture *c, unsigned start, unsigned end)
             break;
         }
     }
+    /*
+     * Group opcodes: append the ModRM reg field (sub-operation) and whether
+     * the operand is a register or memory. The opcode is the last byte
+     * printed (after 66/0f/segment prefixes); its ModRM follows.
+     */
+    unsigned k = (n - 6) / 2, op = c->bytes[start + k - 1];
+    bool two = k >= 2 && c->bytes[start + k - 2] == 0x0f;
+    if (start + k < end &&
+        (two || op == 0xff || op == 0xfe || op == 0x80 || op == 0x81 ||
+         op == 0x83 || op == 0xc0 || op == 0xc1 || op == 0xd0 ||
+         op == 0xd1 || op == 0xd3 || op == 0xf6 || op == 0xf7 ||
+         (op <= 0x3b && (op & 7) <= 3))) {
+        unsigned m = c->bytes[start + k];
+        snprintf(key + n, sizeof(key) - n, "/%u%s", (m >> 3) & 7,
+                 (m >> 6) == 3 ? "r" : "m");
+    }
     xemu_wasm_count_add(g_intern_string(key), 1);
 }
 #endif
