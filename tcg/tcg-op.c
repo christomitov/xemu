@@ -295,6 +295,11 @@ void tcg_gen_br(TCGLabel *l)
 }
 
 #ifdef CONFIG_TCG_WASM_JIT
+void tcg_gen_wasm_direct(const void *translation)
+{
+    tcg_gen_op1(INDEX_op_wasm_direct, TCG_TYPE_I32, (uintptr_t)translation);
+}
+
 void tcg_gen_wasm_census(const uint32_t *word)
 {
     tcg_gen_op1(INDEX_op_wasm_census, TCG_TYPE_I32, (uintptr_t)word);

@@ -176,6 +176,12 @@ int main(int argc, char **argv)
     setenv("XEMU_WASM_TLB_HINT", argv[1], 1);
     setenv("XEMU_WASM_TB_STATS", argv[2], 1);
     for (int i = 0; i < 8; i++) fixture(i, i % 2 == 0 ? i + 1 : -1);
+    /* Opaque direct scaffold modules must never enter the legacy merger. */
+    uint32_t body_len = headers[0].body_len;
+    headers[0].body_len = 0;
+    assert(!region_member_ok(&headers[0]));
+    assert(compile_region(&headers[0]) == 0);
+    headers[0].body_len = body_len;
     int ab = compile_region(&headers[0]);
     int cd = compile_region(&headers[2]);
     if (!(ab > 0 && cd > 0 && ab != cd)) {

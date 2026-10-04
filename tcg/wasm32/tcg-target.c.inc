@@ -32,6 +32,13 @@
 
 #include "../wasm32.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "qemu/xemu-wasm-direct.h"
+
+static const XwdTranslation *wasm_direct_translation;
+static XwdCode *wasm_direct_code;
+static uint32_t wasm_direct_call_pos;
+static XwdState wasm_direct_expected;
+static void wasm_direct_verify(TCGContext *s, bool pc);
 #include "exec/tlb-flags.h"
 
 /* Used for function call generation. */
@@ -2509,6 +2516,8 @@ static void wasm_goto_tb(TCGContext *s, int which, uintptr_t reset_ptr)
     wasm8(s, W_END);
 }
 
+#include "../wasm32-direct-glue.c.inc"
+
 /*
  * ---------------------------------------------------------------------
  * TCI bytecode emission (as tcg/tci/tcg-target.c.inc)
@@ -2908,6 +2917,7 @@ static void tcg_out_exit_tb(TCGContext *s, uintptr_t arg)
 {
     WASM_CLASS(14);
     tcg_out_op_p(s, INDEX_op_exit_tb, (void *)arg);
+    wasm_direct_verify(s, true);
     wasm_exit_tb(s, arg);
 }
 
@@ -2917,6 +2927,8 @@ static void tcg_out_goto_tb(TCGContext *s, int which)
     /* indirect jump method. */
     tcg_out_op_p(s, INDEX_op_goto_tb, (void *)get_jmp_target_addr(s, which));
     set_jmp_reset_offset(s, which);
+    wasm_direct_verify(s, wasm_direct_translation &&
+                       wasm_direct_translation->capture.pcrel);
     wasm_goto_tb(s, which, (uintptr_t)s->code_ptr);
 }
 
@@ -2924,6 +2936,7 @@ static void tcg_out_goto_ptr(TCGContext *s, TCGReg a0)
 {
     WASM_CLASS(12);
     tcg_out_op_r(s, INDEX_op_goto_ptr, a0);
+    wasm_direct_verify(s, true);
     wasm_goto_ptr(s, a0);
 }
 
@@ -4763,6 +4776,8 @@ static void tcg_out_tb_start(TCGContext *s)
     WasmTBHeader *h = (WasmTBHeader *)s->code_buf;
 
     wasm_insn_profile_start(s);
+    wasm_direct_translation = NULL;
+    wasm_direct_code = NULL;
     code_buf_root = code_buf_cur = new_linked_buf();
     types_buf_root = types_buf_cur = new_linked_buf();
     label_info = NULL;
@@ -5145,6 +5160,15 @@ static int tcg_out_tb_end(TCGContext *s)
      */
     const uint32_t func_a = HELPER_IDX_START + helpers_num;
     const uint32_t func_b = func_a + 1;
+    if (wasm_direct_code) {
+        uint32_t v = func_b + 1;
+        uint8_t *at = cb + wasm_direct_call_pos + L;
+        tcg_debug_assert(wasm_direct_call_pos >= region_ins_pos);
+        for (int i = 0; i < 5; i++) {
+            at[i] = (v & 127) | (i < 4 ? 128 : 0);
+            v >>= 7;
+        }
+    }
     uint8_t new_else[10];
     int ne = 0;
     new_else[ne++] = W_ELSE;
@@ -5210,11 +5234,14 @@ static int tcg_out_tb_end(TCGContext *s)
                                        .kind = WASM_RELOC_RETCALL };
     }
 
-    /* function section: A, B */
+    /* Function section: A, B, optional private direct register function. */
     sec = mod_section_begin(&w, 3);
-    mod_uleb(&w, 2);
+    mod_uleb(&w, 2 + !!wasm_direct_code);
     mod_uleb(&w, 0);
     mod_uleb(&w, 0);
+    if (wasm_direct_code) {
+        mod_uleb(&w, 0); /* same (ctx)->i32 ABI, PRIVATE i32 locals */
+    }
     mod_section_end(&w, sec);
 
     /* global section: mutable i64 = 0 */
@@ -5294,9 +5321,17 @@ static int tcg_out_tb_end(TCGContext *s)
         }
     }
 
-    /* code section: A, B */
+    if (wasm_direct_code) {
+        sec = mod_section_begin(&w, 0);
+        mod_name(&w, "xemu.direct-x86");
+        mod_uleb(&w, XWD_VERSION);
+        mod_uleb(&w, xemu_wasm_direct_mode());
+        mod_section_end(&w, sec);
+    }
+
+    /* Code section: A, B, optional private direct body. */
     sec = mod_section_begin(&w, 10);
-    mod_uleb(&w, 2);
+    mod_uleb(&w, 2 + !!wasm_direct_code);
     /* locals: 4 x i32, 2 x i64, 1 x f64, 16+1 x i64 (TCG regs, BLOCK_PTR) */
     QEMU_BUILD_BUG_ON(TCG_TARGET_NB_REGS != 16);
     QEMU_BUILD_BUG_ON(sizeof(WASM_TB_LOCALS) - 1 != WASM_TB_LOCALS_LEN);
@@ -5316,6 +5351,12 @@ static int tcg_out_tb_end(TCGContext *s)
     h->body_b_len = lenB - 1;
     mod_bytes(&w, cb, lenB);
     mod_uleb5_patch(&w, body, w.p - (body + 5));
+    if (wasm_direct_code) {
+        mod_uleb(&w, wasm_direct_code->size);
+        mod_bytes(&w, wasm_direct_code->bytes, wasm_direct_code->size);
+        /* Existing non-fusible contract: never feed these to legacy regions. */
+        h->body_len = h->body_b_len = 0;
+    }
     mod_section_end(&w, sec);
     g_free(ca);
     g_free(cb);
