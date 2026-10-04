@@ -875,6 +875,11 @@ if host_os == 'emscripten'
   emulator_link_args += ['-sASSERTIONS=0', '-sDEFAULT_PTHREAD_STACK_SIZE=8MB',
                          '-sSTACK_SIZE=16MB',
                          '-sSTACK_OVERFLOW_CHECK=0',
+                         # wasmMemory: the page's disc worker receives the
+                         # shared WebAssembly.Memory like the pthreads do (a
+                         # raw SharedArrayBuffer cannot be posted unless the
+                         # page is cross-origin isolated)
+                         '-sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,TTY,FS,HEAPU8,ENV,wasmMemory',
                          '-lnodefs.js',
                          '--profiling-funcs']
 endif
