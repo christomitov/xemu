@@ -104,7 +104,13 @@ typedef struct WasmTBHeader {
 enum { WASM_RELOC_CALL = 1, WASM_RELOC_GOTO = 2, WASM_RELOC_HINT = 3,
        WASM_RELOC_RETCALL = 4,
        /* 5-byte IC operand: depth=0 slot, 1 header global, 2 countdown. */
-       WASM_RELOC_IC = 5 };
+       WASM_RELOC_IC = 5,
+       /*
+        * No-code direct-region metadata, ignored by the legacy builder.
+        * BEGIN follows the original entry IRQ guard. VERIFY arg is the
+        * independently selected goto slot 0/1, or 0xff for canonical env PC.
+        */
+       WASM_RELOC_DIRECT_BEGIN = 6, WASM_RELOC_DIRECT_VERIFY = 7 };
 #define WASM_TB_LOCALS_LEN 9    /* without the optional TLB hint locals */
 #define WASM_TB_LOCALS "\x04\x04\x7f\x02\x7e\x01\x7c\x11\x7e"
 #define WASM_TB_HINT_LOCALS "\x05\x04\x7f\x02\x7e\x01\x7c\x11\x7e\x02\x7f"

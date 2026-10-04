@@ -1,10 +1,19 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* This stage deliberately does not fuse direct/legacy register layouts. */
 #include "wasm32-direct.c.inc"
+#include "wasm32-direct-blueprint.c.inc"
 
 static void wasm_direct_verify(TCGContext *s, int slot)
 {
     int idx;
+    if (wasm_direct_blueprint) {
+        /*
+         * Original TCG is still authoritative; a region builder may inject
+         * a differential check at this independently selected exit later.
+         */
+        wasm_add_reloc(WASM_RELOC_DIRECT_VERIFY, slot < 0 ? 0xff : slot, 0);
+        return;
+    }
     if (!wasm_direct_translation || xemu_wasm_direct_mode() != 2) {
         return;
     }
@@ -49,6 +58,29 @@ static void wasm_direct_entry(TCGContext *s, const XwdTranslation *t)
         XSTAT_INC(n_direct_decline);
         return;
     }
+#ifdef EMSCRIPTEN
+    if (xemu_wasm_profile_enabled()) {
+        layout.phase_ptr = (uintptr_t)&xemu_wasm_phase[XPHASE_VCPU];
+        layout.phase_cc = (uintptr_t)"helper:direct-cc";
+        layout.phase_generated = (uintptr_t)wasm_insn_phase_name(NULL);
+    }
+#endif
+    if (xemu_wasm_direct_regions_enabled()) {
+        XwdTranslation value = *t;
+        value.layout = layout;
+        code = tcg_malloc(sizeof(*code));
+        if (!xwd_blueprint_write(&value, code)) {
+            XSTAT_INC(n_direct_decline);
+            return;
+        }
+        wasm_direct_blueprint = code;
+        wasm_add_reloc(WASM_RELOC_DIRECT_BEGIN, 0, 0);
+        /*
+         * No private function/imports/counters: retain original TCG A/B for
+         * singletons and for the entire group if substitution declines.
+         */
+        return;
+    }
     if (plan.needs_flags) {
         int idx = get_helper_idx(t->layout.cc_all);
         if (idx < 0) {
@@ -63,13 +95,6 @@ static void wasm_direct_entry(TCGContext *s, const XwdTranslation *t)
         }
         cc_idx = idx;
     }
-#ifdef EMSCRIPTEN
-    if (xemu_wasm_profile_enabled()) {
-        layout.phase_ptr = (uintptr_t)&xemu_wasm_phase[XPHASE_VCPU];
-        layout.phase_cc = (uintptr_t)"helper:direct-cc";
-        layout.phase_generated = (uintptr_t)wasm_insn_phase_name(NULL);
-    }
-#endif
     code = tcg_malloc(sizeof(*code));
     if (!xwd_emit(&plan, &layout, mode == 2,
                   (uintptr_t)&wasm_direct_expected, cc_idx, code)) {

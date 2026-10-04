@@ -72,6 +72,7 @@ static WasmInstance instances[MAX_INSTANCES];
 static int free_slots[MAX_INSTANCES], n_free = -1, instances_alive, clock_hand;
 static bool region_shared = true;
 static int region_hints = 1;
+static bool direct_metadata;
 static double jit_debt_ms;
 int wasm32_jit_threshold = 64;
 bool wasm32_ic_enabled(void) { return false; }
@@ -116,7 +117,7 @@ static void fixture(int id, int successor)
 {
     WasmTBHeader *h = &headers[id];
     ByteBuf mod = {0}, sec = {0}, body = {0};
-    WasmReloc *reloc = calloc(1, sizeof(*reloc));
+    WasmReloc *reloc = calloc(3, sizeof(*reloc));
     static WasmReloc unused_rewind_reloc;
     /* The builder only reads this module's type section and body fragments. */
     bb_bytes(&mod, "\0asm\x01\0\0\0", 8);
@@ -137,6 +138,7 @@ static void fixture(int id, int successor)
     bb_u8(&body, 0x41); bb_sleb(&body, id + 1);
     bb_u8(&body, 0x36); bb_u8(&body, 2); bb_u8(&body, 0);
     bb_u8(&body, 0x03); bb_u8(&body, 0x40); /* own TB loop */
+    reloc[0] = (WasmReloc){.off = body.len, .kind = WASM_RELOC_DIRECT_BEGIN};
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&visits[id]);
     bb_u8(&body, 0x28); bb_u8(&body, 2); bb_u8(&body, 0);
@@ -145,7 +147,10 @@ static void fixture(int id, int successor)
     bb_u8(&body, 0x41); bb_sleb(&body, (uintptr_t)&next_header[id]);
     bb_u8(&body, 0x28); bb_u8(&body, 2); bb_u8(&body, 0);
     bb_u8(&body, 0x21); bb_uleb(&body, REGION_L32_0);
-    reloc->off = body.len; reloc->kind = WASM_RELOC_GOTO; reloc->arg = 0xff;
+    reloc[1] = (WasmReloc){.off = body.len,
+        .kind = WASM_RELOC_DIRECT_VERIFY, .arg = 0xff};
+    reloc[2] = (WasmReloc){.off = body.len,
+        .kind = WASM_RELOC_GOTO, .arg = 0xff};
     bb_u8(&body, 0x41); bb_sleb(&body, 11 * (id + 1));
     bb_u8(&body, 0x0f); bb_u8(&body, 0x0b); /* return; end loop */
     bb_u8(&body, 0x41); bb_sleb(&body, 11 * (id + 1)); bb_u8(&body, 0x0f);
@@ -154,8 +159,10 @@ static void fixture(int id, int successor)
     h->body_b_off = mod.len; h->body_b_len = body.len;
     bb_bytes(&mod, body.p, body.len);
     h->wasm_ptr = mod.p; h->wasm_size = mod.len;
-    h->reloc_ptr = reloc; h->reloc_count = 1;
-    h->reloc_b_ptr = &unused_rewind_reloc;
+    h->reloc_ptr = reloc + (direct_metadata ? 0 : 2);
+    h->reloc_count = direct_metadata ? 3 : 1;
+    h->reloc_b_ptr = direct_metadata ? reloc : &unused_rewind_reloc;
+    h->reloc_b_count = direct_metadata ? 2 : 0;
     h->counter = 1000; h->icount = 1;
     tbs[id].tc.ptr = h; tbs[id].icount = 1;
     tbs[id].jmp_reset_offset[0] = successor >= 0 ? 0 : TB_JMP_OFFSET_INVALID;
@@ -172,9 +179,10 @@ static uint32_t run(int id, int f)
 }
 int main(int argc, char **argv)
 {
-    assert(argc == 3);
+    assert(argc == 4);
     setenv("XEMU_WASM_TLB_HINT", argv[1], 1);
     setenv("XEMU_WASM_TB_STATS", argv[2], 1);
+    direct_metadata = argv[3][0] == '1';
     for (int i = 0; i < 8; i++) fixture(i, i % 2 == 0 ? i + 1 : -1);
     /* Opaque direct scaffold modules must never enter the legacy merger. */
     uint32_t body_len = headers[0].body_len;
@@ -265,7 +273,7 @@ int main(int argc, char **argv)
     assert(xemu_wasm_stats.n_region_shared == 3);
     assert(xemu_wasm_stats.n_region_aliases == 3);
     puts("PASS: native multi-entry routing, stale/index/foreign guards, "
-         "slot reuse, CFG limits");
+         "slot reuse, CFG limits; no-code direct metadata ignored");
     return 0;
 }
 '''
@@ -296,9 +304,10 @@ def main():
                        check=True)
         for hint in [0, 1]:
             for stats in [0, 1]:
-                subprocess.run([*shlex.split(os.environ.get("NODE", "node")),
-                                str(out), str(hint), str(stats)],
-                               check=True, timeout=30)
+                for metadata in [0, 1]:
+                    command = [*shlex.split(os.environ.get("NODE", "node")),
+                               str(out), str(hint), str(stats), str(metadata)]
+                    subprocess.run(command, check=True, timeout=30)
 
 
 if __name__ == "__main__":
