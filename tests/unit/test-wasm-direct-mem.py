@@ -93,6 +93,7 @@ int main(void) {
   XwdCapture cap={.version=XWD_VERSION,.valid=true,.pc=0x40000000,
                   .count=1,.fallthrough=true};
   unsigned size, mem; assert(scanf("%u%u",&size,&mem)==2);
+  cap.pcrel = mem == 2;   /* 2: PC-relative TB (EIP from env at run time) */
   cap.size=size; cap.end[0]=size;
   for(unsigned j=0;j<size;j++){unsigned v;assert(scanf("%x",&v)==1);cap.bytes[j]=v;}
   XwdPlan p, q;
@@ -133,7 +134,7 @@ function tlb(read, write){
 function setup(t, regs){
  bytes.fill(0x5a); v.setUint32(128,M.ENV,true);
  for(let i=0;i<8;i++)v.setUint32(M.ENV+4*i,regs[i],true);
- v.setUint32(M.ENV+32,0x40000000,true);
+ v.setUint32(M.ENV+32,t.eip||0x40000000,true);
  for(let i=0;i<4;i++)v.setUint32(M.ENV+40+4*i,t.lazy[i],true);
  v.setUint32(M.ENV+M.MASK,(M.N-1)<<M.EB,true);
  v.setUint32(M.ENV+M.TABLEP,M.TABLE,true);
@@ -186,7 +187,7 @@ for(const c of d.cases){
      assert.equal(lo(rec),lo(t.value),'hook store value '+c.hex);
     }
    }
-   if(c.kind==='push'){
+   if(c.kind==='push'||c.kind==='call'){
     const r=t.regs.slice();r[4]=(r[4]-4)>>>0;
     assert.deepEqual(got.r,r,'push regs '+c.hex);
    }else if(c.kind==='pop'){
@@ -206,7 +207,7 @@ for(const c of d.cases){
     }
     assert.equal(got.cc,want.cc,'flags '+mode+' '+c.hex);
    }
-   assert.equal(got.eip,(0x40000000+c.len)>>>0,'eip '+c.hex);
+   assert.equal(got.eip,((t.eip||0x40000000)+c.len+(c.rel||0))>>>0,'eip '+c.hex);
    probes++;
   }
  }
@@ -357,11 +358,51 @@ def main():
                          mem=bytes([(0x50 if push else 0x58) + n]).hex(),
                          reg=None, regs=regs, addr=addr, x=0, dst=n,
                          cross=False, store=push, value=value))
+    # PUSH imm8/imm32 and CALL rel32 (return address = pc + length)
+    for t in range(args.tests * 3):
+        regs = [rng.getrandbits(32) for _ in range(8)]
+        regs[4] = PAGE + 0x800 + 4 * rng.randrange(64)
+        kind = ('push8', 'push32', 'call')[t % 3]
+        if kind == 'push8':
+            iv = rng.getrandbits(8)
+            code, value = bytes([0x6a, iv]), ((iv ^ 0x80) - 0x80) & 0xffffffff
+            rel = 0
+        elif kind == 'push32':
+            iv = rng.getrandbits(32)
+            code, value, rel = bytes([0x68]) + iv.to_bytes(4, 'little'), iv, 0
+        else:
+            rel = rng.randrange(-0x10000, 0x10000)
+            code = bytes([0xe8]) + struct.pack('<i', rel)
+            value = (0x50000000 if t % 2 == 1 else 0x40000000) + 5
+        meta.append(dict(name=kind, kind='call' if kind == 'call' else 'push',
+                         pcrel=kind == 'call' and t % 2 == 1,
+                         width=32, mem=code.hex(), reg=None, regs=regs,
+                         addr=regs[4] - 4, x=0, dst=0, cross=False,
+                         store=True, value=value, rel=rel))
+    # MOV AL/EAX,[moffs] and [moffs],AL/EAX (+66: AX)
+    for t in range(args.tests * 2):
+        for pre, b, w in [(b'', 0xa1, 32), (b'', 0xa0, 8), (b'\x66', 0xa1, 16),
+                          (b'', 0xa3, 32), (b'', 0xa2, 8), (b'\x66', 0xa3, 16)]:
+            regs = [rng.getrandbits(32) for _ in range(8)]
+            regs[4] = PAGE + 0x800
+            cross = rng.random() < 0.15 and w > 8
+            off = (4096 - w // 8 + 1) if cross else rng.randrange(4096 - 4)
+            addr = PAGE + off
+            code = pre + bytes([b]) + addr.to_bytes(4, 'little')
+            store = b >= 0xa2
+            x = rng.choice([1, 2, 3])
+            reg = None if store else (pre + bytes([0x8b if w > 8 else 0x8a,
+                                                   0xc0 | x])).hex()
+            meta.append(dict(name=f'MOV moffs{w}{" store" if store else ""}',
+                             kind='store' if store else 'load', width=w,
+                             mem=code.hex(), reg=reg, regs=regs, addr=addr,
+                             x=x, dst=0, cross=cross, store=store,
+                             value=regs[0] & ((1 << w) - 1)))
     for h in DECLINE:
         meta.append(dict(name='decline', kind='decline', mem=h))
     lines = []
     for item in meta:
-        for code, allow in [(item['mem'], 1)] + (
+        for code, allow in [(item['mem'], 2 if item.get('pcrel') else 1)] + (
                 [(item['reg'], 0)] if item.get('reg') else []):
             bs = bytes.fromhex(code)
             lines.append(f'{len(bs)} {allow} ' + ' '.join(f'{x:02x}'
@@ -424,11 +465,13 @@ def main():
             slow = rng.getrandbits(32)
             js_cases.append(dict(
                 hex=item['mem'], len=len(bytes.fromhex(item['mem'])),
+                rel=item.get('rel', 0),
                 width=item['width'], store=item['store'], kind=item['kind'],
                 mem=paths, reg=reg_paths,
                 tests=[dict(regs=item['regs'], addr=item['addr'], x=item['x'],
                             dst=item['dst'], cross=item['cross'],
                             value=item['value'], page=page, slow=slow,
+                            eip=0x50000000 if item.get('pcrel') else None,
                             lazy=[0x89abcdef, 0x55, 0, 1])]))
         assert pos == len(out)
         flags_src = tmp/'flags.c'

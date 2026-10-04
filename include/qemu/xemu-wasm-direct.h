@@ -27,6 +27,8 @@ typedef enum XwdOp {
     XWD_JCC, XWD_CMOV, XWD_SETCC,
     /* Memory stage (xwd_decode_ex with allow_memory). */
     XWD_PUSH, XWD_POP,
+    /* CALL rel32: PUSH of the return address, then a direct jump */
+    XWD_CALL,
 } XwdOp;
 
 typedef struct XwdInsn {

@@ -152,7 +152,45 @@ static bool xwd_lea(XwdReader *r, XwdInsn *o)
  * with a memory operand; PUSH/POP r32. Read-modify-write, string, segment-
  * override and address-size forms still decline.
  */
+#ifdef QEMU_XEMU_WASM_STATS_H
+/*
+ * Coverage diagnostics: "xdecl:<op>" counts each decline by the opcode
+ * (0f xx for two-byte, with 66/prefix bytes kept) of the instruction that
+ * stopped decoding, so the forms that keep whole groups out are visible.
+ */
+static void xwd_note_decline(const XwdCapture *c, unsigned start, unsigned end)
+{
+    char key[40];
+    int n = snprintf(key, sizeof(key), "xdecl:");
+    for (unsigned i = start; i < end && i < start + 3 && n < 36; i++) {
+        n += snprintf(key + n, sizeof(key) - n, "%02x", c->bytes[i]);
+        if (c->bytes[i] != 0x0f && c->bytes[i] != 0x66 &&
+            !(c->bytes[i] >= 0x64 && c->bytes[i] <= 0x67) &&
+            c->bytes[i] != 0xf2 && c->bytes[i] != 0xf3) {
+            break;
+        }
+    }
+    xemu_wasm_count_add(g_intern_string(key), 1);
+}
+#endif
+
+static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
+                           unsigned *fail_start, unsigned *fail_end);
+
 static bool xwd_decode_ex(const XwdCapture *c, XwdPlan *p, bool allow_memory)
+{
+    unsigned fs = 0, fe = 0;
+    bool ok = xwd_decode_one(c, p, allow_memory, &fs, &fe);
+#ifdef QEMU_XEMU_WASM_STATS_H
+    if (!ok && fe > fs) {
+        xwd_note_decline(c, fs, fe);
+    }
+#endif
+    return ok;
+}
+
+static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
+                           unsigned *fail_start, unsigned *fail_end)
 {
     unsigned start = 0;
     bool terminal = false;
@@ -171,6 +209,8 @@ static bool xwd_decode_ex(const XwdCapture *c, XwdPlan *p, bool allow_memory)
         XwdInsn *o = &p->insn[i];
         XwdReader r = { .bytes = c->bytes, .pos = start,
                         .end = c->end[i], .valid = true };
+        *fail_start = start;
+        *fail_end = c->end[i];
         unsigned reg, rm, b;
         bool prefix = false;
         if (terminal || r.end <= start || r.end > c->size ||
@@ -331,6 +371,33 @@ static bool xwd_decode_ex(const XwdCapture *c, XwdPlan *p, bool allow_memory)
             }
         } else if (b == 0xf8 || b == 0xf9 || b == 0xf5) {
             o->op = b == 0xf8 ? XWD_CLC : b == 0xf9 ? XWD_STC : XWD_CMC;
+        } else if ((b == 0x6a || b == 0x68) && allow_memory && !prefix) {
+            /* PUSH imm8 (sign-extended) / imm32 */
+            o->op = XWD_PUSH;
+            o->immediate = true;
+            o->imm = b == 0x6a ? xwd_signed_byte(&r) : xwd_read(&r, 4);
+            o->mem = o->mem_store = true;
+            o->base = o->index = 0xff;
+        } else if (b == 0xe8 && allow_memory && !prefix) {
+            /* CALL rel32: push the next EIP, then jump (terminal) */
+            o->op = XWD_CALL;
+            o->imm = xwd_read(&r, 4);
+            o->mem = o->mem_store = true;
+            o->base = o->index = 0xff;
+            p->delta = r.end + o->imm;
+            terminal = true;
+        } else if (b >= 0xa0 && b <= 0xa3 && allow_memory) {
+            /* MOV AL/eAX, [moffs32] and MOV [moffs32], AL/eAX */
+            o->op = XWD_MOV;
+            if (!(b & 1)) {
+                o->width = 8;
+            }
+            o->mem = true;
+            o->mem_store = b >= 0xa2;
+            o->base = o->index = 0xff;
+            o->disp = xwd_read(&r, 4);
+            o->dst = o->mem_store ? XWD_MEMREG : 0;
+            o->src = o->mem_store ? 0 : XWD_MEMREG;
         } else if (b >= 0x50 && b <= 0x5f && allow_memory && !prefix) {
             /* PUSH r32 stores to [ESP-4]; POP r32 loads from [ESP] */
             o->op = b < 0x58 ? XWD_PUSH : XWD_POP;
@@ -672,10 +739,10 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
         }
         if (o->mem) {
             /* the access first: nothing architectural changes before it */
-            if (!xwd_mem_insn(&e, o, i, verify)) {
+            if (!xwd_mem_insn(&e, o, i, p, verify)) {
                 return false;
             }
-            if (o->op == XWD_PUSH) {
+            if (o->op == XWD_PUSH || o->op == XWD_CALL) {
                 xwd_local(&e, 0x20, XD_MADDR);
                 xwd_local(&e, 0x21, XD_RESULT);
                 xwd_put(&e, 4, 32);
