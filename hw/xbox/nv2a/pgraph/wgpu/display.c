@@ -640,7 +640,8 @@ static bool bind_render_surface(NV2AState *d, PGRAPHWgpuState *r,
     if (surface->backing) {
         /* Its owned range is larger than the image: scanout needs raw bytes. */
         pgraph_wgpu_materialize_retained(
-            d, surface->vram_addr, pgraph_wgpu_surface_memory_size(surface),
+            d, pgraph_wgpu_surface_memory_start(surface),
+            pgraph_wgpu_surface_memory_size(surface),
             false);
         return false;
     }

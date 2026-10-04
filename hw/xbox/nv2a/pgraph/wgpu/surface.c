@@ -273,11 +273,12 @@ static WGPUBuffer ensure_staging_dst(PGRAPHWgpuState *r, size_t size)
 static bool check_surface_overlaps_range(const SurfaceBinding *surface,
                                          hwaddr range_start, hwaddr range_len)
 {
-    hwaddr surface_end = surface->vram_addr +
+    hwaddr surface_start = pgraph_wgpu_surface_memory_start(surface);
+    hwaddr surface_end = surface_start +
                          pgraph_wgpu_surface_memory_size(surface);
     hwaddr range_end = range_start + range_len;
     return range_len &&
-           !(surface->vram_addr >= range_end || range_start >= surface_end);
+           !(surface_start >= range_end || range_start >= surface_end);
 }
 
 static void wb_flush_range(NV2AState *d, hwaddr start, hwaddr size,
@@ -624,7 +625,9 @@ void pgraph_wgpu_merge_surface_backing(PGRAPHState *pg,
 {
     if (surface->backing) {
         assert(!surface->backing->backing && surface->draw_dirty);
-        if (!surface->swizzle && surface->pitch != surface->backing->pitch) {
+        if (!surface->swizzle &&
+            (surface->pitch != surface->backing->pitch ||
+             surface->vram_addr != surface->backing->vram_addr)) {
             assert(pgraph_wgpu_is_linear_bgra(surface->backing));
             pgraph_wgpu_reshape_surface(pg, surface, surface->backing->view,
                                         surface->backing->vram_addr,
@@ -1072,7 +1075,8 @@ static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
     if (tcg_enabled()) {
         if (surface->width && surface->height) {
             surface->access_cb = mem_access_callback_insert(
-                qemu_get_cpu(0), d->vram, surface->vram_addr,
+                qemu_get_cpu(0), d->vram,
+                pgraph_wgpu_surface_memory_start(surface),
                 pgraph_wgpu_surface_memory_size(surface),
                 &surface_access_callback, d);
         } else {
@@ -1187,7 +1191,7 @@ static bool check_surfaces_overlap(const SurfaceBinding *surface,
                                    const SurfaceBinding *other_surface)
 {
     return check_surface_overlaps_range(
-        surface, other_surface->vram_addr,
+        surface, pgraph_wgpu_surface_memory_start(other_surface),
         pgraph_wgpu_surface_memory_size(other_surface));
 }
 
@@ -1741,7 +1745,7 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
         return;
     }
     /* the VRAM this upload reads may still have a copy on its way */
-    wb_flush_range(d, surface->vram_addr,
+    wb_flush_range(d, pgraph_wgpu_surface_memory_start(surface),
                    pgraph_wgpu_surface_memory_size(surface), "upload");
 
     if (surface->backing) {
@@ -2305,7 +2309,9 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
                   pgraph_wgpu_is_linear_bgra(src) &&
                   pgraph_wgpu_is_linear_bgra(target) &&
                   pgraph_wgpu_is_linear_bgra(backing) &&
-                  target->size <= backing->size;
+                  target->vram_addr >= backing->vram_addr &&
+                  target->vram_addr - backing->vram_addr + target->size <=
+                      backing->size;
     if (!upload || !tcg_enabled() || pg->surface_scale_factor != 1 ||
         !src->initialized || !src->texture || !src->draw_dirty ||
         !src->access_cb || src->upload_pending || src->download_pending ||
@@ -2336,7 +2342,8 @@ static SurfaceBinding *try_rebind_surface_prefix(NV2AState *d,
     SurfaceBinding *dst = allocate_surface_binding(d, target);
     assert(dst->texture != src->texture && dst->texture != backing->texture);
     pgraph_wgpu_merge_surface_backing(pg, src);
-    if (linear && backing->pitch != dst->pitch) {
+    if (linear && (backing->pitch != dst->pitch ||
+                   backing->vram_addr != dst->vram_addr)) {
         pgraph_wgpu_reshape_surface(pg, backing, dst->view, dst->vram_addr,
                                     dst->width, dst->height, false);
     } else {
@@ -2785,6 +2792,114 @@ static SurfaceBinding *try_transfer_z16_color_gpu(NV2AState *d,
     return dst;
 }
 
+/*
+ * Retained carve: a new linear target lies wholly inside the guest range of
+ * one dirty linear owner (a render image, or a view of a retained backing)
+ * at any offset, e.g. a post-process chain reusing a 640x480 frame's memory
+ * as 320x240 and then 320x120 strips (Rainbow Six 3 night/thermal vision).
+ * Instead of downloading the whole owner to VRAM, the target becomes a view
+ * of the owner's image: its bytes are reshaped from it on the GPU and it
+ * keeps the whole range retained and trapped, exactly like a prefix rebind.
+ * XEMU_WASM_RETAINED_CARVE=0 disables it.
+ */
+static SurfaceBinding *try_carve_retained_gpu(NV2AState *d,
+                                              const SurfaceBinding *target,
+                                              bool upload)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHWgpuState *r = pg->wgpu_renderer_state;
+    SurfaceBinding *src = NULL, *other;
+
+#ifdef EMSCRIPTEN
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_RETAINED_CARVE");
+        const char *all = getenv("XEMU_WASM_REBIND_TRANSFER");
+        enabled = !(e && *e == '0') && !(all && *all == '0');
+    }
+    if (!enabled) {
+        return NULL;
+    }
+#else
+    return NULL;
+#endif
+    if (!upload || !tcg_enabled() || pg->surface_scale_factor != 1 ||
+        !pgraph_wgpu_linear_reshape_enabled() ||
+        !pgraph_wgpu_is_linear_bgra(target)) {
+        return NULL;
+    }
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (check_surfaces_overlap(target, other)) {
+            if (src) {
+                return NULL;        /* exactly one owner */
+            }
+            src = other;
+        }
+    }
+    if (!src) {
+        return NULL;
+    }
+    SurfaceBinding *image = src->backing ? src->backing : src;
+    if (!src->initialized || !src->texture || !src->draw_dirty ||
+        !src->access_cb || src->upload_pending || src->download_pending ||
+        !pgraph_wgpu_is_linear_bgra_src(src) ||
+        !pgraph_wgpu_is_linear_bgra(image) ||
+        src->shape.anti_aliasing != target->shape.anti_aliasing ||
+        src->host_fmt.format != target->host_fmt.format ||
+        target->vram_addr < image->vram_addr ||
+        (target->vram_addr - image->vram_addr) % 4 ||
+        target->vram_addr - image->vram_addr + target->size > image->size) {
+        return NULL;
+    }
+    /* Deferred report writes must never land in a retained tail. */
+    WgpuQueryReport *report;
+    QSIMPLEQ_FOREACH(report, &r->draw.report_queue, entry) {
+        if (!report->clear) {
+            return NULL;
+        }
+    }
+    if (overlaps_active_pushbuffer(d, image)) {
+        return NULL;
+    }
+    QTAILQ_FOREACH(other, &r->surf.surfaces, entry) {
+        if (other != src && check_surfaces_overlap(image, other)) {
+            return NULL;
+        }
+    }
+
+    SurfaceBinding *dst = allocate_surface_binding(d, target);
+    assert(dst->texture != src->texture && dst->texture != image->texture);
+    pgraph_wgpu_merge_surface_backing(pg, src);
+    pgraph_wgpu_reshape_surface(pg, image, dst->view, dst->vram_addr,
+                                dst->width, dst->height, false);
+    dst->backing = image;
+    r->surf.cmd_gen++;
+    dst->initialized = true;
+    dst->upload_pending = false;
+    dst->draw_dirty = true;
+    /* Keep the entire old interval trapped until it has been materialized. */
+    register_cpu_access_callback(d, dst);
+#ifdef EMSCRIPTEN
+    char key[160];
+    snprintf(key, sizeof(key), "dl:gpu-retained-carve %ux%u+%u backing%ux%u",
+             dst->width, dst->height,
+             (unsigned)(dst->vram_addr - image->vram_addr),
+             image->width, image->height);
+    xemu_wasm_count(g_intern_string(key));
+#endif
+    if (src == image) {
+        detach_surface(d, src);
+        r->surf.num_retained++;
+    } else {
+        src->backing = NULL;
+        src->draw_dirty = false;
+        detach_surface(d, src);
+        QTAILQ_INSERT_HEAD(&r->surf.invalid_surfaces, src, entry);
+    }
+    surface_put(d, dst);
+    return dst;
+}
+
 static SurfaceBinding *try_transfer_surface_gpu(NV2AState *d,
                                                 SurfaceBinding *src,
                                                 const SurfaceBinding *target,
@@ -2928,10 +3043,12 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 SurfaceBinding zeta_entry;
                 populate_surface_binding_target_sized(
                     d, !color, surface->width, surface->height, &zeta_entry);
-                hwaddr color_end = surface->vram_addr +
+                hwaddr color_start =
+                    pgraph_wgpu_surface_memory_start(surface);
+                hwaddr color_end = color_start +
                                   pgraph_wgpu_surface_memory_size(surface);
                 hwaddr zeta_end = zeta_entry.vram_addr + zeta_entry.size;
-                is_compatible &= surface->vram_addr >= zeta_end ||
+                is_compatible &= color_start >= zeta_end ||
                                  zeta_entry.vram_addr >= color_end;
             }
 
@@ -2998,6 +3115,9 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
 
         if (should_create) {
             if (!transferred) {
+                surface = try_carve_retained_gpu(d, &target, upload);
+            }
+            if (!transferred && !surface) {
                 surface = try_stitch_surfaces_gpu(d, &target, upload);
                 if (!surface) {
                     surface = allocate_surface_binding(d, &target);

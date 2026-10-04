@@ -163,10 +163,19 @@ typedef struct PGRAPHWgpuSurfaceState {
     } compute;
 } PGRAPHWgpuSurfaceState;
 
-/* Owned guest range, not necessarily the current render image's footprint. */
+/*
+ * Owned guest range [start, start + size), not necessarily the current
+ * render image's footprint: a retained view owns its backing's whole range,
+ * and a linear view may sit at an offset inside it (retained carve).
+ */
 static inline size_t pgraph_wgpu_surface_memory_size(const SurfaceBinding *s)
 {
     return s->backing ? s->backing->size : s->size;
+}
+
+static inline hwaddr pgraph_wgpu_surface_memory_start(const SurfaceBinding *s)
+{
+    return s->backing ? s->backing->vram_addr : s->vram_addr;
 }
 
 /* pgraph.lock held: order the current render image into its private backing. */

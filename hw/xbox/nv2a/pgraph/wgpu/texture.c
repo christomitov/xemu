@@ -1975,9 +1975,9 @@ static bool check_textures_dirty(PGRAPHState *pg)
         SurfaceBinding *s;
         QTAILQ_FOREACH(s, &r->surf.surfaces, entry) {
             if (s->backing && pgraph_wgpu_is_linear_bgra(s->backing) &&
-                s->vram_addr < t->key.texture_vram_offset +
-                                   t->key.texture_length &&
-                t->key.texture_vram_offset < s->vram_addr +
+                s->backing->vram_addr < t->key.texture_vram_offset +
+                                            t->key.texture_length &&
+                t->key.texture_vram_offset < s->backing->vram_addr +
                                                 s->backing->size) {
                 /* Ownership can change without texture register writes. */
                 return true;
