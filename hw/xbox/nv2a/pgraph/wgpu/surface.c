@@ -1757,6 +1757,33 @@ void pgraph_wgpu_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     if (!(surface->upload_pending || force)) {
         return;
     }
+#ifdef EMSCRIPTEN
+    /*
+     * The pending clear overwrites every byte of @surface (all channels,
+     * whole rows): its old VRAM contents would be uploaded only to be
+     * replaced, and the upload first waits for any write-back still on its
+     * way into that VRAM (Splinter Cell re-creates its cleared 1024x512
+     * shadow map every frame). The clear makes the GPU copy current; a
+     * later download flushes older write-backs of the range first.
+     * Opt-in until A/B'd: XEMU_WASM_CLEAR_SKIP_UPLOAD=1.
+     */
+    static int clear_skip = -1;
+    if (clear_skip < 0) {
+        const char *e = getenv("XEMU_WASM_CLEAR_SKIP_UPLOAD");
+        clear_skip = e && *e == '1';
+    }
+    if (clear_skip && !force && !surface->backing && surface->texture &&
+        surface->width && surface->height &&
+        clear_overwrites(d, surface, surface)) {
+        xemu_wasm_count(g_intern_static_string("up:clear-skip"));
+        surface->upload_pending = false;
+        surface->draw_time = pg->draw_time;
+        surface->initialized = true;
+        surface->gpu_epoch++;
+        pgraph_wgpu_surface_rearm_cpu_trap(d, surface);
+        return;
+    }
+#endif
     /* the VRAM this upload reads may still have a copy on its way */
     wb_flush_range(d, pgraph_wgpu_surface_memory_start(surface),
                    pgraph_wgpu_surface_memory_size(surface), "upload");
