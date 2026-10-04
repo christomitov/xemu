@@ -32,7 +32,7 @@ C = r'''
     fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); \
     exit(1); } } while (0)
 
-static uint32_t next_inv = 1;
+static uint64_t next_inv = 1;
 static int checks;
 
 static uint64_t rng_state = 0x9e3779b97f4a7c15ull;
@@ -68,7 +68,7 @@ static void test_normalize(void)
 static void test_happy(void)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
     uint64_t v = 0;
 
     CHECK(xwmo_begin(&log, inv) == XWMO_OK);
@@ -95,7 +95,7 @@ static void test_happy(void)
 static void one_mismatch(int field, XwmoResult want)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
     uint64_t v;
     XwmoKind kind = field == 0 ? XWMO_STORE : XWMO_LOAD;
     uint64_t pc = 0x1000 + (field == 1), addr = 0x2000 + (field == 2);
@@ -132,7 +132,7 @@ static void test_mismatches(void)
 static void test_missing_extra(void)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
     uint64_t v;
 
     CHECK(xwmo_begin(&log, inv) == XWMO_OK);
@@ -151,7 +151,7 @@ static void test_missing_extra(void)
 static void test_cancel(void)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
     uint64_t v;
 
     /* a fault after one access: nothing verifies, end is not a pass */
@@ -181,7 +181,7 @@ static void test_cancel(void)
 static void test_stale(void)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
     uint64_t v;
 
     CHECK(xwmo_begin(&log, 0) == XWMO_STALE);
@@ -200,13 +200,31 @@ static void test_stale(void)
     /* duplicate and older ids are rejected */
     CHECK(xwmo_begin(&log, inv) == XWMO_STALE);
     CHECK(xwmo_begin(&log, inv - 1) == XWMO_STALE);
-    checks += 11;
+    /* a begin while an invocation is open is rejected; the open one is
+     * unaffected and still closes normally */
+    inv = next_inv++;
+    CHECK(xwmo_begin(&log, inv) == XWMO_OK);
+    CHECK(xwmo_observe(&log, inv, 1, 2, OI(2, 0, 0), XWMO_LOAD, 5) == XWMO_OK);
+    CHECK(xwmo_begin(&log, inv + 1) == XWMO_STALE);
+    CHECK(xwmo_shadow_load(&log, inv, 1, 2, OI(2, 0, 0), &v) == XWMO_OK);
+    CHECK(v == 5);
+    CHECK(xwmo_end(&log, inv) == XWMO_OK);
+    /* 64-bit ids: beyond 2^32 and up to UINT64_MAX */
+    next_inv = (UINT64_C(1) << 32) + 7;
+    inv = next_inv++;
+    CHECK(xwmo_begin(&log, inv) == XWMO_OK);
+    CHECK(xwmo_end(&log, inv) == XWMO_OK);
+    CHECK(xwmo_begin(&log, inv - (UINT64_C(1) << 32)) == XWMO_STALE);
+    CHECK(xwmo_begin(&log, UINT64_MAX - 1) == XWMO_OK);
+    CHECK(xwmo_end(&log, UINT64_MAX - 1) == XWMO_OK);
+    next_inv = UINT64_MAX;
+    checks += 22;
 }
 
 static void test_overflow_bad_oi(void)
 {
     static XwmoLog log;
-    uint32_t inv = next_inv++;
+    uint64_t inv = next_inv++;
 
     CHECK(xwmo_begin(&log, inv) == XWMO_OK);
     for (int i = 0; i < XWMO_MAX_ACCESSES; i++) {
@@ -236,7 +254,7 @@ static void test_random(int rounds)
         int n = rnd() % (XWMO_MAX_ACCESSES + 1);
         int mutate = rnd() % 3 == 0 && n ? (int)(rnd() % n) : -1;
         int field = rnd() % 5;
-        uint32_t inv = next_inv++;
+        uint64_t inv = next_inv++;
         XwmoResult want = XWMO_OK, got = XWMO_OK;
 
         for (int i = 0; i < n; i++) {
@@ -301,9 +319,9 @@ int main(int argc, char **argv)
     test_mismatches();
     test_missing_extra();
     test_cancel();
-    test_stale();
     test_overflow_bad_oi();
     test_random(rounds);
+    test_stale();   /* last: leaves the id space at UINT64_MAX */
     printf("%d\n", checks);
     return 0;
 }
