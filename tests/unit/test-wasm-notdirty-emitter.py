@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Actual admission emitter, native Wasm with a mock nonsuspending leaf import.
 
-Checks opt-in/default-off bytes, import typing, tag/alignment/width guards and
-profile restoration. Does not execute the production C leaf or Asyncify rewind.
+Checks default-on/opt-out bytes, import typing, tag/alignment/width guards and
+profile restoration with instruction-class profiling off/on. Does not execute
+the production C leaf or Asyncify rewind.
 """
 import argparse
 import importlib.util
@@ -50,6 +51,12 @@ C = leaf.PREFIX + leaf.MEMOP + r'''
 #define W_LOCAL_SET 0x21
 #define W_I32_CONST 0x41
 #define XPHASE_VCPU 0
+/* Actual phase remapper below; only metadata/string identities are mocked. */
+static XemuWasmInsnPhase wasm_tb_insn_class = XWIP_ELIGIBLE;
+const char *const xemu_wasm_insn_phase_names[XWIP_COUNT] = {
+    (const char *)16, (const char *)32, (const char *)48,
+    (const char *)64, (const char *)80
+};
 struct TB { unsigned cflags; };
 typedef struct {
     struct TB *gen_tb;
@@ -101,7 +108,7 @@ static void wasm_get_r32(TCGContext *s, unsigned reg) {
 }
 '''
 for name in ['wasm_tlb_hint_drop', 'wasm_call_idx', 'wasm_jit_profile',
-             'wasm_phase', 'wasm_notdirty_inline']:
+             'wasm_insn_phase_name', 'wasm_phase', 'wasm_notdirty_inline']:
     C += function(BACKEND, name)
 C += r'''
 int main(int argc, char **argv) {
@@ -115,7 +122,18 @@ int main(int argc, char **argv) {
         assert(registered == 1 && relocs == 1);
         assert(type_n == sizeof(expected) && !memcmp(types, expected, type_n));
     }
-    printf("{\"emitted\":%u,\"body\":[", emitted);
+    uint32_t probe = (uintptr_t)wasm_insn_phase_name("notdirty_inline");
+    uint32_t restore = (uintptr_t)wasm_insn_phase_name(
+        (wasm_jit_profile() & 2) ? "jit:st" : NULL);
+    if (xemu_wasm_insn_profile_enabled()) {
+        assert(restore == 16); /* eligible generated scope, not helper scope */
+    } else {
+        assert(!!restore == !!(wasm_jit_profile() & 2));
+    }
+    const char helper_scope[] = "notdirty_inline";
+    assert(wasm_insn_phase_name(helper_scope) == helper_scope);
+    printf("{\"emitted\":%u,\"phase_probe\":%u,\"phase_restore\":%u,\"body\":[",
+           emitted, probe, restore);
     for (unsigned i=0;i<s.n;i++) printf("%s%u", i ? "," : "", s.b[i]);
     puts("]}");
 }
@@ -155,7 +173,8 @@ def main():
                                             sz | atom | align, mmu, 0, True))
     # unset = default on; any explicit value other than '1' disables
     configs.append((None, None, 0, 0, 2, 0, 0, True))
-    configs.append((None, '1234', 0, 0, 2, 0, 0, False))
+    for dump in ['', '0', '1234']:
+        configs.append((None, dump, 0, 0, 2, 0, 0, False))
     for mode in ['', '0', 'invalid']:
         configs.append((mode, None, 0, 0, 2, 0, 0, False))
     for dump in ['', '0', '1234']:
@@ -164,6 +183,8 @@ def main():
                *[2 | (atom << 9) for atom in [1, 2, 3, 4, 6, 7]]]:
         configs.append(('1', None, 0, 0, op, 0, 0, False))
     configs.append(('1', None, 0, 0, 2, 0, 1, False))
+    configs = [(*config, insn_profile) for config in configs
+               for insn_profile in [0, 1]]
     with tempfile.TemporaryDirectory(prefix='notdirty-emitter-') as temp:
         temp = Path(temp)
         source, exe = temp/'test.c', temp/'test'
@@ -186,12 +207,14 @@ def main():
             assert not result['emitted'] and not result['body'], guard
         cases = []
         for i, config in enumerate(configs):
-            mode, dump, profile, hint, op, mmu, parallel, expect = config
+            (mode, dump, profile, hint, op, mmu, parallel, expect,
+             insn_profile) = config
             env = dict(os.environ)
             for key, value in [('NOTDIRTY_INLINE', mode), ('SMC_DUMP', dump),
                                ('JIT_PROFILE', str(profile)),
                                ('TLB_HINT', str(hint)), ('TB_STATS', '0'),
-                               ('PROFILE', '0')]:
+                               ('PROFILE', '0'),
+                               ('INSN_PROFILE', str(insn_profile))]:
                 key = 'XEMU_WASM_'+key
                 env.pop(key, None)
                 if value is not None:
@@ -206,19 +229,19 @@ def main():
             binary.write_bytes(module(bytes(result['body']), expect))
             subprocess.run(['wasm-validate', str(binary)], check=True)
             cases.append([str(binary), oi, expect, bool(profile & 4),
-                          bool(profile & 2)])
+                          result['phase_probe'], result['phase_restore']])
         if args.wasm:
             js = temp/'run.cjs'
             js.write_text('''const fs=require('fs'), assert=require('assert');
 const cases=JSON.parse(fs.readFileSync(process.argv[2]));let probes=0;
-for(const [file,oi,enabled,profile,restore] of cases){
+for(const [file,oi,enabled,profile,probe,restore] of cases){
   const memory=new WebAssembly.Memory({initial:1});
   const v=new DataView(memory.buffer);
   let calls=0, addr=0, accept=true;
   const code=new WebAssembly.Module(fs.readFileSync(file));
   const m=new WebAssembly.Instance(code,{env:{memory,leaf:(env,a,o)=>{
       assert.equal(env,4096);assert.equal(a>>>0,addr>>>0);assert.equal(o,oi);
-      assert.equal(v.getUint32(128,true)!==0x55555555,profile);
+      assert.equal(v.getUint32(128,true),profile ? probe : 0x55555555);
       calls++;return accept ? 8192 : 0;
     }}});
   const op=oi>>>5, sz=op&7, a=(op>>>5)&7;
@@ -232,7 +255,7 @@ for(const [file,oi,enabled,profile,restore] of cases){
     v.setUint32(260,(page|128)^extra,true);v.setUint32(128,0x55555555,true);
     assert.equal(m.exports.run(256,addr),allowed && accept ? 8192 : 0);
     assert.equal(calls-before,allowed ? 1 : 0);
-    if(allowed && profile)assert.equal(v.getUint32(128,true)!==0,restore);
+    if(allowed && profile)assert.equal(v.getUint32(128,true),restore);
     else assert.equal(v.getUint32(128,true),0x55555555);
     probes++;
   }
@@ -243,7 +266,8 @@ console.log(`PASS: ${probes} actual emitted-Wasm admission probes (mock leaf)`);
             manifest.write_text(json.dumps(cases))
             subprocess.run([*shlex.split(os.environ.get('NODE', 'node')),
                             str(js), str(manifest)], check=True)
-        print(f'PASS: {len(configs)} emitter gates/types/default-off checks')
+        print(f'PASS: {len(configs)} emitter gates/types/default-on/opt-out '
+              'and phase checks')
         if not args.wasm:
             print('No Wasm execution requested')
 
