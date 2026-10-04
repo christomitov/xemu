@@ -302,6 +302,24 @@ static bool xwd_decode_one(const XwdCapture *c, XwdPlan *p, bool allow_memory,
                 o->immediate = true;
                 o->imm = xwd_read(&r, o->width / 8);
             }
+        } else if (b == 0xc0 || b == 0xc1 || b == 0xd0 || b == 0xd1) {
+            /*
+             * SHL/SAL, SHR, SAR r/m by imm8 or 1, register operand only.
+             * The count is masked to 5 bits; a zero count changes nothing
+             * (no flags, no write), exactly as the original translation.
+             */
+            if (!xwd_modrm(&r, &reg, &rm) || reg < 4) {
+                return false;
+            }
+            o->op = reg == 5 ? XWD_SHR : reg == 7 ? XWD_SAR : XWD_SHL;
+            o->dst = rm;
+            if (!(b & 1)) {
+                o->width = 8;
+            }
+            o->imm = (b <= 0xc1 ? xwd_read(&r, 1) : 1) & 31;
+            if (!o->imm) {
+                o->op = XWD_NOP;
+            }
         } else if (b == 0xf6 || b == 0xf7) {
             if (!xwd_modrm_ex(&r, &reg, &rm, o, allow_memory) ||
                 (o->mem && reg != 0)) {
@@ -803,6 +821,30 @@ static bool xwd_emit_insns(XwdEmitter *out, const XwdPlan *p, bool verify)
                 xwd_byte(&e, 0x74);
                 xwd_byte(&e, 0x6a);
             }
+        } else if (o->op == XWD_SHL || o->op == XWD_SHR ||
+                   o->op == XWD_SAR) {
+            /*
+             * As the original: T0 (sign-extended for SAR), cc_src =
+             * T0 shifted by count - 1, cc_dst = result = T0 shifted by
+             * count; CC_OP_SHL for SHL, CC_OP_SAR for SHR and SAR.
+             */
+            uint8_t sh = o->op == XWD_SHL ? 0x74 :
+                         o->op == XWD_SHR ? 0x76 : 0x75;
+            xwd_get(&e, o->dst, o->width);
+            if (o->op == XWD_SAR && o->width != 32) {
+                xwd_byte(&e, o->width == 8 ? 0xc0 : 0xc1);
+            }
+            xwd_local(&e, 0x22, XD_LEFT);
+            xwd_const(&e, o->imm - 1);
+            xwd_byte(&e, sh);
+            xwd_local(&e, 0x21, XD_SRC);
+            xwd_local(&e, 0x20, XD_LEFT);
+            xwd_const(&e, o->imm);
+            xwd_byte(&e, sh);
+            xwd_local(&e, 0x22, XD_DST);
+            e.cc = o->op == XWD_SHL ? l->cc_shl[wi] : l->cc_sar[wi];
+            e.flags_dirty = true;
+            e.flags_cached = false;
         } else if (o->op == XWD_MOVZX || o->op == XWD_MOVSX) {
             xwd_get(&e, o->src, o->src_width);
             if (o->op == XWD_MOVSX) {

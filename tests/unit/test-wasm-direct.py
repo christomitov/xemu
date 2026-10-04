@@ -129,6 +129,7 @@ static const XwdLayout layout={.regs=0,.eip=32,.cc_dst=40,.cc_src=44,
  .cc_sbb={CC_OP_SBBB,CC_OP_SBBW,CC_OP_SBBL},
  .cc_inc={CC_OP_INCB,CC_OP_INCW,CC_OP_INCL},
  .cc_dec={CC_OP_DECB,CC_OP_DECW,CC_OP_DECL},.cc_eflags=CC_OP_EFLAGS,
+ .cc_shl={CC_OP_SHLB,CC_OP_SHLW,CC_OP_SHLL},.cc_sar={CC_OP_SARB,CC_OP_SARW,CC_OP_SARL},
  .phase_ptr=9000,.phase_cc=0x1111,.phase_generated=0x2222};
 int main(void) {
  check_capture();
@@ -335,7 +336,7 @@ def main():
     add([b'\xe9\x00\x00\x00\x80'], fall=False, native=False)
     for raw in ['8b00', '8900', '50', '58', 'c3', 'c9', 'e800000000',
                 'f001c0', 'f390', '678d00', '64678b00', '666690', 'd9e8',
-                '0f6fc0', '0f58c0', 'd1e0', '0fa2', '0f4400', '0f9400',
+                '0f6fc0', '0f58c0', 'd1c0', 'd3e0', '0fa2', '0f4400', '0f9400',
                 'fe00', 'ffc0ff', 'ffc8ff', 'ffd0', 'ffe0', 'fff0',
                 '66ebfe', '667400', '660f840000', '7400ff', '0f800000',
                 'b80102', 'b80102030400', 'c7c801020304', '8dc0']:
