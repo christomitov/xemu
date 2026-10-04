@@ -478,6 +478,17 @@ EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
     __atomic_store_n(&state_req, 1, __ATOMIC_SEQ_CST);
 }
 
+/*
+ * Quick load (like xemu's): restore the "bench" snapshot saved above, in
+ * place, without reloading the page (which would discard the in-memory HDD
+ * image holding it). Status: 3 loading, 4 loaded, -2 failed.
+ */
+EMSCRIPTEN_KEEPALIVE void xemu_wasm_load_state(void)
+{
+    __atomic_store_n(&state_status, 3, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&state_req, 2, __ATOMIC_SEQ_CST);
+}
+
 EMSCRIPTEN_KEEPALIVE int xemu_wasm_save_state_status(void)
 {
     return __atomic_load_n(&state_status, __ATOMIC_SEQ_CST);
@@ -487,7 +498,29 @@ static void xemu_wasm_service_state(void)
 {
     Error *err = NULL;
 
-    if (!__atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST)) {
+    int req = __atomic_exchange_n(&state_req, 0, __ATOMIC_SEQ_CST);
+
+    if (!req) {
+        return;
+    }
+    if (req == 2) {
+        bool running = runstate_is_running();
+        vm_stop(RUN_STATE_RESTORE_VM);
+        if (load_snapshot("bench", NULL, false, NULL, &err)) {
+            if (running) {
+                vm_start();
+            }
+            fprintf(stderr, "[state] loaded snapshot 'bench'\n");
+            __atomic_store_n(&state_status, 4, __ATOMIC_SEQ_CST);
+        } else {
+            fprintf(stderr, "XEMU-ERROR: load state: %s\n",
+                    err ? error_get_pretty(err) : "failed");
+            error_free(err);
+            if (running) {
+                vm_start();
+            }
+            __atomic_store_n(&state_status, -2, __ATOMIC_SEQ_CST);
+        }
         return;
     }
     /*
