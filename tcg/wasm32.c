@@ -154,6 +154,35 @@ EM_JS(void, wasm32_remove_function, (int idx), {
     Module.__wasm32_jit.remove(idx);
 });
 
+/*
+ * Asyncify.state mirrored into wasm memory for the vCPU thread, so generated
+ * code checks "is Asyncify unwinding?" with a load instead of a wasm->JS
+ * call to helper.u after each helper that may suspend (XEMU_WASM_UNWIND_MEM).
+ * Only the vCPU worker runs generated code, and only its Asyncify object
+ * gets the accessor, so one global is enough.
+ */
+int32_t wasm32_asyncify_state;
+
+EM_JS(void, wasm32_mirror_asyncify_state, (int32_t *addr), {
+    let state = Asyncify.state;
+    HEAP32[addr >> 2] = state;
+    Object.defineProperty(Asyncify, 'state', {
+        configurable: true, enumerable: true,
+        get() { return state; },
+        set(v) { state = v; HEAP32[addr >> 2] = v; },
+    });
+});
+
+bool wasm32_unwind_mem_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_UNWIND_MEM");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+}
+
 EM_JS(void, wasm32_js_init, (int *collected), {
     const J = Module.__wasm32_jit = {
         /* counts instances reclaimed by the GC */
@@ -440,6 +469,9 @@ static void wasm32_init(void)
                                TCG_STATIC_FRAME_SIZE);
     wasm_ctx.tci_tb_ptr = &tci_tb_ptr;
     wasm32_js_init(&instances_collected);
+    if (wasm32_unwind_mem_enabled()) {
+        wasm32_mirror_asyncify_state(&wasm32_asyncify_state);
+    }
     info_report("tcg: wasm32 JIT enabled (threshold %d..%d, budget %.0f%%)",
                 jit_threshold_low, jit_threshold_high, jit_budget * 100);
 }

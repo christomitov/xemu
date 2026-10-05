@@ -1457,9 +1457,20 @@ static void gen_func_type(const TCGHelperInfo *info)
 }
 
 /* If Asyncify is unwinding the stack, return from the TB function now. */
+extern int32_t wasm32_asyncify_state;
+bool wasm32_unwind_mem_enabled(void);
+
 static void wasm_handle_unwinding(TCGContext *s)
 {
-    wasm_call_idx(s, CHECK_UNWINDING_IDX);
+    if (wasm32_unwind_mem_enabled()) {
+        /* Asyncify.state != Unwinding (1), mirrored by the vCPU worker */
+        wasm_i32_const(s, (int32_t)(uintptr_t)&wasm32_asyncify_state);
+        wasm_mem(s, W_I32_LOAD, 0);
+        wasm_i32_const(s, 1);
+        wasm8(s, W_I32_NE);
+    } else {
+        wasm_call_idx(s, CHECK_UNWINDING_IDX);
+    }
     wasm8(s, W_I32_EQZ);
     wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     wasm_jit_phase(s, 1, NULL);
