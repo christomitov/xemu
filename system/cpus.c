@@ -24,6 +24,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/xemu-wasm-stats.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "monitor/monitor.h"
 #include "qemu/coroutine-tls.h"
 #include "qapi/error.h"
@@ -581,6 +582,8 @@ void bql_lock_impl(const char *file, int line)
 {
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
 
+    XWLC_NOTE(XWLC_BQL, file, line, false);
+
 #ifdef EMSCRIPTEN
     {
         static int bql_trace;
@@ -604,6 +607,7 @@ void bql_lock_impl(const char *file, int line)
             bool vcpu = current_cpu != NULL;
             const char *xphase_old_ = xemu_wasm_phase[XPHASE_VCPU];
             if (vcpu) {
+                XWLC_NOTE(XWLC_BQL_WAIT, file, line, true);
                 XPHASE_SET(XPHASE_VCPU, "bql_wait");
             }
             const char *hold_file = bql_holder_file;

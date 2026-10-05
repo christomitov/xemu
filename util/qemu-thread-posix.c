@@ -91,6 +91,8 @@ void qemu_mutex_destroy(QemuMutex *mutex)
 
 #ifdef EMSCRIPTEN
 #include "qemu/xemu-wasm-stats.h"
+#include "qemu/xemu-wasm-lock-census.h"
+#include "qemu-wasm-lock-census.c.inc"
 /* set on the vCPU thread: its blocking waits are named in the profile */
 __thread int xemu_wasm_is_vcpu;
 
@@ -111,11 +113,13 @@ void qemu_mutex_lock_impl(QemuMutex *mutex, const char *file, const int line)
     qemu_mutex_pre_lock(mutex, file, line);
 #ifdef EMSCRIPTEN
     if (xemu_wasm_is_vcpu && pthread_mutex_trylock(&mutex->lock) != 0) {
+        XWLC_NOTE(XWLC_LOCK, file, line, true);
         const char *old = xemu_wasm_phase[XPHASE_VCPU];
         XPHASE_SET(XPHASE_VCPU, wait_site("lock", file, line));
         err = pthread_mutex_lock(&mutex->lock);
         XPHASE_SET(XPHASE_VCPU, old);
     } else if (xemu_wasm_is_vcpu) {
+        XWLC_NOTE(XWLC_LOCK, file, line, false);
         err = 0;    /* got it with the trylock */
     } else
 #endif
@@ -131,6 +135,9 @@ int qemu_mutex_trylock_impl(QemuMutex *mutex, const char *file, const int line)
 
     assert(mutex->initialized);
     err = pthread_mutex_trylock(&mutex->lock);
+#ifdef EMSCRIPTEN
+    XWLC_NOTE(XWLC_TRY, file, line, err == EBUSY);
+#endif
     if (err == 0) {
         qemu_mutex_post_lock(mutex, file, line);
         return 0;

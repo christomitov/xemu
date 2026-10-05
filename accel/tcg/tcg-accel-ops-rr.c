@@ -24,6 +24,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "qemu/xemu-wasm-stats.h"
 #include "qemu/lockable.h"
 #include "system/tcg.h"
@@ -195,6 +196,7 @@ static void *rr_cpu_thread_fn(void *arg)
 #ifdef EMSCRIPTEN
     extern __thread int xemu_wasm_is_vcpu;
     xemu_wasm_is_vcpu = 1;
+    xemu_wasm_lock_census_init();
 #endif
 #ifdef EMSCRIPTEN
     { extern void xemu_wasm_assert_stack(unsigned long, const char *);
