@@ -1,13 +1,6 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 
-#ifdef EMSCRIPTEN
-bool xemu_wasm_bql_spin_read;
-void bql_wasm_cond_wait_hint(QemuMutex *mutex, bool held)
-{
-}
-#endif
-
 static bool bql_is_locked = false;
 static uint32_t bql_unlock_blocked;
 

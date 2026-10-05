@@ -426,17 +426,8 @@ static QemuCond qemu_cpu_cond;
 /* system init */
 static QemuCond qemu_pause_cond;
 
-#ifdef EMSCRIPTEN
-bool xemu_wasm_bql_spin_read;
-static uint32_t bql_wasm_held;
-#endif
-
 void qemu_init_cpu_loop(void)
 {
-#ifdef EMSCRIPTEN
-    const char *spin_read = getenv("XEMU_WASM_BQL_SPIN_READ");
-    qatomic_set(&xemu_wasm_bql_spin_read, spin_read && *spin_read == '1');
-#endif
     qemu_init_sigbus();
     qemu_cond_init(&qemu_cpu_cond);
     qemu_cond_init(&qemu_pause_cond);
@@ -545,35 +536,7 @@ void bql_update_status(bool locked)
     /* This function should only be used when an update happened.. */
     assert(bql_locked() != locked);
     set_bql_locked(locked);
-#ifdef EMSCRIPTEN
-    if (qatomic_read(&xemu_wasm_bql_spin_read)) {
-        /* Set only AFTER real acquisition, clear BEFORE real release. */
-        qatomic_set(&bql_wasm_held, locked);
-    }
-#endif
 }
-
-#ifdef EMSCRIPTEN
-/* Timed condwait retains coroutine-local bql_locked while pthread temporarily
- * releases the mutex. Publish that release/reacquisition without changing TLS.
- */
-void bql_wasm_cond_wait_hint(QemuMutex *mutex, bool held)
-{
-    if (mutex_is_bql(mutex)) {
-        qatomic_set(&bql_wasm_held, held);
-    }
-}
-
-static bool bql_wasm_spin_busy(unsigned *checks)
-{
-    /* This is only a hint, never permission to enter. Periodic real probes
-     * also guarantee progress if a future release path misses publication.
-     * No sleeps, yields, clocks, or guest IRQ/poll batching.
-     */
-    return qatomic_read(&xemu_wasm_bql_spin_read) &&
-           (++*checks & 63) && qatomic_read(&bql_wasm_held);
-}
-#endif
 
 static uint32_t bql_unlock_blocked;
 
@@ -651,9 +614,7 @@ void bql_lock_impl(const char *file, int line)
             int hold_line = bql_holder_line;
             int64_t wait_t0 = xemu_wasm_stats_now_ns();
             XSTAT_T0();
-            unsigned spin_checks = 0;
-            while (bql_wasm_spin_busy(&spin_checks) ||
-                   qemu_mutex_trylock(&bql) != 0) {
+            while (qemu_mutex_trylock(&bql) != 0) {
                 if (++bql_spin_count == 100000000UL) {
                     bql_spin_count = 0;
                 }

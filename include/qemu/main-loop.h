@@ -288,11 +288,6 @@ bool mutex_is_bql(QemuMutex *mutex);
  */
 void bql_update_status(bool locked);
 
-#ifdef EMSCRIPTEN
-extern bool xemu_wasm_bql_spin_read;
-void bql_wasm_cond_wait_hint(QemuMutex *mutex, bool held);
-#endif
-
 /**
  * bql_block: Allow/deny releasing the BQL
  *
