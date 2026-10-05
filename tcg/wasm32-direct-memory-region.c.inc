@@ -64,6 +64,7 @@ static bool xwr_mem_miss(XwdEmitter *e, const XwdMemAccess *a,
     if (m->region->miss_tag) {
         xwd_local(e, 0x20, addr_local);
         xwd_local(e, 0x20, m->region->miss_tag);
+        xwd_const(e, a->page_mask);
         xwd_const(e, a->a_mask);
         xwd_const(e, a->store);
     }

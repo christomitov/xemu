@@ -63,7 +63,8 @@ int main(void) {
         bool expected_current = cpu.cflags_next_tb == UINT32_MAX;
         curr_calls = 0;
         memset(&stats, 0, sizeof(stats));
-        wasm32_direct_mem_miss_classify(&cpu, addr, tag, mask, store);
+        wasm32_direct_mem_miss_classify(&cpu, addr, tag, 0xfffff000u,
+                                        mask, store);
         assert(cpu.cflags_next_tb == ((old & ~CF_COUNT_MASK) | 1 |
                                      CF_NO_GOTO_TB | CF_NO_GOTO_PTR));
         assert(curr_calls == expected_current);

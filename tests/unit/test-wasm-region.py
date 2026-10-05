@@ -92,7 +92,8 @@ void wasm32_direct_mem_end(CPUArchState *e) { abort(); }
 void wasm32_direct_mem_cancel(void) { abort(); }
 void wasm32_direct_mem_miss(CPUArchState *e) { abort(); }
 void wasm32_direct_mem_miss_classify(CPUArchState *e, uint32_t a,
-                                    uint32_t t, uint32_t m, uint32_t s)
+                                    uint32_t t, uint32_t p, uint32_t m,
+                                    uint32_t s)
 { abort(); }
 #define MAX_INSTANCES 16
 static WasmInstance instances[MAX_INSTANCES];

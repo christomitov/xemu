@@ -239,6 +239,8 @@ static bool xwr_imports(XwdRegion *r, uint32_t *hq, const uint8_t **hty,
     static const uint8_t one[] = {0x60, 1, 0x7f, 0};
     static const uint8_t two[] = {0x60, 2, 0x7f, 0x7f, 0};
     static const uint8_t five[] = {0x60, 5, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0};
+    static const uint8_t six[] = {0x60, 6, 0x7f, 0x7f, 0x7f, 0x7f,
+                                0x7f, 0x7f, 0};
     static const uint8_t observe[] = {0x60, 6, 0x7f, 0x7f, 0x7f, 0x7f,
                                     0x7f, 0x7e, 0};
     static const uint8_t none[] = {0x60, 0, 0};
@@ -255,7 +257,7 @@ static bool xwr_imports(XwdRegion *r, uint32_t *hq, const uint8_t **hty,
     xwr_import((uintptr_t)wasm32_direct_mem_##fn, ty, sizeof(ty), \
                hq, hty, htylen, nh, &r->field)
     if (r->mode == 1) {
-        return r->miss_tag ? XWR_MEM_IMPORT(miss_classify, five, mem_miss) :
+        return r->miss_tag ? XWR_MEM_IMPORT(miss_classify, six, mem_miss) :
                             XWR_MEM_IMPORT(miss, one, mem_miss);
     }
     return XWR_MEM_IMPORT(begin, two, mem_begin) &&

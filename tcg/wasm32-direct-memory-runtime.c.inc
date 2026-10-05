@@ -104,10 +104,10 @@ void wasm32_direct_mem_miss(CPUArchState *env)
  * cannot span pages. This diagnoses the existing conservative policy only.
  */
 void wasm32_direct_mem_miss_classify(CPUArchState *env, uint32_t addr,
-                                    uint32_t tag, uint32_t a_mask,
-                                    uint32_t store)
+                                    uint32_t tag, uint32_t page_mask,
+                                    uint32_t a_mask, uint32_t store)
 {
-    uint32_t page = addr & (uint32_t)TARGET_PAGE_MASK;
+    uint32_t page = addr & page_mask;
     bool notdirty = store && tag == (page | TLB_NOTDIRTY);
 
     if (store) {
@@ -122,9 +122,9 @@ void wasm32_direct_mem_miss_classify(CPUArchState *env, uint32_t addr,
         XSTAT_INC(n_direct_miss_align);
     } else if (notdirty) {
         XSTAT_INC(n_direct_miss_notdirty_aligned);
-    } else if ((tag & (uint32_t)TARGET_PAGE_MASK) != page) {
+    } else if ((tag & page_mask) != page) {
         XSTAT_INC(n_direct_miss_page);
-    } else if (tag & ~(uint32_t)TARGET_PAGE_MASK) {
+    } else if (tag & ~page_mask) {
         XSTAT_INC(n_direct_miss_flags);
     } else {
         XSTAT_INC(n_direct_miss_other);
