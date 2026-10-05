@@ -1,0 +1,370 @@
+Setting up EMSDK environment (suppress these messages with EMSDK_QUIET=1)
+Adding directories to PATH:
+PATH += /root/src/xemu-wasm/emsdk
+PATH += /root/src/xemu-wasm/emsdk/upstream/emscripten
+
+Setting environment variables:
+PATH = /root/src/xemu-wasm/emsdk:/root/src/xemu-wasm/emsdk/upstream/emscripten:/root/.pi/agent/bin:/root/.local/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin:/root/.local/share/pnpm:/usr/games:/usr/local/games:/snap/bin
+EMSDK = /root/src/xemu-wasm/emsdk
+EMSDK_NODE = /root/src/xemu-wasm/emsdk/node/24.19.0_64bit/bin/node
+emmake: "ninja -j2" in "/root/src/xemu-wasm/xemu-astra/build"
+[1/16] Generating xemu-version-macro.h with a custom command (wrapped by meson to capture output)
+[2/16] Generating qemu-version.h with a custom command (wrapped by meson to capture output)
+[3/16] Compiling C object libqemuutil.a.p/util_qemu-thread-posix.c.o
+In file included from ../util/qemu-thread-posix.c:21:
+In file included from ../util/qemu-thread-common.h:17:
+In file included from /root/src/xemu-wasm/xemu-astra/include/qemu/main-loop.h:28:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio.h:25:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:92:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   92 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:194:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  194 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:210:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  210 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:222:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  222 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:112:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  112 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:253:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  253 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:260:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  260 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:400:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  400 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:461:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  461 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+10 warnings generated.
+[4/16] Compiling C object libqemuutil.a.p/util_aio-posix.c.o
+[5/16] Compiling C object libqemuutil.a.p/util_async.c.o
+[6/16] Compiling C object libqemuutil.a.p/util_main-loop.c.o
+../util/main-loop.c:422:20: warning: unused variable 'addr_printed' [-Wunused-variable]
+  422 |         static int addr_printed;
+      |                    ^~~~~~~~~~~~
+1 warning generated.
+[7/16] Compiling C object libqemuutil.a.p/util_qemu-timer.c.o
+../util/qemu-timer.c:353:6: warning: no previous prototype for function 'qemu_poll_kick' [-Wmissing-prototypes]
+  353 | void qemu_poll_kick(void)
+      |      ^
+../util/qemu-timer.c:353:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  353 | void qemu_poll_kick(void)
+      | ^
+      | static 
+../util/qemu-timer.c:420:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  420 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:461:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  461 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:476:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  476 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:480:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  480 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:484:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  484 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:488:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  488 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:503:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  503 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:506:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  506 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:523:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  523 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:529:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  529 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:534:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  534 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:538:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  538 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:542:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  542 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:553:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  553 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:563:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  563 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:586:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  586 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:594:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  594 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:602:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  602 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:615:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  615 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:641:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  641 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:716:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  716 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:721:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  721 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:725:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  725 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:836:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  836 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+25 warnings generated.
+[8/16] Compiling C object libqmp.a.p/monitor_qmp-cmds-control.c.o
+[9/16] Linking static target libqemuutil.a
+[10/16] Generating block.syms with a custom command (wrapped by meson to capture output)
+[11/16] Generating qemu.syms with a custom command (wrapped by meson to capture output)
+[12/16] Compiling C object libsystem.a.p/system_cpus.c.o
+../system/cpus.c:582:23: warning: unused variable 'bql_lock_fn' [-Wunused-variable]
+  582 |     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
+      |                       ^~~~~~~~~~~
+1 warning generated.
+[13/16] Compiling C object libsystem.a.p/system_vl.c.o
+In file included from ../system/vl.c:35:
+In file included from /root/src/xemu-wasm/xemu-astra/include/exec/cpu-common.h:13:
+/root/src/xemu-wasm/xemu-astra/include/hw/core/cpu.h:286:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  286 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:63:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/scsi/scsi.h:4:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio.h:25:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:798:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  798 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:1220:46: warning: incompatible pointer types passing 'size_t *' (aka 'unsigned long *') to parameter of type 'gsize *' (aka 'unsigned int *') [-Wincompatible-pointer-types]
+ 1220 |         if (!g_file_get_contents(file, &buf, &size, &err)) {
+      |                                              ^~~~~
+/root/src/xemu-wasm/wasm-deps/target/include/glib-2.0/glib/gfileutils.h:122:45: note: passing argument to parameter 'length' here
+  122 |                               gsize        *length,
+      |                                             ^
+../system/vl.c:3119:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3119 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3127:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3127 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3136:9: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3136 | #ifndef EMSCRIPTEN
+      |         ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3159:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3159 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3992:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3992 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4083:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4083 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4091:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4091 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+17 warnings generated.
+[14/16] Compiling C object libqemu-i386-softmmu.a.p/xemu-version.c.o
+[15/16] Compiling C object libsystem.a.p/accel_tcg_tcg-accel-ops-rr.c.o
+[16/16] Linking target qemu-system-i386.js
+em++: warning: WASM_BIGINT is deprecated (no longer needed. Should only ever be implicitly disabled by -sWASM=0). Please open a bug if you have a continuing need for this setting [-Wdeprecated]
+warning: Asyncify removelist contained a non-matching pattern: 'absl::*'

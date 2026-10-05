@@ -1,0 +1,106 @@
+{
+  "runs": [
+    {
+      "run": "deadline-a1",
+      "restore": 1,
+      "commit": "perf-12-19-g8b8b3ce0b6",
+      "steady_fps": 7.878,
+      "flips_per_cpu_s": 7.973,
+      "vcpu_cpu_s": 39.76,
+      "cpu_thread": {
+        "tid": "3571897",
+        "ticks": 3976,
+        "name": "node"
+      },
+      "xemu_env": {
+        "XEMU_WASM_DEBUG_DEADLINE_RESTORE": "1",
+        "XEMU_WASM_TB_STATS": "0",
+        "XEMU_WASM_PROFILE": "0",
+        "XEMU_WASM_LOADVM": "bench"
+      },
+      "clocks": {
+        "n_pit_tick": 999.975,
+        "n_vblank": 59.95,
+        "n_apu_frame": 1499.925
+      }
+    },
+    {
+      "run": "deadline-b1",
+      "restore": 0,
+      "commit": "perf-12-19-g8b8b3ce0b6",
+      "steady_fps": 8.512,
+      "flips_per_cpu_s": 8.606,
+      "vcpu_cpu_s": 39.74,
+      "cpu_thread": {
+        "tid": "3572581",
+        "ticks": 3974,
+        "name": "node"
+      },
+      "xemu_env": {
+        "XEMU_WASM_DEBUG_DEADLINE_RESTORE": "0",
+        "XEMU_WASM_TB_STATS": "0",
+        "XEMU_WASM_PROFILE": "0",
+        "XEMU_WASM_LOADVM": "bench"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0,
+        "n_vblank": 59.925,
+        "n_apu_frame": 1500.2
+      }
+    },
+    {
+      "run": "deadline-b2",
+      "restore": 0,
+      "commit": "perf-12-19-g8b8b3ce0b6",
+      "steady_fps": 8.22,
+      "flips_per_cpu_s": 8.323,
+      "vcpu_cpu_s": 39.77,
+      "cpu_thread": {
+        "tid": "3573234",
+        "ticks": 3977,
+        "name": "node"
+      },
+      "xemu_env": {
+        "XEMU_WASM_DEBUG_DEADLINE_RESTORE": "0",
+        "XEMU_WASM_TB_STATS": "0",
+        "XEMU_WASM_PROFILE": "0",
+        "XEMU_WASM_LOADVM": "bench"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0,
+        "n_vblank": 59.95,
+        "n_apu_frame": 1500.05
+      }
+    },
+    {
+      "run": "deadline-a2",
+      "restore": 1,
+      "commit": "perf-12-19-g8b8b3ce0b6",
+      "steady_fps": 8.122,
+      "flips_per_cpu_s": 8.231,
+      "vcpu_cpu_s": 39.73,
+      "cpu_thread": {
+        "tid": "3573896",
+        "ticks": 3973,
+        "name": "node"
+      },
+      "xemu_env": {
+        "XEMU_WASM_DEBUG_DEADLINE_RESTORE": "1",
+        "XEMU_WASM_TB_STATS": "0",
+        "XEMU_WASM_PROFILE": "0",
+        "XEMU_WASM_LOADVM": "bench"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0,
+        "n_vblank": 59.95,
+        "n_apu_frame": 1499.6
+      }
+    }
+  ],
+  "means": {
+    "0": 8.464500000000001,
+    "1": 8.102
+  },
+  "change": 0.04474203900271556,
+  "wasm_sha256": "34c7df4161ecbf722c57ec6f70c2f5931e822884371d0a5dc9f3d70737ada714"
+}

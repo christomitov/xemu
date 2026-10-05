@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "<stdin>", line 10, in <module>
+  File "<frozen runpy>", line 287, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/root/src/xemu-wasm/xemu-astra/tests/unit/test-wasm-notdirty-emitter.py", line 30, in <module>
+    store.index('wasm_save_regs(') < store.index('wasm_handle_unwinding('))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ValueError: substring not found
+REPRODUCED: existing fixture aborts on candidate before running tests; no build/emulator started.

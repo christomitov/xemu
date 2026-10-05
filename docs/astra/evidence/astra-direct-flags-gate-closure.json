@@ -1,0 +1,69 @@
+{
+  "status": "FLAGS mode2 gate PASSED; reported freeze closed as benign SC title idle",
+  "candidate": "c9344c8b09490bc0310266391f3449179261e6a8",
+  "integration": "d296c69c69",
+  "control_build": "a0b795d2ef",
+  "controls": [
+    {
+      "job": "scpath-on1",
+      "hold_report": "/root/src/xemu-wasm/uploads/20261004-060500-hot.json",
+      "after_start_report": "/root/src/xemu-wasm/uploads/20261004-060535-hot.json",
+      "build": "a0b795d2ef",
+      "flags": "?env=XEMU_WASM_DIRECT_X86=2,XEMU_WASM_DIRECT_FLAGS=1",
+      "hold_samples": 55,
+      "hold_t": [
+        116,
+        170
+      ],
+      "hold_apu_state": "phase=halted-wait sectl=0x00000007 fectl=0x00001f8f xcntmode=0 pause=0 idle=0 set_irq=0 frames=93157",
+      "after_start_apu_state": "phase=throttle sectl=0x0000000f fectl=0x0000100f xcntmode=1 pause=0 idle=0 set_irq=0 frames=132693"
+    },
+    {
+      "job": "scpath-off1",
+      "hold_report": "/root/src/xemu-wasm/uploads/20261004-060912-hot.json",
+      "after_start_report": "/root/src/xemu-wasm/uploads/20261004-060947-hot.json",
+      "build": "a0b795d2ef",
+      "flags": "(none)",
+      "hold_samples": 54,
+      "hold_t": [
+        116.8,
+        169.8
+      ],
+      "hold_apu_state": "phase=halted-wait sectl=0x00000007 fectl=0x00001f8f xcntmode=0 pause=0 idle=0 set_irq=0 frames=89165",
+      "after_start_apu_state": "phase=throttle sectl=0x0000000f fectl=0x0000100f xcntmode=1 pause=0 idle=0 set_irq=0 frames=133493"
+    },
+    {
+      "job": "scpath-on2",
+      "hold_report": "/root/src/xemu-wasm/uploads/20261004-061324-hot.json",
+      "after_start_report": "/root/src/xemu-wasm/uploads/20261004-061358-hot.json",
+      "build": "a0b795d2ef",
+      "flags": "?env=XEMU_WASM_DIRECT_X86=2,XEMU_WASM_DIRECT_FLAGS=1",
+      "hold_samples": 54,
+      "hold_t": [
+        116.8,
+        169.8
+      ],
+      "hold_apu_state": "phase=halted-wait sectl=0x00000007 fectl=0x00001f8f xcntmode=0 pause=0 idle=0 set_irq=0 frames=93149",
+      "after_start_apu_state": "phase=throttle sectl=0x0000000f fectl=0x0000100f xcntmode=1 pause=0 idle=0 set_irq=0 frames=132661"
+    },
+    {
+      "job": "scpath-off2",
+      "hold_report": "/root/src/xemu-wasm/uploads/20261004-061735-hot.json",
+      "after_start_report": "/root/src/xemu-wasm/uploads/20261004-061810-hot.json",
+      "build": "a0b795d2ef",
+      "flags": "(none)",
+      "hold_samples": 54,
+      "hold_t": [
+        116.8,
+        169.8
+      ],
+      "hold_apu_state": "phase=halted-wait sectl=0x00000007 fectl=0x00001f8f xcntmode=0 pause=0 idle=0 set_irq=0 frames=93941",
+      "after_start_apu_state": "phase=throttle sectl=0x0000000f fectl=0x0000100f xcntmode=1 pause=0 idle=0 set_irq=0 frames=138317"
+    }
+  ],
+  "correction": "The title/control cards in scpath runs are SC, not R6. Both plain and stage had flips0 AND APU0 throughout the retained hold. Prior post-Start tail summaries obscured this hold.",
+  "recovery": "Single Enter/Start at t170 advances every control to SC controls/loading card and resumes APU around1500/s. Separate SC/GR/R6 gameplay differentials passed.",
+  "caveat": "Original frozen frame not pixel-identical; original report lacks APU phase. Closure based on matched title sequence, disabled-device state, signature and input-dependent recovery.",
+  "next": "Optional mode1+FLAGS A/B allowed, still default-off. Resume next independently gated memory/precise-continuation stage with original-execution-value mode2 verification. No memory correctness/performance claim from this gate.",
+  "workaround": "None. No emulator source, clocks, IRQ pacing or yields changed."
+}

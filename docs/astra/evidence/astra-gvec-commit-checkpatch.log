@@ -1,0 +1,13 @@
+WARNING: added, moved or deleted file(s):
+
+  tcg/wasm32-gvec-sat16.c.inc
+  tests/unit/test-wasm-gvec-sat16.mjs
+  tests/unit/test-wasm-gvec-sat16.py
+
+Does MAINTAINERS need updating?
+
+total: 0 errors, 1 warnings, 635 lines checked
+
+Your patch has style problems, please review.  If any of these errors
+are false positives report them to the maintainer, see
+CHECKPATCH in MAINTAINERS.

@@ -1,0 +1,353 @@
+Setting up EMSDK environment (suppress these messages with EMSDK_QUIET=1)
+Adding directories to PATH:
+PATH += /root/src/xemu-wasm/emsdk
+PATH += /root/src/xemu-wasm/emsdk/upstream/emscripten
+
+Setting environment variables:
+PATH = /root/src/xemu-wasm/emsdk:/root/src/xemu-wasm/emsdk/upstream/emscripten:/root/.pi/agent/bin:/root/.local/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin:/root/.local/share/pnpm:/usr/games:/usr/local/games:/snap/bin
+EMSDK = /root/src/xemu-wasm/emsdk
+EMSDK_NODE = /root/src/xemu-wasm/emsdk/node/24.19.0_64bit/bin/node
+emmake: "ninja -j2" in "/root/src/xemu-wasm/xemu-astra/build"
+[1/7] Generating xemu-version-macro.h with a custom command (wrapped by meson to capture output)
+[2/7] Generating qemu-version.h with a custom command (wrapped by meson to capture output)
+[3/7] Compiling C object libqmp.a.p/monitor_qmp-cmds-control.c.o
+[4/7] Compiling C object libsystem.a.p/system_vl.c.o
+In file included from ../system/vl.c:35:
+In file included from /root/src/xemu-wasm/xemu-astra/include/exec/cpu-common.h:13:
+/root/src/xemu-wasm/xemu-astra/include/hw/core/cpu.h:286:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  286 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:63:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/scsi/scsi.h:4:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio.h:25:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:798:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  798 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:1220:46: warning: incompatible pointer types passing 'size_t *' (aka 'unsigned long *') to parameter of type 'gsize *' (aka 'unsigned int *') [-Wincompatible-pointer-types]
+ 1220 |         if (!g_file_get_contents(file, &buf, &size, &err)) {
+      |                                              ^~~~~
+/root/src/xemu-wasm/wasm-deps/target/include/glib-2.0/glib/gfileutils.h:122:45: note: passing argument to parameter 'length' here
+  122 |                               gsize        *length,
+      |                                             ^
+../system/vl.c:3119:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3119 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3127:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3127 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3136:9: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3136 | #ifndef EMSCRIPTEN
+      |         ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3159:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3159 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3992:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3992 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4083:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4083 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4091:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4091 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+17 warnings generated.
+[5/7] Compiling C object libqemu-i386-softmmu.a.p/xemu-version.c.o
+[6/7] Compiling C object libsystem.a.p/tcg_tcg.c.o
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:766:27: warning: no previous prototype for function 'xemu_wasm_helper_prof_dump' [-Wmissing-prototypes]
+  766 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_helper_prof_dump(void)
+      |                           ^
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:766:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  766 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_helper_prof_dump(void)
+      |                      ^
+      |                      static 
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:847:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  847 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:869:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  869 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:890:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  890 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:945:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  945 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1573:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1573 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1633:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1633 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1803:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1803 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1820:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1820 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1847:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1847 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1868:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1868 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1840:9: warning: unused variable 'slot' [-Wunused-variable]
+ 1840 |     int slot = 0;
+      |         ^~~~
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1965:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1965 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2005:30: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2005 | #if defined(XBOX) && defined(EMSCRIPTEN) && defined(CONFIG_SOFTMMU) && \
+      |                              ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2443:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2443 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2453:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2453 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2496:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2496 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2552:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2552 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2565:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2565 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2576:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 2576 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:4:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-blueprint.c.inc:184:16: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  184 |         return false;
+      |                ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:4:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-blueprint.c.inc:191:20: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  191 |             return false;
+      |                    ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:4:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-blueprint.c.inc:200:24: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  200 |                 return false;
+      |                        ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:4:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-blueprint.c.inc:205:28: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  205 |                     return false; /* Ambiguous or duplicate direct metadata. */
+      |                            ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:66:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   66 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:119:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  119 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:3908:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3908 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:4910:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4910 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:4923:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4923 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/tcg.c:1130:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:1265:13: warning: unused function 'add_block_placeholder' [-Wunused-function]
+ 1265 | static void add_block_placeholder(int label, int pos)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+In file included from ../tcg/tcg.c:1130:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/tcg-target.c.inc:2597:
+In file included from /root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct-glue.c.inc:3:
+/root/src/xemu-wasm/xemu-astra/tcg/wasm32/../wasm32-direct.c.inc:511:13: warning: unused function 'xwd_decode' [-Wunused-function]
+  511 | static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
+      |             ^~~~~~~~~~
+31 warnings generated.
+[7/7] Linking target qemu-system-i386.js
+em++: warning: WASM_BIGINT is deprecated (no longer needed. Should only ever be implicitly disabled by -sWASM=0). Please open a bug if you have a continuing need for this setting [-Wdeprecated]
+warning: Asyncify removelist contained a non-matching pattern: 'absl::*'

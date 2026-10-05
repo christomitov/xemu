@@ -1,0 +1,292 @@
+{
+  "build": "perf-12-22-g46766c8812",
+  "window": [
+    20,
+    60
+  ],
+  "attribution": "entire acquisition wait attributed to atomic holder snapshot near initial failure, not full holder critical-section duration",
+  "holders": {
+    "cpus.c:606": {
+      "calls_per_s": 0.4,
+      "wait_ms_per_s": 0.011302399999999999
+    },
+    "pgraph.c:964": {
+      "calls_per_s": 0.5,
+      "wait_ms_per_s": 0.0033472
+    },
+    "cpu-common.c:164": {
+      "calls_per_s": 51.85,
+      "wait_ms_per_s": 7.9259712
+    },
+    "rcu.c:309": {
+      "calls_per_s": 0.0,
+      "wait_ms_per_s": 0.0
+    },
+    "main-loop.c:413": {
+      "calls_per_s": 1159.925,
+      "wait_ms_per_s": 32.8495168
+    },
+    "?:0": {
+      "calls_per_s": 1.025,
+      "wait_ms_per_s": 0.0873984
+    },
+    "xemu-wasm.c:1173": {
+      "calls_per_s": 0.0,
+      "wait_ms_per_s": 0.0
+    }
+  },
+  "pairs": [
+    {
+      "waiter": "cpu-exec.c:764",
+      "holder": "cpus.c:606",
+      "calls_per_s": 0.0,
+      "wait_ms_per_s": 0.0,
+      "mean_us": 0
+    },
+    {
+      "waiter": "cpu-exec.c:840",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.1,
+      "wait_ms_per_s": 0.000384,
+      "mean_us": 3.84
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:263",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 0.011238399999999999,
+      "mean_us": 449.536
+    },
+    {
+      "waiter": "cpu-common.c:376",
+      "holder": "rcu.c:309",
+      "calls_per_s": 0.0,
+      "wait_ms_per_s": 0.0,
+      "mean_us": 0
+    },
+    {
+      "waiter": "cputlb.c:3049",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 12.35,
+      "wait_ms_per_s": 0.729632,
+      "mean_us": 59.07951417004048
+    },
+    {
+      "waiter": "cputlb.c:2444",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 31.725,
+      "wait_ms_per_s": 1.361024,
+      "mean_us": 42.90067769897558
+    },
+    {
+      "waiter": "nv2a.c:397",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 1.225,
+      "wait_ms_per_s": 0.0515264,
+      "mean_us": 42.06236734693877
+    },
+    {
+      "waiter": "physmem.c:3444",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 0.00012159999999999999,
+      "mean_us": 4.864
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:263",
+      "holder": "?:0",
+      "calls_per_s": 0.175,
+      "wait_ms_per_s": 0.0590592,
+      "mean_us": 337.48114285714286
+    },
+    {
+      "waiter": "cpu-exec.c:764",
+      "holder": "?:0",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 8.32e-05,
+      "mean_us": 3.328
+    },
+    {
+      "waiter": "physmem.c:3444",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 100.8,
+      "wait_ms_per_s": 2.8774272,
+      "mean_us": 28.54590476190476
+    },
+    {
+      "waiter": "cputlb.c:2444",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.05,
+      "wait_ms_per_s": 0.0003968,
+      "mean_us": 7.936
+    },
+    {
+      "waiter": "cputlb.c:3049",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 9.6e-05,
+      "mean_us": 3.84
+    },
+    {
+      "waiter": "nv2a.c:396",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 3.525,
+      "wait_ms_per_s": 2.3751104,
+      "mean_us": 673.7901843971631
+    },
+    {
+      "waiter": "cpu-exec.c:764",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 6.125,
+      "wait_ms_per_s": 2.394496,
+      "mean_us": 390.9381224489796
+    },
+    {
+      "waiter": "cpu-exec.c:840",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 932.95,
+      "wait_ms_per_s": 25.3986176,
+      "mean_us": 27.223985851331797
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:312",
+      "holder": "?:0",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 0.00018559999999999998,
+      "mean_us": 7.424
+    },
+    {
+      "waiter": "cpu-exec.c:764",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 71.875,
+      "wait_ms_per_s": 1.6343231999999999,
+      "mean_us": 22.738409739130436
+    },
+    {
+      "waiter": "physmem.c:3444",
+      "holder": "?:0",
+      "calls_per_s": 0.4,
+      "wait_ms_per_s": 0.0121344,
+      "mean_us": 30.336
+    },
+    {
+      "waiter": "cpu-exec.c:840",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 38.375,
+      "wait_ms_per_s": 1.1004543999999998,
+      "mean_us": 28.67633615635179
+    },
+    {
+      "waiter": "physmem.c:3444",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 1.35,
+      "wait_ms_per_s": 0.5197887999999999,
+      "mean_us": 385.0287407407407
+    },
+    {
+      "waiter": "cputlb.c:2444",
+      "holder": "cpus.c:606",
+      "calls_per_s": 0.05,
+      "wait_ms_per_s": 0.0017855999999999998,
+      "mean_us": 35.712
+    },
+    {
+      "waiter": "cputlb.c:3049",
+      "holder": "cpus.c:606",
+      "calls_per_s": 0.05,
+      "wait_ms_per_s": 0.00128,
+      "mean_us": 25.6
+    },
+    {
+      "waiter": "nv2a.c:396",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 8.525,
+      "wait_ms_per_s": 0.7701504,
+      "mean_us": 90.34022287390029
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:312",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 0.425,
+      "wait_ms_per_s": 0.0252864,
+      "mean_us": 59.49741176470588
+    },
+    {
+      "waiter": "cpu-exec.c:840",
+      "holder": "?:0",
+      "calls_per_s": 0.2,
+      "wait_ms_per_s": 0.00144,
+      "mean_us": 7.2
+    },
+    {
+      "waiter": "nv2a.c:397",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 0.05,
+      "wait_ms_per_s": 0.0183488,
+      "mean_us": 366.976
+    },
+    {
+      "waiter": "cputlb.c:2444",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 1.825,
+      "wait_ms_per_s": 1.318016,
+      "mean_us": 722.2005479452055
+    },
+    {
+      "waiter": "cputlb.c:3049",
+      "holder": "cpu-common.c:164",
+      "calls_per_s": 0.575,
+      "wait_ms_per_s": 0.1885184,
+      "mean_us": 327.85808695652173
+    },
+    {
+      "waiter": "physmem.c:3444",
+      "holder": "cpus.c:606",
+      "calls_per_s": 0.3,
+      "wait_ms_per_s": 0.008236799999999999,
+      "mean_us": 27.456
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:312",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.275,
+      "wait_ms_per_s": 0.00224,
+      "mean_us": 8.145454545454545
+    },
+    {
+      "waiter": "cputlb.c:3049",
+      "holder": "?:0",
+      "calls_per_s": 0.1,
+      "wait_ms_per_s": 0.012128,
+      "mean_us": 121.28
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:263",
+      "holder": "xemu-wasm.c:1173",
+      "calls_per_s": 0.0,
+      "wait_ms_per_s": 0.0,
+      "mean_us": 0
+    },
+    {
+      "waiter": "cputlb.c:2444",
+      "holder": "?:0",
+      "calls_per_s": 0.1,
+      "wait_ms_per_s": 0.002368,
+      "mean_us": 23.68
+    },
+    {
+      "waiter": "cpu-exec.c:764",
+      "holder": "pgraph.c:964",
+      "calls_per_s": 0.025,
+      "wait_ms_per_s": 0.0001088,
+      "mean_us": 4.352
+    },
+    {
+      "waiter": "tcg-accel-ops-rr.c:263",
+      "holder": "main-loop.c:413",
+      "calls_per_s": 0.05,
+      "wait_ms_per_s": 0.0015295999999999999,
+      "mean_us": 30.592
+    }
+  ]
+}

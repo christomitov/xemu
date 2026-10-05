@@ -1,0 +1,33 @@
+{
+  "status": "READY_FOR_MAC_MODE2_THEN_ACTIVE_AB",
+  "commit": "5aba538951f2265576eea23689601498f001e91a",
+  "branch": "astra-direct-x86-regions",
+  "prerequisites": ["967dc35bc93ccb6e8edb2c2b7eafaf87d46728d6", "5751fb29273fa447feb0950b24e7194190ec050d"],
+  "private_full_build": "/tmp/astra-direct-region-build-final.log",
+  "emulator_gate": {
+    "scenario": "30-second serial Node dashboard intro, no disc, small HDD",
+    "outcome": {"reason": "final_JSON", "rc": 0, "elapsed": 31.11},
+    "env": {"XEMU_WASM_TB_MB": "64", "XEMU_WASM_DIRECT_X86": "2", "XEMU_WASM_DIRECT_FLAGS": "1", "XEMU_WASM_DIRECT_REGIONS": "1", "XEMU_WASM_TB_STATS": "0"},
+    "direct_regions": 7,
+    "direct_region_members": 17,
+    "direct_region_checked": 26168,
+    "direct_flags_checked": 23319,
+    "direct_jcc_checked": 23319,
+    "direct_mismatch": 0,
+    "frames_total": 407,
+    "positive_check_seconds": "t3 through t12 during actual intro execution",
+    "clock_observation": "PIT999-1001/s, vblank59-60/s; active intro APU1496-1504/s, last partial-active sample1249 before guest-controlled dashboard idle. No new TSC rate measurement.",
+    "tail": "Dashboard idle after about12s, flips/APU0 with PIT/vblank continuing; not claimed as active gameplay.",
+    "source": "/tmp/astra-ic-mem-direct-regions-mode2-1.json"
+  },
+  "fixtures": {
+    "actual_builder_mock_reference": "12 configurations: active/mode2 x ordinary/mixed/resumable group x hints0/1; retained CFG, independent reference execution, alias entry, per-member IRQ/skips, original reset slots, changed/stale/foreign targets, whole-group fallback",
+    "legacy_builder": "8 configurations passed",
+    "codec": "131361 probes passed after blueprint-version2 update",
+    "verifier": "180 policy cases and actual-source GPR/CC/PC/IO/equal-PC-wrong-slot negatives; pending/coverage semantics passed",
+    "scope": "Mock CPU/TB reference fragments are not emulator gameplay or Asyncify lifecycle proof. The separate real emulator smoke above provides actual retained-bank coverage."
+  },
+  "remaining": ["Mac SC/GR/R6 mode2 with positive region checks and zero mismatches", "Same-build lean plain versus active regional A/B with means/p10, phase validity and clocks", "Additional active/eviction/unwind correctness smoke when local coordinator build releases the marker"],
+  "not_qualified": ["Mac gameplay", "FPS improvement", "memory/stack/precise-fault/Asyncify continuation stage", "lifecycle stress from this basic run (evictions/rewinds were0)"],
+  "notes": "Candidate immediately sent to coordinator and user. Active smoke attempt was refused BUILD_BUSY before launch; no run or pass claimed. No source expansion or polish required for this first candidate."
+}

@@ -1,0 +1,37 @@
+{
+  "feature": "XEMU_WASM_NOTDIRTY_INLINE",
+  "decision": "RETAIN DEFAULT ON after perf-12 same-build lean confirmation on a1c0f8d9d0: GR repeated gains, valid SC pair neutral, R6 pairs neutral with matching p10 and no sustained regression. Explicit =0 opt-out and safety guards remain. SC default2 was menu/video-only and is excluded; replacement pair3 pending. Historical on3 dips remain recorded, not causally explained. Reconsider default if sustained SC/R6 regressions recur.",
+  "deployed_confirmation": {
+    "tag": "perf-12",
+    "emulator_build": "a1c0f8d9d0",
+    "comparison": "same-build lean default versus explicit NOTDIRTY_INLINE=0",
+    "gr": [[26.1, 24.3], [25.6, 23.7]],
+    "sc_valid": [[26.2, 26.3]],
+    "sc_excluded": "default2 stayed at60fps on menu/video; replacement pair3 queued",
+    "r6": [[29.3, 29.4], [29.4, 29.4]],
+    "r6_p10": [28, 28],
+    "source": "User-reported completed confirmation results; no sustained SC/R6 regression",
+    "harness_fix": "5cd500e7fc integrated/pushed as e4d7ad059f;476 configurations PASS"
+  },
+  "default_changed_by_astra": false,
+  "build": "94d833ffb1",
+  "headless": {
+    "label": "claude2",
+    "all_four_outcomes": "final_JSON, rc=0",
+    "on_save": {"inline": 598503, "miss": 19, "evictions": 23872, "jit_rewind": 36, "test_unwind": 54, "sse_checked": 1333948, "sse_mismatch": 0, "saved_bytes": 12189696, "save_completed_s": 12.402},
+    "on_restore": {"inline": 6507, "jit_rewind": 22, "test_unwind": 12, "virtual_host_ratio_tail5": 1.001},
+    "limits": "All tails have zero flips/APU. Both restores additionally have zero evictions and SSE checks; those are covered in saves. Preserve coverage_pass=false, not four complete checker passes. Save APU totals about13,700 prove no-host-audio does not imply no emulated APU execution."
+  },
+  "mac": {
+    "jobs": ["ss-gr-on1", "ss-gr-off1", "ss-gr-on2"],
+    "final_reports": ["/root/src/xemu-wasm/uploads/20261004-094448-hot.json", "/root/src/xemu-wasm/uploads/20261004-094910-hot.json", "/root/src/xemu-wasm/uploads/20261004-095331-hot.json"],
+    "flags": "TB_MB=64, JIT_MAX=256, TEST_UNWIND=1000; inline on/on versus off",
+    "save_load": "Console statuses save2 at t176 and load4 at t198, each about0.3s; gameplay later resumes in all variants, APU about1500/s.",
+    "errors": "Final report errors[] and no emulator abort reported. Console logs contain matched pointer-lock PAGEERRORs; not literally error-free browser logs.",
+    "clock_issue": "Historical94d833ffb1 reports: all19 retained samples t199-218 have n_vblank=0 in all three runs while PIT~1000/s and APU~1500/s. These are not clean exact-clock passes; no NOTDIRTY-specific attribution.",
+    "clock_fix": "Reviewed a669231685671a8e1fc968d1ed2d4dc977f8deda: successful in-place load explicitly re-arms the non-migrated GUI/VBLANK timer from restored virtual time. This removes the stale future deadline without changing the existing period or introducing yields/catch-up batching. User reports plain-GR ssv-gr1: post-load vblank~60/s, PIT1000, immediate flips10-25/s; load-second47 vblanks coincides with0.3s VM pause. Shared deadline issue closed on this source/follow-up evidence; original94d833ffb1 runs remain historically clock-failing."
+  },
+  "performance": "GR normal-speed25.4/23.8 and25.1/22.9 on/off: repeated+1.6/+2.2. Earlier on3 SC25.8/27.5 and R6walk26.5/29.4 had sustained slow windows; keep those records. Follow-up matched SC5 TB_STATS both24.8/25.5 is diagnostic and slightly negative, not a lean gain. SC6 lean32.6/27.1 is unusually high and not credited as a win. R6 lean on5b/off5 is29.3/29.3; R6 lean on6/off6 is29.4/27.5. No invalidation bursts; new slow seconds have low decline rates, with some R6 TB-generation bursts. This supports a monitored default-on rollout, not proof of a universal gain or an explanation of on3. Subsequent deployed same-build lean confirmation is recorded in deployed_confirmation; do not use the historical outliers or unmatched diagnostic arms as gain evidence.",
+  "miss_audit": "n_notdirty_inline_miss counts all C-leaf declines, not specifically busy locks or bitmap code hits. Emitter tag/alignment bypasses do not call the leaf and are not counted. Page trylock never waits; the admitted byte/word/dword bitmap query is bounded. Claimed61-62k/s miss maxima already occur before the sustained slow windows. SC on3 t123 last60s miss avg52.8/max69.1 covers t~63-123; R6 on3 t145 last60s avg38.5/max81 covers t~85-145, and t206 last60s avg31.1/max39 covers t~146-206. Large miss bursts are therefore not evidenced during most of the reported stalls. Retain success-path/extra emitted-code/native-tiering hypotheses pending correlated data; no causal claim or guard relaxation.",
+  "retained_constraints": "Keep =0 opt-out, conservative admissions, original dirty/SMC/coherence and continuation semantics. Counter co-occurrence is not proof of every after-effect replay path."
+}

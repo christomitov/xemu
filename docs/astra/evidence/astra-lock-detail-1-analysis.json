@@ -1,0 +1,189 @@
+{
+  "build": "perf-12-23-gda00444096",
+  "wasm_sha256": "dae7b1527dd64d98edb89496c8958515deb4c1a5a7df97245ff79bc10e79409d",
+  "window": [
+    20,
+    60
+  ],
+  "overflows": {
+    "overflow": 0,
+    "wait-overflow": 0,
+    "detail-overflow": 0
+  },
+  "wakes_per_s": 1954.025,
+  "clocks": {
+    "n_pit_tick": 999.975,
+    "n_vblank": 59.95,
+    "n_apu_frame": 1500.0
+  },
+  "scopes": [
+    {
+      "key": "ml:timers:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 44.4493632,
+      "observed_holder_wait_ms_per_s": 8.0581248
+    },
+    {
+      "key": "ml:setup:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 37.327264,
+      "observed_holder_wait_ms_per_s": 6.5699968
+    },
+    {
+      "key": "ml:timer:64",
+      "callback": "xemu_wasm_gui_tick",
+      "calls_per_s": 59.95,
+      "calls_per_wake": 0.030680262535023862,
+      "held_ms_per_s": 32.961088,
+      "observed_holder_wait_ms_per_s": 13.13152
+    },
+    {
+      "key": "ml:timer:934",
+      "callback": "pit_irq_timer",
+      "calls_per_s": 1999.95,
+      "calls_per_wake": 1.0235027699236192,
+      "held_ms_per_s": 18.7078016,
+      "observed_holder_wait_ms_per_s": 53.9496832
+    },
+    {
+      "key": "ml:deadline:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 15.06304,
+      "observed_holder_wait_ms_per_s": 0.9853184
+    },
+    {
+      "key": "ml:deadline:1",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 14.9694656,
+      "observed_holder_wait_ms_per_s": 0.49047040000000003
+    },
+    {
+      "key": "ml:timer:967",
+      "callback": "ohci_frame_boundary",
+      "calls_per_s": 999.975,
+      "calls_per_wake": 0.5117513849618096,
+      "held_ms_per_s": 6.806848,
+      "observed_holder_wait_ms_per_s": 0.2341184
+    },
+    {
+      "key": "ml:glib-prepare:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 6.0728127999999995,
+      "observed_holder_wait_ms_per_s": 0.0669696
+    },
+    {
+      "key": "ml:glib-check:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 5.809433599999999,
+      "observed_holder_wait_ms_per_s": 3.1372736
+    },
+    {
+      "key": "ml:glib-dispatch:0",
+      "callback": null,
+      "calls_per_s": 972.3,
+      "calls_per_wake": 0.49758831130615006,
+      "held_ms_per_s": 4.779232,
+      "observed_holder_wait_ms_per_s": 1.9070592
+    },
+    {
+      "key": "ml:outer:0",
+      "callback": null,
+      "calls_per_s": 0.0,
+      "calls_per_wake": 0.0,
+      "held_ms_per_s": 4.38896,
+      "observed_holder_wait_ms_per_s": 0.27639040000000004
+    },
+    {
+      "key": "ml:notify:0",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 3.8334208,
+      "observed_holder_wait_ms_per_s": 0.26485759999999997
+    },
+    {
+      "key": "ml:notify:2",
+      "callback": null,
+      "calls_per_s": 1954.025,
+      "calls_per_wake": 1.0,
+      "held_ms_per_s": 3.6593408,
+      "observed_holder_wait_ms_per_s": 0.4123584
+    },
+    {
+      "key": "ml:bh:7265",
+      "callback": "qemu_graphic_console_init",
+      "calls_per_s": 965.0,
+      "calls_per_wake": 0.49385243279896623,
+      "held_ms_per_s": 1.8464703999999998,
+      "observed_holder_wait_ms_per_s": 0.6909824
+    },
+    {
+      "key": "ml:fd-read:7253",
+      "callback": "aio_context_notifier_cb",
+      "calls_per_s": 16.65,
+      "calls_per_wake": 0.008520873581453665,
+      "held_ms_per_s": 1.8405568,
+      "observed_holder_wait_ms_per_s": 0.7399488000000001
+    },
+    {
+      "key": "ml:timer:65",
+      "callback": "state_timer_cb",
+      "calls_per_s": 9.975,
+      "calls_per_wake": 0.005104847686186205,
+      "held_ms_per_s": 0.2844224,
+      "observed_holder_wait_ms_per_s": 0.12350080000000001
+    },
+    {
+      "key": "ml:bh:7274",
+      "callback": "thread_pool_completion_bh",
+      "calls_per_s": 7.325,
+      "calls_per_wake": 0.0037486726116605466,
+      "held_ms_per_s": 0.25487360000000003,
+      "observed_holder_wait_ms_per_s": 0.7429631999999999
+    },
+    {
+      "key": "ml:bh:7279",
+      "callback": "qemu_graphic_console_init",
+      "calls_per_s": 0.0,
+      "calls_per_wake": 0.0,
+      "held_ms_per_s": 0.0,
+      "observed_holder_wait_ms_per_s": 0.0
+    },
+    {
+      "key": "ml:bh:514",
+      "callback": "ide_restart_bh",
+      "calls_per_s": 0.0,
+      "calls_per_wake": 0.0,
+      "held_ms_per_s": 0.0,
+      "observed_holder_wait_ms_per_s": 0.0
+    },
+    {
+      "key": "ml:bh:7252",
+      "callback": "co_schedule_bh_cb",
+      "calls_per_s": 0.0,
+      "calls_per_wake": 0.0,
+      "held_ms_per_s": 0.0,
+      "observed_holder_wait_ms_per_s": 0.0
+    },
+    {
+      "key": "ml:timer:4868",
+      "callback": "autoneg_timer",
+      "calls_per_s": 0.0,
+      "calls_per_wake": 0.0,
+      "held_ms_per_s": 0.0,
+      "observed_holder_wait_ms_per_s": 0.0
+    }
+  ]
+}

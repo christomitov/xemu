@@ -1,0 +1,100 @@
+{
+  "reason": "User-authorized ASTRA untracked root-log cleanup",
+  "files": [
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x39aae000-3626074-v8.log",
+      "bytes": 3205,
+      "sha256": "b986c3c2a3398c08448ac3203868678c59af4e6db55304a55cfb70923a92c1f6"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x39c54000-3626074-v8.log",
+      "bytes": 20661,
+      "sha256": "bd278d54946615dd74d57a613223fa7b5475088328f3f4dafb8bb5f969902d6b"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x39d21000-3626074-v8.log",
+      "bytes": 5948,
+      "sha256": "a02cf653e538824273b4859088f44991e7732635708243c84a64ead663de3d0a"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x44095000-3626074-v8.log",
+      "bytes": 5480,
+      "sha256": "9eb039973176369736ac6414058bd81739c1c7f3398adb3bee859bd08daad3f8"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x48bd8000-3626074-v8.log",
+      "bytes": 7565,
+      "sha256": "2783fb3d68c5cd6496e626fc9b0e0df76d755ebe75912dc0ccc06af0a3ad12f8"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x6b46000-3602964-v8.log",
+      "bytes": 3142,
+      "sha256": "e1386579022ff7659bfdc4de04673e54ea50778151a03f51fa4960f7ac57647b"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x6cec000-3602964-v8.log",
+      "bytes": 20573,
+      "sha256": "f1f71b234def0f4cc6b310f0650c1220b7cc37fd1f592d7658ff3680e097324a"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x6dbe000-3602964-v8.log",
+      "bytes": 5951,
+      "sha256": "db6b881c0a2f54b790c5f85752419c1c9c0f0c7d8d5f2a9f62092397eb575c36"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x6fe7000-3602964-v8.log",
+      "bytes": 5644,
+      "sha256": "50cb5ae3a80f9ef6f4e5d377ef7851c06fc752e9e89157058f45c0c38a018c86"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7687bc002000-3626074-v8.log",
+      "bytes": 4571,
+      "sha256": "263cd2615578d91261ada6fdb69ae7925263eca0fbf564b73639cfb3c6c2e445"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7687bc0b6000-3626074-v8.log",
+      "bytes": 4451,
+      "sha256": "464594bd083b4fabe062202ca17dbfc981a4be9900b24b64835e4bd8c9e4bf11"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7687bca70000-3626074-v8.log",
+      "bytes": 5755,
+      "sha256": "3f322b00961cfb18204372496b99921258818c620ceebd8ba7a27bb6d4009dd9"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7687bcbbb000-3626074-v8.log",
+      "bytes": 4433,
+      "sha256": "58888c96e247e4bd4d0bf7c2730ad124ddd8762b77438a1a733db5e12c898f1d"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7687bd2cc000-3626074-v8.log",
+      "bytes": 5706,
+      "sha256": "c01ec892da0ea46dde115e755b6eb98565a9fdd194af07edf1f74a2cdc6bbe1e"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7a090e308000-3602964-v8.log",
+      "bytes": 5733,
+      "sha256": "db60e7136ae5ca5c2f857078d03ab33ff1b8fcfc90b68b71d11cce17fb280e17"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7a09130b5000-3602964-v8.log",
+      "bytes": 7535,
+      "sha256": "c465e2b601eaf2d8edd9a97da9864c7041be673f758c625fc007b7990958b46f"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7a0c44002000-3602964-v8.log",
+      "bytes": 4516,
+      "sha256": "0706722a5433cf125017d3320ad07bd0e9c9e99e9582e14b8ab72aa36402f081"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x7a0c440d7000-3602964-v8.log",
+      "bytes": 4446,
+      "sha256": "b145aab8c630ae052190bc41f9ed3ccac583476b5cc8598fd6b4ff80cfb73e1c"
+    },
+    {
+      "path": "/root/src/xemu-wasm/isolate-0x9271000-3602964-v8.log",
+      "bytes": 4503,
+      "sha256": "ca6b7711dc5bfe72c77d5e2ebbfda38cc00e5a2597bcfbe5ac009b023546b996"
+    }
+  ]
+}
