@@ -27,7 +27,7 @@ DRIVER = (ROOT/'tcg/wasm32.c').read_text()
 store = function(BACKEND, 'wasm_qemu_st')
 assert (store.index('wasm_tlb_load(') < store.index('wasm_mem(s, st_op') <
         store.index('wasm_new_resumable_block(') <
-        store.index('wasm_save_regs(') < store.index('wasm_handle_unwinding('))
+        store.index('wasm_save_regs') < store.index('wasm_handle_unwinding('))
 C = leaf.PREFIX + leaf.MEMOP + r'''
 #include "exec/memopidx.h"
 #define xemu_wasm_phase ((const char *volatile *)(uintptr_t)128)
