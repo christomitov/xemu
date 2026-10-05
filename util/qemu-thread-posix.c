@@ -282,7 +282,17 @@ qemu_cond_timedwait_ts(QemuCond *cond, QemuMutex *mutex, struct timespec *ts,
 
     assert(cond->initialized);
     trace_qemu_mutex_unlock(mutex, file, line);
+#ifdef EMSCRIPTEN
+    if (qatomic_read(&xemu_wasm_bql_spin_read)) {
+        bql_wasm_cond_wait_hint(mutex, false);
+    }
+#endif
     err = pthread_cond_timedwait(&cond->cond, &mutex->lock, ts);
+#ifdef EMSCRIPTEN
+    if (qatomic_read(&xemu_wasm_bql_spin_read)) {
+        bql_wasm_cond_wait_hint(mutex, true);
+    }
+#endif
     trace_qemu_mutex_locked(mutex, file, line);
     if (err && err != ETIMEDOUT) {
         error_exit(err, __func__);
