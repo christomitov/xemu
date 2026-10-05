@@ -210,6 +210,29 @@ void qemu_mutex_unlock_main_loop(void)
 }
 #endif
 
+#ifdef EMSCRIPTEN
+static bool wasm_debug_deadline_restore;
+
+static void wasm_debug_deadline_init(void)
+{
+    const char *e = getenv("XEMU_WASM_DEBUG_DEADLINE_RESTORE");
+    wasm_debug_deadline_restore = e && *e == '1';
+}
+
+static bool wasm_debug_deadline_needed(void)
+{
+#ifdef XEMU_WASM_TRIPWIRE
+    return true;
+#else
+    /* The ring is compiled out, but evaluating its deadline argument still
+     * traverses/locks timer lists and reads clocks. Replay clock reads may
+     * have side effects, so retain the original diagnostic query in replay.
+     */
+    return wasm_debug_deadline_restore || replay_mode != REPLAY_MODE_NONE;
+#endif
+}
+#endif
+
 int qemu_init_main_loop(Error **errp)
 {
     int ret;
@@ -222,6 +245,9 @@ int qemu_init_main_loop(Error **errp)
     qemu_main_loop_obj = g_main_loop_new(qemu_main_context, FALSE);
 #endif
 
+#ifdef EMSCRIPTEN
+    wasm_debug_deadline_init();
+#endif
     qemu_init_clocks(qemu_timer_notify_cb);
 
     ret = qemu_signal_init(errp);
@@ -715,7 +741,7 @@ void main_loop_wait(int nonblocking)
                                       timerlistgroup_deadline_ns(
                                           &main_loop_tlg));
 #ifdef EMSCRIPTEN
-    {
+    if (wasm_debug_deadline_needed()) {
         extern void xemu_wasm_dbg_ring_put(const char *, ...);
         int64_t dl = timerlistgroup_deadline_ns(&main_loop_tlg);
         xemu_wasm_dbg_ring_put("[loop] poll timeout=%lld rt_deadline=%lld\n",
