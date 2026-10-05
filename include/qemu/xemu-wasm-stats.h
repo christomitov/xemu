@@ -181,6 +181,14 @@
     X(n_direct_memory_tb_checked)                                       \
     X(n_direct_memory_unverified)                                       \
     X(n_direct_memory_miss)                                             \
+    X(n_direct_miss_load)                                               \
+    X(n_direct_miss_store)                                              \
+    X(n_direct_miss_notdirty_tag)                                       \
+    X(n_direct_miss_align)                                              \
+    X(n_direct_miss_notdirty_aligned)                                   \
+    X(n_direct_miss_page)                                               \
+    X(n_direct_miss_flags)                                              \
+    X(n_direct_miss_other)                                              \
     X(n_direct_mixed_build)                                             \
     X(n_direct_mixed_members)                                           \
     X(n_direct_mixed_legacy_members)                                    \

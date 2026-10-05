@@ -22,7 +22,7 @@ typedef struct XwdRegion {
     unsigned n, mode, cc, verify, memory_members, locals, pending, address;
     unsigned mem_begin, mem_observe, mem_load, mem_store, mem_end;
     unsigned mem_cancel, mem_miss;
-    unsigned direct_members, anchor, bank_live;
+    unsigned direct_members, anchor, bank_live, miss_tag;
     bool mixed;
     XwdRegionMember member[REGION_MAX];
 } XwdRegion;
@@ -192,6 +192,13 @@ member_declined:
     if (r->mixed) {
         r->bank_live = ++r->locals;
     }
+    if (r->mode == 1 && r->memory_members &&
+        xemu_wasm_direct_miss_classify_enabled()) {
+        r->miss_tag = ++r->locals;
+        for (unsigned i = 0; i < n; i++) {
+            r->member[i].hooks.tag_local = r->miss_tag;
+        }
+    }
     return r;
 decline:
     g_free(r);
@@ -248,7 +255,8 @@ static bool xwr_imports(XwdRegion *r, uint32_t *hq, const uint8_t **hty,
     xwr_import((uintptr_t)wasm32_direct_mem_##fn, ty, sizeof(ty), \
                hq, hty, htylen, nh, &r->field)
     if (r->mode == 1) {
-        return XWR_MEM_IMPORT(miss, one, mem_miss);
+        return r->miss_tag ? XWR_MEM_IMPORT(miss_classify, five, mem_miss) :
+                            XWR_MEM_IMPORT(miss, one, mem_miss);
     }
     return XWR_MEM_IMPORT(begin, two, mem_begin) &&
            XWR_MEM_IMPORT(observe, observe, mem_observe) &&

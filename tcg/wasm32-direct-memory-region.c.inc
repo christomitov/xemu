@@ -61,6 +61,12 @@ static bool xwr_mem_miss(XwdEmitter *e, const XwdMemAccess *a,
     xwd_mem(e, 0x36, e->layout->eip);
     xwr_ctx_const(e, WASM_CTX_TB_PTR_OFF, 0);
     xwd_local(e, 0x20, XD_ENV);
+    if (m->region->miss_tag) {
+        xwd_local(e, 0x20, addr_local);
+        xwd_local(e, 0x20, m->region->miss_tag);
+        xwd_const(e, a->a_mask);
+        xwd_const(e, a->store);
+    }
     xwd_byte(e, 0x10); xwd_uleb(e, m->region->mem_miss);
     xwd_const(e, 0); xwd_byte(e, 0x0f);
     return e->code->valid;

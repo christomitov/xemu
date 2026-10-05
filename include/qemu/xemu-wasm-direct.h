@@ -143,6 +143,21 @@ static inline bool xemu_wasm_direct_mixed_enabled(void)
 #endif
 }
 
+/* Active misses only: classify the tag captured by the original probe. */
+static inline bool xemu_wasm_direct_miss_classify_enabled(void)
+{
+#if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_DIRECT_MISS_CLASSIFY");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 /* Region substitution is a separate, default-off correctness stage. */
 static inline bool xemu_wasm_direct_regions_enabled(void)
 {

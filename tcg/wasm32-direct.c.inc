@@ -530,6 +530,8 @@ typedef struct XwdMemAccess {
  * shadow replaces the whole access in verify mode (xwmo_*, no guest memory).
  */
 typedef struct XwdMemHooks {
+    /* Optional diagnostic local, zero disables. No extra TLB access. */
+    unsigned tag_local;
     void *opaque;
     bool (*resolve)(struct XwdEmitter *e, unsigned insn, unsigned access,
                     bool store, unsigned width, XwdMemAccess *out);

@@ -217,6 +217,9 @@ void wasm32_direct_mem_store(CPUArchState *env, uint32_t pc, uint32_t addr,
 void wasm32_direct_mem_end(CPUArchState *env);
 void wasm32_direct_mem_cancel(void);
 void wasm32_direct_mem_miss(CPUArchState *env);
+void wasm32_direct_mem_miss_classify(CPUArchState *env, uint32_t addr,
+                                    uint32_t tag, uint32_t a_mask,
+                                    uint32_t store);
 
 /* The TCI entry point, in tci.c. */
 uintptr_t tci_exec_tb(CPUArchState *env, const void *tci_ptr);

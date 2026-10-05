@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qemu/xemu-wasm-direct-mem-observe.h"
 #include "accel/tcg/internal-common.h"
+#include "exec/tlb-flags.h"
 
 /* The dispatcher enforces one vCPU execution thread. No suspended direct
  * activation exists: mode2 reference unwinds are explicitly unverified.
@@ -92,4 +93,41 @@ void wasm32_direct_mem_miss(CPUArchState *env)
     cpu->cflags_next_tb = (flags & ~CF_COUNT_MASK) | 1 |
                          CF_NO_GOTO_TB | CF_NO_GOTO_PTR;
     XSTAT_INC(n_direct_memory_miss);
+}
+
+/* Diagnostic only. tag is the exact word used by the failed inline probe,
+ * not a second TLB read. No guest accesses or effects are replayed here.
+ * Load/store counters partition misses; the five reason counters also
+ * partition misses (alignment takes priority). notdirty_tag overlaps those
+ * reasons and does NOT establish that helper_wasm_notdirty would succeed.
+ * Admission currently requires a_mask >= size - 1, so an aligned access
+ * cannot span pages. This diagnoses the existing conservative policy only.
+ */
+void wasm32_direct_mem_miss_classify(CPUArchState *env, uint32_t addr,
+                                    uint32_t tag, uint32_t a_mask,
+                                    uint32_t store)
+{
+    uint32_t page = addr & (uint32_t)TARGET_PAGE_MASK;
+    bool notdirty = store && tag == (page | TLB_NOTDIRTY);
+
+    if (store) {
+        XSTAT_INC(n_direct_miss_store);
+    } else {
+        XSTAT_INC(n_direct_miss_load);
+    }
+    if (notdirty) {
+        XSTAT_INC(n_direct_miss_notdirty_tag);
+    }
+    if (addr & a_mask) {
+        XSTAT_INC(n_direct_miss_align);
+    } else if (notdirty) {
+        XSTAT_INC(n_direct_miss_notdirty_aligned);
+    } else if ((tag & (uint32_t)TARGET_PAGE_MASK) != page) {
+        XSTAT_INC(n_direct_miss_page);
+    } else if (tag & ~(uint32_t)TARGET_PAGE_MASK) {
+        XSTAT_INC(n_direct_miss_flags);
+    } else {
+        XSTAT_INC(n_direct_miss_other);
+    }
+    wasm32_direct_mem_miss(env);
 }

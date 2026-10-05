@@ -103,6 +103,9 @@ static bool xwd_mem_access(XwdEmitter *e, unsigned insn, bool verify,
     xwd_byte(e, 0x6a);
     xwd_local(e, 0x22, XD_MENTRY);
     xwd_memop(e, 0x28, 2, a.cmp_ofs);
+    if (h->tag_local) {
+        xwd_local(e, 0x22, h->tag_local);
+    }
     /* expected tag: the access's end page with alignment bits */
     xwd_local(e, 0x20, XD_MADDR);
     if (a.a_mask < a.s_mask) {
