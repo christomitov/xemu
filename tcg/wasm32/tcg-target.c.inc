@@ -533,7 +533,7 @@ static inline void wasm_set_r(TCGContext *s, TCGReg r)
 }
 
 /*
- * XEMU_WASM_LIVE_SAVE=1: save only the registers whose values a rewind can
+ * Default (XEMU_WASM_LIVE_SAVE=0 to disable): save only the registers whose values a rewind can
  * still need: those the allocator holds live temps in, the reserved and env
  * registers, and @extra (operands the resumable block itself re-reads, e.g.
  * a guest access's address after its temp died). A rewind restores every
@@ -544,7 +544,7 @@ static bool wasm_live_save_enabled(void)
     static int enabled = -1;
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_LIVE_SAVE");
-        enabled = e && *e == '1';
+        enabled = !(e && *e == '0');      /* default on; =0 saves all */
     }
     return enabled;
 }
