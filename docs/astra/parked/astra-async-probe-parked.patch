@@ -1,0 +1,434 @@
+diff --git a/include/qemu/xemu-wasm-stats.h b/include/qemu/xemu-wasm-stats.h
+index 39c4eedda3..ba94d3bfe3 100644
+--- a/include/qemu/xemu-wasm-stats.h
++++ b/include/qemu/xemu-wasm-stats.h
+@@ -19,6 +19,40 @@
+ #include <stdlib.h>
+ #include "qemu/xemu-wasm-census.h"
+ 
++/* Probe-only async compilation: cumulative counters, not gauges. */
++#define XEMU_WASM_JIT_PROBE_FIELDS(X)                                    \
++    X(n_jit_probe_issued)                                                \
++    X(n_jit_probe_resolved)                                              \
++    X(n_jit_probe_rejected)                                              \
++    X(n_jit_probe_submit_error)                                          \
++    X(n_jit_probe_no_module)                                             \
++    X(n_jit_probe_oversize)                                              \
++    X(b_jit_probe_input)                                                 \
++    X(ns_jit_probe_submit)                                               \
++    X(ns_jit_probe_settle)                                               \
++    X(n_jit_probe_ms_le1)                                                \
++    X(n_jit_probe_ms_le4)                                                \
++    X(n_jit_probe_ms_le8)                                                \
++    X(n_jit_probe_ms_le16)                                               \
++    X(n_jit_probe_ms_le33)                                               \
++    X(n_jit_probe_ms_le50)                                               \
++    X(n_jit_probe_ms_le67)                                               \
++    X(n_jit_probe_ms_le100)                                              \
++    X(n_jit_probe_ms_le250)                                              \
++    X(n_jit_probe_ms_le1000)                                             \
++    X(n_jit_probe_ms_gt1000)                                             \
++    X(n_jit_probe_cb_normal)                                             \
++    X(n_jit_probe_cb_unwinding)                                          \
++    X(n_jit_probe_cb_rewinding)                                          \
++    X(n_jit_probe_cb_unknown)                                            \
++    X(n_jit_probe_cb_with_data)                                          \
++    X(n_jit_probe_observed)                                              \
++    X(n_jit_probe_pending)                                               \
++    X(n_jit_probe_pending_gt33)                                          \
++    X(n_jit_probe_pending_gt67)                                          \
++    X(n_jit_probe_pending_gt1000)                                        \
++    X(n_jit_probe_pending_gt10000)
++
+ #define XEMU_WASM_STATS_FIELDS(X)                                             \
+     /* vCPU (TCG) */                                                         \
+     X(n_tb_exec)         /* translated blocks executed */                    \
+@@ -154,7 +188,8 @@
+     X(n_flip)            /* guest buffer flips (frames) */                   \
+     XEMU_WASM_CENSUS_FIELDS(X)                                            \
+     X(n_notdirty_inline) /* opt-in: bitmap-miss inline stores admitted */   \
+-    X(n_notdirty_inline_miss) /* leaf declines; original helper required */
++    X(n_notdirty_inline_miss) /* leaf declines; original helper required */ \
++    XEMU_WASM_JIT_PROBE_FIELDS(X)
+ 
+ typedef struct XemuWasmStats {
+ #define XEMU_WASM_STATS_DECL(name) uint64_t name;
+@@ -242,6 +277,10 @@ static inline void xemu_wasm_census_hit(uint32_t word)
+     }
+ }
+ 
++#ifdef CONFIG_TCG_WASM_JIT
++/* Stats-reader observation/pulse only; never services the vCPU event loop. */
++void xemu_wasm_jit_probe_sample(void);
++#endif
+ int64_t xemu_wasm_stats_now_ns(void);
+ /* per-MemoryRegion MMIO call count + time (vCPU thread), for the report */
+ void xemu_wasm_mmio_prof(const char *region, int64_t ns);
+diff --git a/scripts/wasm-jit-probe-report.py b/scripts/wasm-jit-probe-report.py
+new file mode 100644
+index 0000000000..f2453558f5
+--- /dev/null
++++ b/scripts/wasm-jit-probe-report.py
+@@ -0,0 +1,106 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++"""Read XEMU_WASM_JIT_ASYNC_PROBE=1 reports; no engine CPU-time/FPS inference.
++
++Settled-success histogram bins are DISJOINT, with inclusive upper limits in ms.
++Latency includes API submission, engine queue/work and owner callback delivery.
++Pending observations are independent reader samples, NOT additional requests.
++They expose censored/never-settling work; never judge liveness from successes alone.
++The probe compiles real standalone TB bodies with a unique private custom section,
++never instantiates/publishes, and does not add a yield. Report reads pulse offers
++(at most 1/s, one outstanding); no report reader means only the initial offer.
++"""
++import argparse
++import json
++import math
++from pathlib import Path
++
++BOUNDS = [1, 4, 8, 16, 33, 50, 67, 100, 250, 1000]
++
++
++def summarize(document, window='last60s'):
++    report = document.get('report', document)
++    values = report.get('summary_' + window, report)
++    if not any(k.startswith('n_jit_probe_') for k in values):
++        raise ValueError('no probe counters; enable XEMU_WASM_JIT_ASYNC_PROBE=1 '
++                         'and capture stats while the vCPU runs')
++
++    def get(name):
++        value = values.get(name, 0)
++        if isinstance(value, list):
++            value = value[0]  # additive mean, NEVER median
++        if (not isinstance(value, (int, float)) or isinstance(value, bool) or
++                not math.isfinite(value) or value < 0):
++            raise ValueError('invalid probe counter: ' + name)
++        return value
++
++    def n(suffix):
++        return get('n_jit_probe_' + suffix)
++
++    success = n('resolved')
++    observed = n('observed')
++    bins = {str(b): n('ms_le' + str(b)) for b in BOUNDS}
++    bins['over_1000'] = n('ms_gt1000')
++    total = sum(bins.values())
++    if not any([n('issued'), observed, success, n('submit_error')]):
++        raise ValueError('no probe activity in this window')
++    if not math.isclose(total, success, rel_tol=.01, abs_tol=1e-9):
++        raise ValueError('success histogram does not balance; use a longer '
++                         'window or inspect torn/incomplete counter samples')
++    cumulative = 0
++    cdf = {}
++    for bound in BOUNDS:
++        cumulative += bins[str(bound)]
++        cdf[str(bound)] = round(100 * cumulative / success, 3) if success else None
++    return {
++        'version': 1,
++        'window': window,
++        'basis': 'totals or additive mean rates; successful callback latency, '
++                 'not engine CPU time',
++        'events': {k: n(k) for k in ['issued', 'resolved', 'rejected',
++                                    'submit_error', 'no_module', 'oversize']},
++        'successful_settle_mean_ms':
++            get('ns_jit_probe_settle') / success / 1e6 if success else None,
++        'successful_settle_histogram_ms_upper_inclusive': bins,
++        'successful_settle_cumulative_pct': cdf,
++        'reader_observations': {k: n(k) for k in ['observed', 'pending',
++                                                'pending_gt33', 'pending_gt67',
++                                                'pending_gt1000',
++                                                'pending_gt10000']},
++        'reader_pct_pending_over67ms':
++            100 * n('pending_gt67') / observed if observed else None,
++        'callback_state_events': {k: n('cb_' + k) for k in
++                                 ['normal', 'unwinding', 'rewinding', 'unknown',
++                                  'with_data']},
++        'review_required': {
++            'no_successful_callbacks': not success,
++            'compile_failures': bool(n('rejected') or n('submit_error')),
++            'censored_work_over67ms_observed': bool(n('pending_gt67')),
++        },
++        'caveats': [
++            'Pending samples are time/cadence weighted, not a per-request CDF.',
++            'Window issue minus settle rates are not an in-flight gauge.',
++            'Asyncify states do not identify a particular BQL/sleep cause.',
++            'Unique wire bytes avoid identical-byte caching; engine code '
++            'sharing remains possible.',
++            'A successful probe is not validation of future TCI-pending '
++            'execution or publication.',
++        ],
++        'environment': report.get('env', report.get('xemu_env')),
++    }
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('report', type=Path)
++    parser.add_argument('--window', choices=['last60s', 'all'], default='last60s')
++    args = parser.parse_args()
++    try:
++        result = summarize(json.loads(args.report.read_text()), args.window)
++    except (ValueError, TypeError, IndexError) as exc:
++        parser.error(str(exc))
++    print(json.dumps(result, indent=2))
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/tcg/wasm32-async-probe.c.inc b/tcg/wasm32-async-probe.c.inc
+new file mode 100644
+index 0000000000..b4fb549443
+--- /dev/null
++++ b/tcg/wasm32-async-probe.c.inc
+@@ -0,0 +1,178 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * FEASIBILITY ONLY: compile private copies of real TB blueprints, discard
++ * Modules, never instantiate/publish or yield. The synchronous JIT is unchanged.
++ *
++ * Stats reads pulse a one-slot mailbox (coalescing, not a queue). The vCPU
++ * offers its current TB only at the dispatcher's existing coarse maintenance
++ * cadence. At most one compile is outstanding and one is issued per second.
++ * A callback-starved worker cannot hide its pending request: the independent
++ * stats reader observes its atomically published start timestamp.
++ */
++typedef struct WasmProbeControl {
++    uint32_t enabled;
++    uint32_t due;
++    uint64_t started_us;
++} WasmProbeControl;
++
++static WasmProbeControl jit_probe_control;
++
++#define PROBE_PTR(name) &xemu_wasm_stats.name,
++static uint64_t *const jit_probe_counters[] = {
++    XEMU_WASM_JIT_PROBE_FIELDS(PROBE_PTR)
++};
++#undef PROBE_PTR
++#define PROBE_NAME(name) #name ","
++static const char jit_probe_names[] =
++    XEMU_WASM_JIT_PROBE_FIELDS(PROBE_NAME);
++#undef PROBE_NAME
++
++EM_JS(void, wasm32_probe_init_js, (WasmProbeControl *control,
++                                  uint64_t *const *counters,
++                                  const char *names), {
++    const fields = UTF8ToString(names).split(',').filter(Boolean);
++    const slots = Object.fromEntries(fields.map((name, i) =>
++        [name, HEAPU32[(counters >>> 2) + i] >>> 3]));
++    const P = Module.__wasm32_jit_probe = {
++        lastOffer: -Infinity, serial: 0,
++        salt: performance.timeOrigin + performance.now(),
++        add: (name, n = 1) => { HEAPU64[slots[name]] += BigInt(n); },
++    };
++    /* Control ABI: u32 enabled, u32 pulse, u64 pending-start epoch us. */
++    P.word = control >>> 2;
++    P.start = (control + 8) >>> 3;
++    Atomics.store(HEAPU32, P.word + 1, 1);
++    Atomics.store(HEAPU32, P.word, 1);
++});
++
++EM_JS(void, wasm32_probe_offer_js, (const uint8_t *ptr, uint32_t size), {
++    const P = Module.__wasm32_jit_probe;
++    if (!P || !Atomics.exchange(HEAPU32, P.word + 1, 0) ||
++        Atomics.load(HEAPU64, P.start)) {
++        return;
++    }
++    const now = performance.now();
++    if (now - P.lastOffer < 1000) {
++        return;
++    }
++    P.lastOffer = now;
++    if (!ptr || !size) {
++        P.add('n_jit_probe_no_module');
++        return;
++    }
++    if (size > 256 * 1024) {
++        P.add('n_jit_probe_oversize');
++        return;
++    }
++    try {
++        /*
++         * Real function bodies, with a private diagnostic custom section.
++         * Different wire bytes avoid an identical-byte cache hit/dedup with
++         * the synchronous JIT. Engine-internal code sharing is still possible.
++         * No function is executed; the original blueprint is never modified.
++         */
++        const name = new TextEncoder().encode('xemu.async-probe');
++        const payload = 1 + name.length + 12;
++        const bytes = new Uint8Array(size + 2 + payload);
++        bytes.set(HEAPU8.subarray(ptr, ptr + size));
++        bytes.set([0, payload, name.length], size);
++        bytes.set(name, size + 3);
++        const tag = new DataView(bytes.buffer, size + 3 + name.length, 12);
++        tag.setFloat64(0, P.salt, true);
++        if (++P.serial > 0xffffffff) {
++            /* Never wrap into old diagnostic wire bytes. */
++            P.add('n_jit_probe_submit_error');
++            return;
++        }
++        tag.setUint32(8, P.serial, true);
++        const issue = performance.now();
++        Atomics.store(HEAPU64, P.start,
++            BigInt(Math.round((performance.timeOrigin + issue) * 1000)));
++        P.add('n_jit_probe_issued');
++        P.add('b_jit_probe_input', bytes.length);
++        const finish = (ok) => {
++            if (Module.__wasm32_jit_probe !== P) {
++                return;
++            }
++            const ms = Math.max(0, performance.now() - issue);
++            if (ok) {
++                P.add('n_jit_probe_resolved');
++                P.add('ns_jit_probe_settle', Math.round(ms * 1e6));
++                const bound = [1, 4, 8, 16, 33, 50, 67, 100, 250, 1000]
++                    .find(x => ms <= x);
++                P.add('n_jit_probe_ms_' + (bound ? 'le' + bound : 'gt1000'));
++            } else {
++                P.add('n_jit_probe_rejected');
++            }
++            /* Raw JS state, NOT an attribution to a particular BQL wait. */
++            const a = typeof Asyncify === 'undefined' ? undefined : Asyncify;
++            const state = a && ['normal', 'unwinding', 'rewinding'][a.state];
++            P.add('n_jit_probe_cb_' + (state || 'unknown'));
++            if (a && a.currData) {
++                P.add('n_jit_probe_cb_with_data');
++            }
++            Atomics.store(HEAPU64, P.start, 0n);
++            /* Drop the Module: no Instance, addFunction, or guest entry. */
++        };
++        const promise = WebAssembly.compile(bytes);
++        P.add('ns_jit_probe_submit',
++              Math.round(Math.max(0, performance.now() - issue) * 1e6));
++        promise.then(() => finish(true), () => finish(false));
++    } catch (error) {
++        P.add('n_jit_probe_submit_error');
++        Atomics.store(HEAPU64, P.start, 0n);
++    }
++});
++
++EM_JS(void, wasm32_probe_observe_js, (WasmProbeControl *control,
++                                     uint64_t *const *counters,
++                                     const char *names), {
++    /* Runs in the stats-reading realm, not a proxy into the vCPU worker. */
++    let slots = Module.__wasm32_probe_observer;
++    if (!slots) {
++        const fields = UTF8ToString(names).split(',').filter(Boolean);
++        slots = Module.__wasm32_probe_observer = Object.fromEntries(
++            fields.map((name, i) =>
++                [name, HEAPU32[(counters >>> 2) + i] >>> 3]));
++    }
++    const add = name => { HEAPU64[slots[name]] += 1n; };
++    add('n_jit_probe_observed');
++    const start = Atomics.load(HEAPU64, (control + 8) >>> 3);
++    if (start) {
++        const ms = Math.max(0, performance.timeOrigin + performance.now() -
++                              Number(start) / 1000);
++        add('n_jit_probe_pending');
++        for (const bound of [33, 67, 1000, 10000]) {
++            if (ms > bound) {
++                add('n_jit_probe_pending_gt' + bound);
++            }
++        }
++    } else {
++        /* Coalesce even if multiple readers sample faster than once/second. */
++        Atomics.store(HEAPU32, (control >>> 2) + 1, 1);
++    }
++});
++
++EM_JS_DEPS(wasm32_probe, "$UTF8ToString,$Asyncify");
++
++static void wasm32_probe_init(void)
++{
++    const char *e = getenv("XEMU_WASM_JIT_ASYNC_PROBE");
++
++    QEMU_BUILD_BUG_ON(offsetof(WasmProbeControl, enabled) != 0);
++    QEMU_BUILD_BUG_ON(offsetof(WasmProbeControl, due) != 4);
++    QEMU_BUILD_BUG_ON(offsetof(WasmProbeControl, started_us) != 8);
++    QEMU_BUILD_BUG_ON(sizeof(WasmProbeControl) != 16);
++    if (e && *e == '1') {
++        wasm32_probe_init_js(&jit_probe_control, jit_probe_counters,
++                             jit_probe_names);
++    }
++}
++
++void xemu_wasm_jit_probe_sample(void)
++{
++    if (qatomic_read(&jit_probe_control.enabled)) {
++        wasm32_probe_observe_js(&jit_probe_control, jit_probe_counters,
++                                jit_probe_names);
++    }
++}
+diff --git a/tcg/wasm32.c b/tcg/wasm32.c
+index 33dd7e6f35..554093ba45 100644
+--- a/tcg/wasm32.c
++++ b/tcg/wasm32.c
+@@ -30,6 +30,7 @@
+ #include "wasm32.h"
+ #include "exec/translation-block.h"
+ #include "system/memory.h"
++#include "wasm32-async-probe.c.inc"
+ 
+ /*
+  * Adaptive JIT threshold: a TB runs in the interpreter until it has run
+@@ -385,13 +386,13 @@ static bool can_add_instance(void)
+ #define MAX_EXEC_NUM 50000
+ static int exec_cnt = MAX_EXEC_NUM;
+ 
+-static inline void trysleep(void)
++static inline bool trysleep(void)
+ {
+     static unsigned budget_cnt;
++    bool maintenance = (++budget_cnt & 4095) == 0;
+ 
+     /* let the compile budget recover (lowers the threshold again) */
+-    if (unlikely((++budget_cnt & 4095) == 0) &&
+-        wasm32_jit_threshold != jit_threshold_low) {
++    if (unlikely(maintenance) && wasm32_jit_threshold != jit_threshold_low) {
+         jit_budget_update(emscripten_get_now());
+     }
+     if (unlikely(--exec_cnt == 0)) {
+@@ -402,6 +403,7 @@ static inline void trysleep(void)
+             check_instances_collected();
+         }
+     }
++    return maintenance;
+ }
+ 
+ static pthread_t exec_thread;
+@@ -439,6 +441,7 @@ static void wasm32_init(void)
+                                TCG_STATIC_FRAME_SIZE);
+     wasm_ctx.tci_tb_ptr = &tci_tb_ptr;
+     wasm32_js_init(&instances_collected);
++    wasm32_probe_init();
+     info_report("tcg: wasm32 JIT enabled (threshold %d..%d, budget %.0f%%)",
+                 jit_threshold_low, jit_threshold_high, jit_budget * 100);
+ }
+@@ -1319,7 +1322,11 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
+         uint32_t ic_slot = wasm_ctx.ic_slot;
+ 
+         wasm_ctx.ic_source = 0;
+-        trysleep();
++        if (unlikely(trysleep()) &&
++            qatomic_read(&jit_probe_control.due)) {
++            /* Copies bytes synchronously; never yields or publishes code. */
++            wasm32_probe_offer_js(h->wasm_ptr, h->wasm_size);
++        }
+         if (!first) {
+             XTBSTAT_INC(n_tb_exec);
+         }
+diff --git a/ui/xemu-wasm.c b/ui/xemu-wasm.c
+index 12df6d4c53..63b32766dc 100644
+--- a/ui/xemu-wasm.c
++++ b/ui/xemu-wasm.c
+@@ -823,6 +823,9 @@ EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_live_mb(void)
+ 
+ EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
+ {
++#ifdef CONFIG_TCG_WASM_JIT
++    xemu_wasm_jit_probe_sample();
++#endif
+     return &xemu_wasm_stats;
+ }
+ 

@@ -1,0 +1,274 @@
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+index f4f0442200..8b79d08bf0 100644
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -43,6 +43,7 @@
+ #include "exec/tlb-flags.h"
+ #include "qemu/atomic.h"
+ #include "qemu/atomic128.h"
++#include "qemu/rcu.h"
+ #include "tb-internal.h"
+ #include "trace.h"
+ #include "tb-hash.h"
+@@ -1538,6 +1539,69 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
+     XSMC_PROF_END();
+ }
+ 
++#if defined(XBOX) && defined(EMSCRIPTEN)
++/*
++ * Non-suspending leaf for a fresh, aligned JIT store. It never fills the TLB,
++ * builds a bitmap, waits for a page lock, invokes an access callback, or
++ * invalidates code. Returning zero leaves the original store helper in charge.
++ * The caller must not enable this path while XEMU_WASM_SMC_DUMP is selected.
++ */
++uintptr_t helper_wasm_notdirty(CPUArchState *env, uint32_t addr, MemOpIdx oi)
++{
++    CPUState *cpu = env_cpu(env);
++    MemOp mop = get_memop(oi);
++    unsigned mmu = get_mmuidx(oi);
++    unsigned size = memop_size(mop);
++    unsigned atom = mop & MO_ATOM_MASK;
++    unsigned align = MAX(memop_alignment_bits(mop), mop & MO_SIZE);
++    CPUTLBEntry *entry;
++    CPUTLBEntryFull *full;
++    uintptr_t host;
++    ram_addr_t ram_addr;
++    XSMC_PROF_BEGIN("notdirty_inline");
++
++    /* No outer RCU unlock/wakeup may occur in this leaf's nested guards. */
++    if (!get_ptr_rcu_reader()->depth || mmu >= NB_MMU_MODES || size > 4 ||
++        (mop & ~(MO_SIZE | MO_AMASK | MO_ATOM_MASK)) ||
++        (atom != MO_ATOM_IFALIGN && atom != MO_ATOM_NONE) ||
++        (addr & ((1u << align) - 1)) ||
++        cpu_plugin_mem_cbs_enabled(cpu) ||
++        trace_event_get_state_backends(TRACE_MEMORY_NOTDIRTY_WRITE_ACCESS) ||
++        trace_event_get_state_backends(TRACE_MEMORY_NOTDIRTY_SET_DIRTY)) {
++        goto decline;
++    }
++    entry = tlb_entry(cpu, mmu, addr);
++    if (tlb_read_idx(entry, MMU_DATA_STORE) !=
++        ((addr & TARGET_PAGE_MASK) | TLB_NOTDIRTY)) {
++        goto decline;
++    }
++    full = &cpu->neg.tlb.d[mmu].fulltlb[tlb_index(cpu, mmu, addr)];
++    /* In particular: GPU callbacks use WATCHPOINT, via FORCE_SLOW. */
++    if (full->slow_flags[MMU_DATA_STORE]) {
++        goto decline;
++    }
++    host = (uintptr_t)addr + entry->addend;
++    ram_addr = addr + full->xlat_section;
++    if (!host || physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE) ||
++        !tb_wasm_smc_bitmap_miss(ram_addr, size)) {
++        goto decline;
++    }
++
++    /* Exactly the original dirty-client updates, BEFORE the actual store. */
++    physical_memory_set_dirty_range(ram_addr, size, DIRTY_CLIENTS_NOCODE);
++    xemu_wasm_count("invsrc:cpu");
++    XSTAT_INC(n_notdirty_inline);
++    /* Keep NOTDIRTY conservatively; never unprotect live translated code. */
++    XSMC_PROF_END();
++    return host;
++
++decline:
++    XSTAT_INC(n_notdirty_inline_miss);
++    XSMC_PROF_END();
++    return 0;
++}
++#endif
++
+ static int probe_access_internal(CPUState *cpu, vaddr addr,
+                                  int fault_size, MMUAccessType access_type,
+                                  int mmu_idx, bool nonfault,
+diff --git a/accel/tcg/tb-internal.h b/accel/tcg/tb-internal.h
+index 40439f03c3..16d9f0e16b 100644
+--- a/accel/tcg/tb-internal.h
++++ b/accel/tcg/tb-internal.h
+@@ -47,6 +47,10 @@ void tb_unlock_pages(TranslationBlock *);
+ #ifdef CONFIG_SOFTMMU
+ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t ram_addr,
+                                    unsigned size, uintptr_t retaddr);
++#if defined(XBOX) && defined(EMSCRIPTEN)
++/* Nonblocking, allocation-free admission; never invalidates or replays. */
++bool tb_wasm_smc_bitmap_miss(ram_addr_t start, unsigned len);
++#endif
+ #endif /* CONFIG_SOFTMMU */
+ 
+ bool tb_invalidate_phys_page_unwind(CPUState *cpu, tb_page_addr_t addr,
+diff --git a/accel/tcg/tb-maint.c b/accel/tcg/tb-maint.c
+index 2093f8a2f3..2501a8dd40 100644
+--- a/accel/tcg/tb-maint.c
++++ b/accel/tcg/tb-maint.c
+@@ -1500,6 +1500,49 @@ static bool smc_drop_range(CPUState *cpu, PageDesc *p, ram_addr_t *start,
+ }
+ #endif
+ 
++#if defined(XBOX) && defined(EMSCRIPTEN)
++/*
++ * A fresh JIT store may avoid its resumable helper only if no code overlaps.
++ * Never read code_bitmap without its page lock: publication, removal and
++ * bitmap freeing all use that lock. Do not build a missing bitmap, wait for
++ * a lock, invalidate anything, or change adaptive/drop policy accounting.
++ */
++bool tb_wasm_smc_bitmap_miss(ram_addr_t start, unsigned len)
++{
++#ifdef CONFIG_DEBUG_TCG
++    /* Debug page-lock bookkeeping can allocate. Keep it on the slow path. */
++    return false;
++#else
++    PageDesc *p;
++    unsigned off = start & ~TARGET_PAGE_MASK;
++    bool miss;
++
++    if (!len || len > 4 || !is_power_of_2(len) ||
++        (start & (len - 1)) || off + len > TARGET_PAGE_SIZE) {
++        return false;
++    }
++    /* Uninitialized or non-exact policies stay entirely on the old path. */
++    if (smc_policy != 0) {
++        return false;
++    }
++    p = page_find(start >> TARGET_PAGE_BITS);
++    if (!p || page_trylock(p)) {
++        return false;
++    }
++    miss = p->first_tb && p->code_bitmap &&
++           find_next_bit(p->code_bitmap, off + len, off) >= off + len;
++    if (miss) {
++        p->smc_miss++;
++    }
++    page_unlock(p);
++    if (miss) {
++        XSTAT_INC(n_smc_bitmap_miss);
++    }
++    return miss;
++#endif
++}
++#endif
++
+ /*
+  * len must be <= 8 and start must be a multiple of len.
+  * Called via softmmu_template.h when code areas are written to with
+diff --git a/include/qemu/xemu-wasm-stats.h b/include/qemu/xemu-wasm-stats.h
+index a4ed5c69e3..7e268f0238 100644
+--- a/include/qemu/xemu-wasm-stats.h
++++ b/include/qemu/xemu-wasm-stats.h
+@@ -72,6 +72,8 @@
+     X(n_smc_drop_busy)   /* current/unknown TB: speculative drop declined */ \
+     X(n_smc_drop_changed) /* code coverage changed before drop recheck */ \
+     X(n_notdirty_fast_skip) /* opt-in: protected-page TLB cleanup elided */  \
++    X(n_notdirty_inline) /* opt-in: bitmap-miss inline stores admitted */   \
++    X(n_notdirty_inline_miss) /* leaf declines; original helper required */ \
+     X(n_slow_st_mmio)    /*  ... MMIO */                                    \
+     X(n_slow_st_watch)   /*  ... watchpoint / access callback */            \
+     X(n_slow_ld)         /* loads taking the softmmu slow path */           \
+diff --git a/include/tcg/tcg-ldst.h b/include/tcg/tcg-ldst.h
+index 6ccfe9131d..0f852128fe 100644
+--- a/include/tcg/tcg-ldst.h
++++ b/include/tcg/tcg-ldst.h
+@@ -60,4 +60,9 @@ void helper_stq_mmu(CPUArchState *env, uint64_t addr, uint64_t val,
+ void helper_st16_mmu(CPUArchState *env, uint64_t addr, Int128 val,
+                      MemOpIdx oi, uintptr_t retaddr);
+ 
++#if defined(XBOX) && defined(EMSCRIPTEN) && defined(CONFIG_SOFTMMU)
++/* Non-suspending admission/dirty marking, not a memory access helper. */
++uintptr_t helper_wasm_notdirty(CPUArchState *env, uint32_t addr, MemOpIdx oi);
++#endif
++
+ #endif /* TCG_LDST_H */
+diff --git a/tcg/wasm32/tcg-target.c.inc b/tcg/wasm32/tcg-target.c.inc
+index 5b346d2ad9..f7fbeed851 100644
+--- a/tcg/wasm32/tcg-target.c.inc
++++ b/tcg/wasm32/tcg-target.c.inc
+@@ -32,6 +32,7 @@
+ 
+ #include "../wasm32.h"
+ #include "qemu/xemu-wasm-stats.h"
++#include "exec/tlb-flags.h"
+ 
+ /* Used for function call generation. */
+ #define TCG_TARGET_CALL_STACK_OFFSET    0
+@@ -1833,6 +1834,72 @@ static void wasm_tlb_host(TCGContext *s)
+     wasm8(s, W_I32_ADD);
+ }
+ 
++/*
++ * Emit only in the existing store-TLB miss arm: plain RAM hits gain no
++ * instructions. The leaf can neither suspend nor fault, and it commits no
++ * store. A zero result still selects the original resumable store helper.
++ */
++static bool wasm_notdirty_inline(TCGContext *s, MemOpIdx oi)
++{
++#if defined(XBOX) && defined(EMSCRIPTEN) && defined(CONFIG_SOFTMMU) && \
++    !defined(CONFIG_DEBUG_TCG) && !defined(CONFIG_PLUGIN)
++    static int enabled = -1;
++    MemOp mop = get_memop(oi);
++    unsigned atom = mop & MO_ATOM_MASK;
++    unsigned align = MAX(memop_alignment_bits(mop), mop & MO_SIZE);
++    int idx;
++
++    if (enabled < 0) {
++        const char *e = getenv("XEMU_WASM_NOTDIRTY_INLINE");
++        enabled = e && *e == '1' && !getenv("XEMU_WASM_SMC_DUMP");
++    }
++    if (!enabled || (s->gen_tb->cflags & CF_PARALLEL) ||
++        (mop & MO_SIZE) > MO_32 ||
++        (mop & ~(MO_SIZE | MO_AMASK | MO_ATOM_MASK)) ||
++        (atom != MO_ATOM_IFALIGN && atom != MO_ATOM_NONE)) {
++        return false;
++    }
++    idx = get_helper_idx(helper_wasm_notdirty);
++    if (idx < 0) {
++        idx = register_helper(helper_wasm_notdirty);
++        types_out8(0x60);
++        types_out8(3); /* env, addr, MemOpIdx */
++        types_out8(W_TYPE_I32);
++        types_out8(W_TYPE_I32);
++        types_out8(W_TYPE_I32);
++        types_out8(1);
++        types_out8(W_TYPE_I32); /* admitted host address, or zero */
++    }
++
++    /* Exact live tag: reject FORCE_SLOW (GPU/watch callbacks), invalid, etc. */
++    wasm_var(s, W_LOCAL_GET, L32_0);
++    wasm_mem(s, W_I32_LOAD, offsetof(CPUTLBEntry, addr_write));
++    wasm_var(s, W_LOCAL_GET, L32_2);
++    wasm_i32_const(s, TARGET_PAGE_MASK);
++    wasm8(s, W_I32_AND);
++    wasm_i32_const(s, TLB_NOTDIRTY);
++    wasm8(s, W_I32_OR);
++    wasm8(s, W_I32_EQ);
++    /* Natural alignment implies a same-page span for these 1/2/4-byte ops. */
++    wasm_var(s, W_LOCAL_GET, L32_2);
++    wasm_i32_const(s, (1u << align) - 1);
++    wasm8(s, W_I32_AND);
++    wasm8(s, W_I32_EQZ);
++    wasm8(s, W_I32_AND);
++    wasm_if_hint(s, W_TYPE_I32, true);
++    wasm_get_r32(s, TCG_AREG0);
++    wasm_var(s, W_LOCAL_GET, L32_2);
++    wasm_i32_const(s, oi);
++    wasm_call_idx(s, idx);
++    wasm8(s, W_ELSE);
++    wasm_i32_const(s, 0);
++    wasm8(s, W_END);
++    return true;
++#else
++    return false;
++#endif
++}
++
+ /*
+  * Guest memory access: inline TLB lookup, helper call on a miss.
+  *
+@@ -1975,7 +2042,9 @@ static void wasm_tlb_load(TCGContext *s, TCGReg addr, MemOpIdx oi,
+     }
+     wasm_tlb_host(s);
+     wasm8(s, W_ELSE);
+-    wasm_i32_const(s, 0);
++    if (is_ld || !wasm_notdirty_inline(s, oi)) {
++        wasm_i32_const(s, 0);
++    }
+     wasm8(s, W_END);
+     wasm_var(s, W_LOCAL_SET, L32_1);
+     if (hint) {
