@@ -1807,6 +1807,8 @@ static bool wasm_call_cc_fast(TCGContext *s, const tcg_insn_unit *func,
                               const TCGHelperInfo *info);
 static bool wasm_call_shufps_inline(TCGContext *s, const tcg_insn_unit *func,
                                     const TCGHelperInfo *info);
+
+#include "../wasm32-gvec-sat16.c.inc"
 #endif
 
 static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
@@ -1830,6 +1832,7 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     }
 #endif
     bool may_suspend = wasm_helper_may_suspend(info);
+    bool gvec_fast = false;
     unsigned typemask = info->typemask;
     int rettype = typemask & 7;
     int nargs = helper_nargs(typemask);
@@ -1844,9 +1847,15 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
 #ifdef EMSCRIPTEN
     wasm_count_tb_stat(s, &xemu_wasm_stats.n_helper);
     wasm_count_helper(s, func, info);
+    gvec_fast = wasm_gvec_sat16_inline(s, info);
 #endif
     if (may_suspend) {
         wasm_new_resumable_block(s);
+    }
+    if (gvec_fast) {
+        wasm_var(s, W_LOCAL_GET, L32_1);
+        wasm8(s, W_I32_EQZ);
+        wasm_if_hint(s, W_BLOCKTYPE_VOID, false);
     }
     wasm_callsite_phase(s, info, false);
     wasm_set_tci_tb_ptr(s);
@@ -1868,6 +1877,9 @@ static void wasm_call(TCGContext *s, const tcg_insn_unit *func,
     wasm_call_results(s, rettype);
     if (may_suspend) {
         wasm_handle_unwinding(s);
+    }
+    if (gvec_fast) {
+        wasm8(s, W_END);
     }
     wasm_jit_phase(s, 1, NULL);
 }
