@@ -1,0 +1,1446 @@
+Setting up EMSDK environment (suppress these messages with EMSDK_QUIET=1)
+Adding directories to PATH:
+PATH += /root/src/xemu-wasm/emsdk
+PATH += /root/src/xemu-wasm/emsdk/upstream/emscripten
+
+Setting environment variables:
+PATH = /root/src/xemu-wasm/emsdk:/root/src/xemu-wasm/emsdk/upstream/emscripten:/root/.pi/agent/bin:/root/.local/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin:/root/.local/share/pnpm:/usr/games:/usr/local/games:/snap/bin
+EMSDK = /root/src/xemu-wasm/emsdk
+EMSDK_NODE = /root/src/xemu-wasm/emsdk/node/24.19.0_64bit/bin/node
+emmake: "ninja -j2" in "/root/src/xemu-wasm/xemu-astra/build"
+[1/374] Generating xemu-version-macro.h with a custom command (wrapped by meson to capture output)
+[2/374] Generating qemu-version.h with a custom command (wrapped by meson to capture output)
+[3/374] Compiling C object libqemuutil.a.p/qapi_qmp-dispatch.c.o
+[4/374] Compiling C object libqemuutil.a.p/meson-generated_.._qapi_qapi-init-commands.c.o
+[5/374] Compiling C object libqemuutil.a.p/qapi_qmp-registry.c.o
+[6/374] Compiling C object libqemuutil.a.p/util_osdep.c.o
+[7/374] Compiling C object libqemuutil.a.p/util_aio-posix.c.o
+[8/374] Compiling C object libqemuutil.a.p/util_event_notifier-posix.c.o
+[9/374] Compiling C object libqemuutil.a.p/util_oslib-posix.c.o
+../util/oslib-posix.c:211:20: warning: unused variable 'qemu_map_flags' [-Wunused-variable]
+  211 |     const uint32_t qemu_map_flags = (shared ? QEMU_MAP_SHARED : 0) |
+      |                    ^~~~~~~~~~~~~~
+../util/oslib-posix.c:702:42: warning: incompatible pointer types passing 'size_t *' (aka 'unsigned long *') to parameter of type 'gsize *' (aka 'unsigned int *') [-Wincompatible-pointer-types]
+  702 |     g_file_get_contents(pid_path, &name, &len, NULL);
+      |                                          ^~~~
+/root/src/xemu-wasm/wasm-deps/target/include/glib-2.0/glib/gfileutils.h:122:45: note: passing argument to parameter 'length' here
+  122 |                               gsize        *length,
+      |                                             ^
+2 warnings generated.
+[10/374] Compiling C object libqemuutil.a.p/util_qemu-thread-posix.c.o
+In file included from ../util/qemu-thread-posix.c:21:
+In file included from ../util/qemu-thread-common.h:17:
+In file included from /root/src/xemu-wasm/xemu-astra/include/qemu/main-loop.h:28:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio.h:25:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:21:
+In file included from ../util/qemu-thread-common.h:17:
+/root/src/xemu-wasm/xemu-astra/include/qemu/main-loop.h:291:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  291 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:92:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   92 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:194:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  194 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:210:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  210 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:93:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:222:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  222 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:94:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-lock-census.h:13:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   13 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../util/qemu-thread-posix.c:95:
+../util/qemu-wasm-lock-census.c.inc:60:34: warning: no previous prototype for function 'xemu_wasm_lock_census_top' [-Wmissing-prototypes]
+   60 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_lock_census_top(void)
+      |                                  ^
+../util/qemu-wasm-lock-census.c.inc:60:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   60 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_lock_census_top(void)
+      |                            ^
+      |                            static 
+../util/qemu-thread-posix.c:114:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  114 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:138:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  138 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:260:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  260 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:267:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  267 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:285:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  285 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:291:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  291 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:417:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  417 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-thread-posix.c:478:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  478 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+16 warnings generated.
+[11/374] Compiling C object libqemuutil.a.p/util_qemu-print.c.o
+[12/374] Compiling C object libqemuutil.a.p/util_error-report.c.o
+[13/374] Compiling C object libqemuutil.a.p/util_rcu.c.o
+[14/374] Compiling C object libqemuutil.a.p/util_async.c.o
+[15/374] Compiling C object libqemuutil.a.p/util_main-loop.c.o
+../util/main-loop.c:396:20: warning: unused variable 'addr_printed' [-Wunused-variable]
+  396 |         static int addr_printed;
+      |                    ^~~~~~~~~~~~
+1 warning generated.
+[16/374] Compiling C object libqemuutil.a.p/util_qemu-coroutine-io.c.o
+[17/374] Compiling C object libqemuutil.a.p/util_thread-pool.c.o
+[18/374] Compiling C object libqemuutil.a.p/util_qemu-timer.c.o
+../util/qemu-timer.c:353:6: warning: no previous prototype for function 'qemu_poll_kick' [-Wmissing-prototypes]
+  353 | void qemu_poll_kick(void)
+      |      ^
+../util/qemu-timer.c:353:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  353 | void qemu_poll_kick(void)
+      | ^
+      | static 
+../util/qemu-timer.c:420:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  420 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:461:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  461 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:476:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  476 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:480:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  480 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:484:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  484 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:488:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  488 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:503:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  503 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:506:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  506 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:523:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  523 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:529:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  529 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:534:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  534 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:538:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  538 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:542:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  542 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:553:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  553 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:563:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  563 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:586:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  586 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:594:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  594 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:602:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  602 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:615:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  615 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:641:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  641 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:716:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  716 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:721:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  721 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:725:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  725 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../util/qemu-timer.c:836:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  836 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+25 warnings generated.
+[19/374] Compiling C object libqemuutil.a.p/util_aio-wait.c.o
+[20/374] Compiling C object libqemuutil.a.p/util_qemu-sockets.c.o
+[21/374] Compiling C object libqemuutil.a.p/stubs_cpu-get-clock.c.o
+[22/374] Compiling C object libqemuutil.a.p/trace_control.c.o
+../trace/control.c:41:13: warning: variable 'init_trace_on_startup' set but not used [-Wunused-but-set-global]
+   41 | static bool init_trace_on_startup;
+      |             ^
+1 warning generated.
+[23/374] Compiling C object libqemuutil.a.p/stubs_error-printf.c.o
+[24/374] Compiling C object libqemuutil.a.p/stubs_fdset.c.o
+[25/374] Compiling C object libqemuutil.a.p/stubs_iothread-lock.c.o
+[26/374] Compiling C object libqemuutil.a.p/stubs_monitor-core.c.o
+[27/374] Compiling C object libqemuutil.a.p/stubs_bdrv-next-monitor-owned.c.o
+[28/374] Compiling C object libqemuutil.a.p/stubs_blk-commit-all.c.o
+[29/374] Compiling C object libqemuutil.a.p/stubs_blockdev-close-all-bdrv-states.c.o
+[30/374] Compiling C object libqemuutil.a.p/stubs_iothread-lock-block.c.o
+[31/374] Compiling C object libqemuutil.a.p/stubs_cpus-virtual-clock.c.o
+[32/374] Compiling C object libqemuutil.a.p/stubs_qemu-timer-notify-cb.c.o
+[33/374] Compiling C object libqemuutil.a.p/stubs_monitor-internal.c.o
+[34/374] Compiling C object libqemuutil.a.p/stubs_qmp-command-available.c.o
+[35/374] Compiling C object libqemuutil.a.p/stubs_qmp-quit.c.o
+[36/374] Compiling C object libqemuutil.a.p/stubs_fw_cfg.c.o
+[37/374] Compiling C object libqemuutil.a.p/stubs_xen-hw-stub.c.o
+[38/374] Compiling C object libauthz.a.p/authz_listfile.c.o
+[39/374] Linking static target libqemuutil.a
+[40/374] Generating block.syms with a custom command (wrapped by meson to capture output)
+[41/374] Generating qemu.syms with a custom command (wrapped by meson to capture output)
+[42/374] Compiling C object libio.a.p/io_channel.c.o
+[43/374] Compiling C object libio.a.p/io_net-listener.c.o
+[44/374] Compiling C object libblock.a.p/meson-generated_.._block_block-gen.c.o
+[45/374] Compiling C object libblock.a.p/blockjob.c.o
+[46/374] Compiling C object libblock.a.p/job.c.o
+[47/374] Compiling C object libblock.a.p/block.c.o
+[48/374] Compiling C object libblock.a.p/qemu-io-cmds.c.o
+[49/374] Compiling C object libblock.a.p/nbd_client.c.o
+[50/374] Compiling C object libblock.a.p/nbd_client-connection.c.o
+[51/374] Compiling C object libblock.a.p/nbd_common.c.o
+[52/374] Compiling C object libblock.a.p/block_amend.c.o
+[53/374] Compiling C object libblock.a.p/block_accounting.c.o
+[54/374] Compiling C object libblock.a.p/block_backup.c.o
+[55/374] Compiling C object libblock.a.p/block_blkdebug.c.o
+[56/374] Compiling C object libblock.a.p/block_blklogwrites.c.o
+[57/374] Compiling C object libblock.a.p/block_blkverify.c.o
+[58/374] Compiling C object libblock.a.p/block_block-copy.c.o
+[59/374] Compiling C object libblock.a.p/block_block-backend.c.o
+[60/374] Compiling C object libblock.a.p/block_commit.c.o
+[61/374] Compiling C object libblock.a.p/block_copy-before-write.c.o
+[62/374] Compiling C object libblock.a.p/block_copy-on-read.c.o
+[63/374] Compiling C object libblock.a.p/block_create.c.o
+[64/374] Compiling C object libblock.a.p/block_crypto.c.o
+[65/374] Compiling C object libblock.a.p/block_dirty-bitmap.c.o
+[66/374] Compiling C object libblock.a.p/block_filter-compress.c.o
+[67/374] Compiling C object libblock.a.p/block_graph-lock.c.o
+[68/374] Compiling C object libblock.a.p/block_mirror.c.o
+[69/374] Compiling C object libblock.a.p/block_io.c.o
+[70/374] Compiling C object libblock.a.p/block_null.c.o
+[71/374] Compiling C object libblock.a.p/block_nbd.c.o
+[72/374] Compiling C object libblock.a.p/block_preallocate.c.o
+[73/374] Compiling C object libblock.a.p/block_qapi.c.o
+[74/374] Compiling C object libblock.a.p/block_qcow2-bitmap.c.o
+[75/374] Compiling C object libblock.a.p/block_qcow2.c.o
+[76/374] Compiling C object libblock.a.p/block_qcow2-cache.c.o
+[77/374] Compiling C object libblock.a.p/block_qcow2-cluster.c.o
+[78/374] Compiling C object libblock.a.p/block_qcow2-refcount.c.o
+[79/374] Compiling C object libblock.a.p/block_qcow2-snapshot.c.o
+[80/374] Compiling C object libblock.a.p/block_qcow2-threads.c.o
+[81/374] Compiling C object libblock.a.p/block_quorum.c.o
+[82/374] Compiling C object libblock.a.p/block_raw-format.c.o
+[83/374] Compiling C object libblock.a.p/block_snapshot.c.o
+[84/374] Compiling C object libblock.a.p/block_snapshot-access.c.o
+[85/374] Compiling C object libblock.a.p/block_throttle.c.o
+[86/374] Compiling C object libblock.a.p/block_throttle-groups.c.o
+[87/374] Compiling C object libblock.a.p/block_write-threshold.c.o
+[88/374] Compiling C object libblock.a.p/block_stream.c.o
+[89/374] Compiling C object libblock.a.p/block_file-posix.c.o
+[90/374] Compiling C object libblock.a.p/block_monitor_bitmap-qmp-cmds.c.o
+[91/374] Compiling C object libblockdev.a.p/block_export_export.c.o
+[92/374] Compiling C object libblockdev.a.p/nbd_server.c.o
+[93/374] Compiling C object libblockdev.a.p/blockdev-nbd.c.o
+[94/374] Compiling C object libblockdev.a.p/blockdev.c.o
+[95/374] Compiling C object libblockdev.a.p/iothread.c.o
+[96/374] Compiling C object libqmp.a.p/monitor_monitor.c.o
+[97/374] Compiling C object libqmp.a.p/monitor_qmp.c.o
+[98/374] Compiling C object libqmp.a.p/monitor_qmp-cmds-control.c.o
+[99/374] Compiling C object libchardev.a.p/chardev_char-fe.c.o
+[100/374] Compiling C object libchardev.a.p/chardev_char-io.c.o
+[101/374] Compiling C object libchardev.a.p/chardev_char-mux.c.o
+[102/374] Compiling C object libchardev.a.p/chardev_char-hub.c.o
+[103/374] Compiling C object libchardev.a.p/chardev_char-pipe.c.o
+[104/374] Compiling C object libchardev.a.p/chardev_char-socket.c.o
+[105/374] Compiling C object libchardev.a.p/chardev_char-udp.c.o
+[106/374] Compiling C object libchardev.a.p/chardev_char-fd.c.o
+[107/374] Compiling C object libchardev.a.p/chardev_char.c.o
+[108/374] Compiling C object libchardev.a.p/chardev_char-pty.c.o
+[109/374] Compiling C object libhwcore.a.p/hw_core_irq.c.o
+[110/374] Compiling C object libhwcore.a.p/hw_core_qdev.c.o
+[111/374] Compiling C object libsystem.a.p/trace_trace-hmp-cmds.c.o
+[112/374] Compiling C object libsystem.a.p/qom_qom-hmp-cmds.c.o
+[113/374] Compiling C object libsystem.a.p/ui_console.c.o
+[114/374] Compiling C object libsystem.a.p/ui_input-barrier.c.o
+[115/374] Compiling C object libsystem.a.p/ui_ui-hmp-cmds.c.o
+[116/374] Compiling C object libsystem.a.p/ui_util.c.o
+[117/374] Compiling C object libsystem.a.p/ui_xemu-wasm.c.o
+../ui/xemu-wasm.c:86:6: warning: no previous prototype for function 'xemu_wasm_cpu_dump' [-Wmissing-prototypes]
+   86 | void xemu_wasm_cpu_dump(void)
+      |      ^
+../ui/xemu-wasm.c:86:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   86 | void xemu_wasm_cpu_dump(void)
+      | ^
+      | static 
+../ui/xemu-wasm.c:94:11: warning: no previous prototype for function 'xemu_wasm_stack_size' [-Wmissing-prototypes]
+   94 | uintptr_t xemu_wasm_stack_size(void)
+      |           ^
+../ui/xemu-wasm.c:94:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   94 | uintptr_t xemu_wasm_stack_size(void)
+      | ^
+      | static 
+../ui/xemu-wasm.c:100:6: warning: no previous prototype for function 'xemu_wasm_assert_stack' [-Wmissing-prototypes]
+  100 | void xemu_wasm_assert_stack(size_t min_bytes, const char *where)
+      |      ^
+../ui/xemu-wasm.c:100:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  100 | void xemu_wasm_assert_stack(size_t min_bytes, const char *where)
+      | ^
+      | static 
+../ui/xemu-wasm.c:180:53: warning: diagnostic behavior may be improved by adding the 'format(printf, 1, 0)' attribute to the declaration of 'ring_vput' [-Wmissing-format-attribute]
+  163 |     n2 = vsnprintf(tmp + n, sizeof(tmp) - n, fmt, ap);
+      |                                                     ^
+../ui/xemu-wasm.c:163:13: note: 'ring_vput' declared here
+  163 | static void ring_vput(const char *fmt, va_list ap)
+      |             ^
+../ui/xemu-wasm.c:209:22: warning: diagnostic behavior may be improved by adding the 'format(printf, 1, 2)' attribute to the declaration of 'xemu_wasm_dbg_ring_put' [-Wmissing-format-attribute]
+  209 |     ring_vput(fmt, ap);
+      |                      ^
+/root/src/xemu-wasm/xemu-astra/include/system/os-wasm.h:92:13: note: 'xemu_wasm_dbg_ring_put' declared here
+   92 | extern void xemu_wasm_dbg_ring_put(const char *fmt, ...);
+      |             ^
+../ui/xemu-wasm.c:284:20: warning: unused variable 'cur' [-Wunused-variable]
+  284 |     const uint8_t *cur = (const uint8_t *)0;
+      |                    ^~~
+../ui/xemu-wasm.c:367:6: warning: no previous prototype for function 'xemu_queue_error_message' [-Wmissing-prototypes]
+  367 | void xemu_queue_error_message(const char *msg)
+      |      ^
+../ui/xemu-wasm.c:367:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  367 | void xemu_queue_error_message(const char *msg)
+      | ^
+      | static 
+../ui/xemu-wasm.c:372:6: warning: no previous prototype for function 'xemu_queue_notification' [-Wmissing-prototypes]
+  372 | void xemu_queue_notification(const char *msg)
+      |      ^
+../ui/xemu-wasm.c:372:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  372 | void xemu_queue_notification(const char *msg)
+      | ^
+      | static 
+../ui/xemu-wasm.c:397:27: warning: no previous prototype for function 'xemu_wasm_set_pad' [-Wmissing-prototypes]
+  397 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_pad(int buttons, int lt, int rt,
+      |                           ^
+../ui/xemu-wasm.c:397:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  397 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_pad(int buttons, int lt, int rt,
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:476:27: warning: no previous prototype for function 'xemu_wasm_save_state' [-Wmissing-prototypes]
+  476 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
+      |                           ^
+../ui/xemu-wasm.c:476:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  476 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_save_state(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:487:27: warning: no previous prototype for function 'xemu_wasm_load_state' [-Wmissing-prototypes]
+  487 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_load_state(void)
+      |                           ^
+../ui/xemu-wasm.c:487:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  487 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_load_state(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:493:26: warning: no previous prototype for function 'xemu_wasm_save_state_status' [-Wmissing-prototypes]
+  493 | EMSCRIPTEN_KEEPALIVE int xemu_wasm_save_state_status(void)
+      |                          ^
+../ui/xemu-wasm.c:493:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  493 | EMSCRIPTEN_KEEPALIVE int xemu_wasm_save_state_status(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:561:32: warning: no previous prototype for function 'xemu_wasm_disc_ctl' [-Wmissing-prototypes]
+  561 | EMSCRIPTEN_KEEPALIVE uintptr_t xemu_wasm_disc_ctl(void)
+      |                                ^
+../ui/xemu-wasm.c:561:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  561 | EMSCRIPTEN_KEEPALIVE uintptr_t xemu_wasm_disc_ctl(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:567:27: warning: no previous prototype for function 'xemu_wasm_set_js_disc' [-Wmissing-prototypes]
+  567 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_js_disc(double size)
+      |                           ^
+../ui/xemu-wasm.c:567:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  567 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_js_disc(double size)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:572:6: warning: no previous prototype for function 'xemu_wasm_is_js_disc' [-Wmissing-prototypes]
+  572 | bool xemu_wasm_is_js_disc(const char *filename)
+      |      ^
+../ui/xemu-wasm.c:572:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  572 | bool xemu_wasm_is_js_disc(const char *filename)
+      | ^
+      | static 
+/root/src/xemu-wasm/emsdk/upstream/lib/clang/24/include/stdbool.h:24:14: note: expanded from macro 'bool'
+   24 | #define bool _Bool
+      |              ^
+../ui/xemu-wasm.c:577:9: warning: no previous prototype for function 'xemu_wasm_js_disc_size' [-Wmissing-prototypes]
+  577 | int64_t xemu_wasm_js_disc_size(void)
+      |         ^
+../ui/xemu-wasm.c:577:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  577 | int64_t xemu_wasm_js_disc_size(void)
+      | ^
+      | static 
+../ui/xemu-wasm.c:582:9: warning: no previous prototype for function 'xemu_wasm_js_disc_pread' [-Wmissing-prototypes]
+  582 | ssize_t xemu_wasm_js_disc_pread(void *buf, size_t len, uint64_t off)
+      |         ^
+../ui/xemu-wasm.c:582:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  582 | ssize_t xemu_wasm_js_disc_pread(void *buf, size_t len, uint64_t off)
+      | ^
+      | static 
+../ui/xemu-wasm.c:618:27: warning: no previous prototype for function 'xemu_wasm_request_disc' [-Wmissing-prototypes]
+  618 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_request_disc(int mode)
+      |                           ^
+../ui/xemu-wasm.c:618:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  618 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_request_disc(int mode)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:661:31: warning: no previous prototype for function 'xemu_wasm_get_present_count' [-Wmissing-prototypes]
+  661 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_present_count(void)
+      |                               ^
+../ui/xemu-wasm.c:661:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  661 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_present_count(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:666:31: warning: no previous prototype for function 'xemu_wasm_get_flip_count' [-Wmissing-prototypes]
+  666 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_flip_count(void)
+      |                               ^
+../ui/xemu-wasm.c:666:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  666 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_flip_count(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:671:31: warning: no previous prototype for function 'xemu_wasm_get_virt_ms' [-Wmissing-prototypes]
+  671 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_virt_ms(void)
+      |                               ^
+../ui/xemu-wasm.c:671:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  671 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_get_virt_ms(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:710:34: warning: no previous prototype for function 'xemu_wasm_mmio_top' [-Wmissing-prototypes]
+  710 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
+      |                                  ^
+../ui/xemu-wasm.c:710:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  710 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_mmio_top(void)
+      |                            ^
+      |                            static 
+../ui/xemu-wasm.c:834:34: warning: no previous prototype for function 'xemu_wasm_phase_top' [-Wmissing-prototypes]
+  834 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_phase_top(void)
+      |                                  ^
+../ui/xemu-wasm.c:834:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  834 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_phase_top(void)
+      |                            ^
+      |                            static 
+../ui/xemu-wasm.c:891:27: warning: no previous prototype for function 'xemu_wasm_set_display_size' [-Wmissing-prototypes]
+  891 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_size(int w, int h)
+      |                           ^
+../ui/xemu-wasm.c:891:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  891 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_size(int w, int h)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:930:34: warning: no previous prototype for function 'xemu_wasm_count_top' [-Wmissing-prototypes]
+  930 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
+      |                                  ^
+../ui/xemu-wasm.c:930:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  930 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_count_top(void)
+      |                            ^
+      |                            static 
+../ui/xemu-wasm.c:961:31: warning: no previous prototype for function 'xemu_wasm_heap_used_mb' [-Wmissing-prototypes]
+  961 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_used_mb(void)
+      |                               ^
+../ui/xemu-wasm.c:961:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  961 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_used_mb(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:967:31: warning: no previous prototype for function 'xemu_wasm_heap_live_mb' [-Wmissing-prototypes]
+  967 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_live_mb(void)
+      |                               ^
+../ui/xemu-wasm.c:967:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  967 | EMSCRIPTEN_KEEPALIVE uint32_t xemu_wasm_heap_live_mb(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:973:37: warning: no previous prototype for function 'xemu_wasm_stats_ptr' [-Wmissing-prototypes]
+  973 | EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
+      |                                     ^
+../ui/xemu-wasm.c:973:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  973 | EMSCRIPTEN_KEEPALIVE XemuWasmStats *xemu_wasm_stats_ptr(void)
+      |                      ^
+      |                      static 
+../ui/xemu-wasm.c:978:34: warning: no previous prototype for function 'xemu_wasm_stats_fields' [-Wmissing-prototypes]
+  978 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_stats_fields(void)
+      |                                  ^
+../ui/xemu-wasm.c:978:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  978 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_stats_fields(void)
+      |                            ^
+      |                            static 
+../ui/xemu-wasm.c:1083:17: warning: variable 'sk' set but not used [-Wunused-but-set-variable]
+ 1083 |     const char *sk;
+      |                 ^
+30 warnings generated.
+[118/374] Compiling C object libsystem.a.p/gdbstub_gdbstub.c.o
+[119/374] Compiling C object libsystem.a.p/gdbstub_system.c.o
+[120/374] Compiling C object libsystem.a.p/hw_acpi_bios-linker-loader.c.o
+[121/374] Compiling C object libsystem.a.p/hw_acpi_aml-build.c.o
+[122/374] Compiling C object libsystem.a.p/hw_acpi_utils.c.o
+[123/374] Compiling C object libsystem.a.p/hw_acpi_core.c.o
+[124/374] Compiling C object libsystem.a.p/hw_acpi_cpu_hotplug.c.o
+[125/374] Compiling C object libsystem.a.p/hw_acpi_cpu.c.o
+[126/374] Compiling C object libsystem.a.p/hw_acpi_memory_hotplug.c.o
+[127/374] Compiling C object libsystem.a.p/hw_acpi_nvdimm.c.o
+[128/374] Compiling C object libsystem.a.p/hw_acpi_cxl-stub.c.o
+[129/374] Compiling C object libsystem.a.p/hw_acpi_pci.c.o
+[130/374] Compiling C object libsystem.a.p/hw_acpi_vmgenid.c.o
+[131/374] Compiling C object libsystem.a.p/hw_acpi_vmclock.c.o
+[132/374] Compiling C object libsystem.a.p/hw_acpi_pci-bridge.c.o
+[133/374] Compiling C object libsystem.a.p/hw_acpi_piix4.c.o
+[134/374] Compiling C object libsystem.a.p/hw_acpi_viot.c.o
+[135/374] Compiling C object libsystem.a.p/hw_acpi_pcihp.c.o
+[136/374] Compiling C object libsystem.a.p/hw_acpi_erst.c.o
+[137/374] Compiling C object libsystem.a.p/hw_audio_ac97.c.o
+[138/374] Compiling C object libsystem.a.p/hw_block_block.c.o
+[139/374] Compiling C object libsystem.a.p/hw_block_hd-geometry.c.o
+[140/374] Compiling C object libsystem.a.p/hw_char_parallel-isa.c.o
+[141/374] Compiling C object libsystem.a.p/hw_block_pflash_cfi01.c.o
+[142/374] Compiling C object libsystem.a.p/hw_char_serial.c.o
+[143/374] Compiling C object libsystem.a.p/hw_char_serial-isa.c.o
+[144/374] Compiling C object libsystem.a.p/hw_core_generic-loader.c.o
+[145/374] Compiling C object libsystem.a.p/hw_core_machine-hmp-cmds.c.o
+[146/374] Compiling C object libsystem.a.p/hw_core_loader.c.o
+[147/374] Compiling C object libsystem.a.p/hw_core_machine-qmp-cmds.c.o
+[148/374] Compiling C object libsystem.a.p/hw_core_machine.c.o
+[149/374] Compiling C object libsystem.a.p/hw_core_nmi.c.o
+[150/374] Compiling C object libsystem.a.p/hw_core_null-machine.c.o
+[151/374] Compiling C object libsystem.a.p/hw_core_numa.c.o
+[152/374] Compiling C object libsystem.a.p/hw_core_qdev-hotplug.c.o
+[153/374] Compiling C object libsystem.a.p/hw_core_qdev-properties-system.c.o
+[154/374] Compiling C object libsystem.a.p/hw_core_sysbus.c.o
+[155/374] Compiling C object libsystem.a.p/hw_cpu_core.c.o
+[156/374] Compiling C object libsystem.a.p/hw_cxl_cxl-host-stubs.c.o
+[157/374] Compiling C object libsystem.a.p/hw_display_vga-pci.c.o
+[158/374] Compiling C object libsystem.a.p/hw_display_acpi-vga.c.o
+[159/374] Compiling C object libsystem.a.p/hw_display_vga.c.o
+[160/374] Compiling C object libsystem.a.p/hw_dma_i8257.c.o
+[161/374] Compiling C object libsystem.a.p/hw_i2c_core.c.o
+[162/374] Compiling C object libsystem.a.p/hw_i2c_pm_smbus.c.o
+[163/374] Compiling C object libsystem.a.p/hw_i2c_smbus_eeprom.c.o
+[164/374] Compiling C object libsystem.a.p/hw_ide_ide-bus.c.o
+[165/374] Compiling C object libsystem.a.p/hw_ide_cf.c.o
+[166/374] Compiling C object libsystem.a.p/hw_ide_atapi.c.o
+[167/374] Compiling C object libsystem.a.p/hw_ide_core.c.o
+[168/374] Compiling C object libsystem.a.p/hw_ide_ide-dev.c.o
+[169/374] Compiling C object libsystem.a.p/hw_ide_ioport.c.o
+[170/374] Compiling C object libsystem.a.p/hw_ide_pci.c.o
+[171/374] Compiling C object libsystem.a.p/hw_ide_piix.c.o
+[172/374] Compiling C object libsystem.a.p/hw_isa_apm.c.o
+[173/374] Compiling C object libsystem.a.p/hw_isa_piix.c.o
+[174/374] Compiling C object libsystem.a.p/hw_mem_memory-device.c.o
+[175/374] Compiling C object libsystem.a.p/hw_mem_pc-dimm.c.o
+[176/374] Compiling C object libsystem.a.p/hw_misc_pci-testdev.c.o
+[177/374] Compiling C object libsystem.a.p/hw_net_rocker_rocker-hmp-cmds.c.o
+[178/374] Compiling C object libsystem.a.p/hw_nvram_fw_cfg-interface.c.o
+[179/374] Compiling C object libsystem.a.p/hw_nvram_fw_cfg.c.o
+[180/374] Compiling C object libsystem.a.p/hw_pci_msi.c.o
+[181/374] Compiling C object libsystem.a.p/hw_pci_msix.c.o
+[182/374] Compiling C object libsystem.a.p/hw_pci_pci_bridge.c.o
+[183/374] Compiling C object libsystem.a.p/hw_pci_pci.c.o
+[184/374] Compiling C object libsystem.a.p/hw_pci_pci_host.c.o
+[185/374] Compiling C object libsystem.a.p/hw_pci_pci-hmp-cmds.c.o
+[186/374] Compiling C object libsystem.a.p/hw_pci_pci-qmp-cmds.c.o
+[187/374] Compiling C object libsystem.a.p/hw_pci_pcie_sriov.c.o
+[188/374] Compiling C object libsystem.a.p/hw_pci_slotid_cap.c.o
+[189/374] Compiling C object libsystem.a.p/hw_pci_shpc.c.o
+[190/374] Compiling C object libsystem.a.p/hw_pci_pcie_aer.c.o
+[191/374] Compiling C object libsystem.a.p/hw_pci_pcie.c.o
+[192/374] Compiling C object libsystem.a.p/hw_pci_pcie_doe.c.o
+[193/374] Compiling C object libsystem.a.p/hw_pci-bridge_pci_expander_bridge_stubs.c.o
+[194/374] Compiling C object libsystem.a.p/hw_pci-host_i440fx.c.o
+[195/374] Compiling C object libsystem.a.p/hw_scsi_scsi-bus.c.o
+[196/374] Compiling C object libsystem.a.p/hw_scsi_scsi-generic.c.o
+[197/374] Compiling C object libsystem.a.p/hw_scsi_scsi-disk.c.o
+[198/374] Compiling C object libsystem.a.p/hw_uefi_hardware-info.c.o
+[199/374] Compiling C object libsystem.a.p/hw_uefi_ovmf-log.c.o
+[200/374] Compiling C object libsystem.a.p/hw_usb_bus.c.o
+[201/374] Compiling C object libsystem.a.p/hw_usb_libhw.c.o
+[202/374] Compiling C object libsystem.a.p/hw_usb_hcd-uhci.c.o
+[203/374] Compiling C object libsystem.a.p/hw_usb_hcd-ohci.c.o
+[204/374] Compiling C object libsystem.a.p/hw_usb_hcd-ohci-pci.c.o
+[205/374] Compiling C object libsystem.a.p/hw_usb_dev-storage-classic.c.o
+[206/374] Compiling C object libsystem.a.p/hw_usb_dev-uas.c.o
+[207/374] Compiling C object libsystem.a.p/hw_usb_dev-serial.c.o
+[208/374] Compiling C object libsystem.a.p/hw_virtio_vhost-stub.c.o
+[209/374] Compiling C object libsystem.a.p/hw_virtio_virtio-md-stubs.c.o
+[210/374] Compiling C object libsystem.a.p/hw_virtio_virtio-hmp-cmds.c.o
+[211/374] Compiling C object libsystem.a.p/audio_audio-hmp-cmds.c.o
+[212/374] Compiling C object libsystem.a.p/chardev_char-hmp-cmds.c.o
+[213/374] Compiling C object libsystem.a.p/dump_dump-hmp-cmds.c.o
+[214/374] Compiling C object libsystem.a.p/dump_dump.c.o
+[215/374] Compiling C object libsystem.a.p/block_blkreplay.c.o
+[216/374] Compiling C object libsystem.a.p/block_block-ram-registrar.c.o
+[217/374] Compiling C object libsystem.a.p/block_qapi-system.c.o
+[218/374] Compiling C object libsystem.a.p/block_monitor_block-hmp-cmds.c.o
+[219/374] Compiling C object libsystem.a.p/system_bootdevice.c.o
+[220/374] Compiling C object libsystem.a.p/system_vl.c.o
+In file included from ../system/vl.c:35:
+In file included from /root/src/xemu-wasm/xemu-astra/include/exec/cpu-common.h:13:
+/root/src/xemu-wasm/xemu-astra/include/hw/core/cpu.h:286:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  286 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:63:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/scsi/scsi.h:4:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio.h:25:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:69:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/loader.h:3:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/nvram/fw_cfg.h:7:
+In file included from /root/src/xemu-wasm/xemu-astra/include/system/dma.h:15:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block.h:28:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block-io.h:27:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio-wait.h:29:
+/root/src/xemu-wasm/xemu-astra/include/qemu/main-loop.h:291:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  291 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:798:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  798 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:923:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:944:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:940:34: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  940 | #if !defined(_WIN32) && !defined(EMSCRIPTEN)
+      |                                  ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../system/vl.c:964:
+./qemu-options.def:1044:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 1044 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:1220:46: warning: incompatible pointer types passing 'size_t *' (aka 'unsigned long *') to parameter of type 'gsize *' (aka 'unsigned int *') [-Wincompatible-pointer-types]
+ 1220 |         if (!g_file_get_contents(file, &buf, &size, &err)) {
+      |                                              ^~~~~
+/root/src/xemu-wasm/wasm-deps/target/include/glib-2.0/glib/gfileutils.h:122:45: note: passing argument to parameter 'length' here
+  122 |                               gsize        *length,
+      |                                             ^
+../system/vl.c:3119:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3119 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3127:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3127 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3136:9: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3136 | #ifndef EMSCRIPTEN
+      |         ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3159:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3159 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:3992:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 3992 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4083:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4083 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../system/vl.c:4091:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+ 4091 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+18 warnings generated.
+[221/374] Compiling C object libsystem.a.p/system_cpus.c.o
+../system/cpus.c:620:23: warning: unused variable 'bql_lock_fn' [-Wunused-variable]
+  620 |     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
+      |                       ^~~~~~~~~~~
+1 warning generated.
+[222/374] Compiling C object libsystem.a.p/system_cpu-timers.c.o
+[223/374] Compiling C object libsystem.a.p/system_dirtylimit.c.o
+[224/374] Compiling C object libsystem.a.p/system_dma-helpers.c.o
+[225/374] Compiling C object libsystem.a.p/system_globals.c.o
+[226/374] Compiling C object libsystem.a.p/system_memory.c.o
+[227/374] Compiling C object libsystem.a.p/system_physmem.c.o
+../system/physmem.c:2009:6: warning: no previous prototype for function 'xemu_wasm_dump_ramblocks' [-Wmissing-prototypes]
+ 2009 | void xemu_wasm_dump_ramblocks(void)
+      |      ^
+../system/physmem.c:2009:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+ 2009 | void xemu_wasm_dump_ramblocks(void)
+      | ^
+      | static 
+../system/physmem.c:2994:28: warning: address of array 'block->idstr' will always evaluate to 'true' [-Wpointer-bool-conversion]
+ 2994 |                     block->idstr ? block->idstr : "?", (unsigned long long)addr);
+      |                     ~~~~~~~^~~~~ ~
+../system/physmem.c:2673:12: warning: unused function 'qemu_ram_get_shared_fd' [-Wunused-function]
+ 2673 | static int qemu_ram_get_shared_fd(const char *name, bool *reused, Error **errp)
+      |            ^~~~~~~~~~~~~~~~~~~~~~
+3 warnings generated.
+[228/374] Compiling C object libsystem.a.p/system_qdev-monitor.c.o
+[229/374] Compiling C object libsystem.a.p/system_runstate-hmp-cmds.c.o
+[230/374] Compiling C object libsystem.a.p/system_qtest.c.o
+../system/qtest.c:695:33: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'gsize' (aka 'unsigned int') [-Wformat]
+  694 |                            "found %zu)\n",
+      |                                   ~~~
+      |                                   %u
+  695 |                            len, out_len);
+      |                                 ^~~~~~~
+1 warning generated.
+[231/374] Compiling C object libsystem.a.p/system_tpm-hmp-cmds.c.o
+[232/374] Compiling C object libsystem.a.p/system_runstate.c.o
+[233/374] Compiling C object libsystem.a.p/target-info-qom.c.o
+[234/374] Compiling C object libsystem.a.p/backends_cryptodev-hmp-cmds.c.o
+[235/374] Compiling C object libsystem.a.p/backends_cryptodev.c.o
+[236/374] Compiling C object libsystem.a.p/backends_hostmem.c.o
+[237/374] Compiling C object libsystem.a.p/backends_rng-builtin.c.o
+[238/374] Compiling C object libsystem.a.p/backends_rng-egd.c.o
+[239/374] Compiling C object libsystem.a.p/backends_rng-random.c.o
+[240/374] Compiling C object libsystem.a.p/disas_disas-mon.c.o
+[241/374] Compiling C object libsystem.a.p/migration_block-dirty-bitmap.c.o
+[242/374] Compiling C object libsystem.a.p/migration_block-active.c.o
+[243/374] Compiling C object libsystem.a.p/migration_channel-block.c.o
+[244/374] Compiling C object libsystem.a.p/migration_cpr.c.o
+[245/374] Compiling C object libsystem.a.p/migration_cpr-exec.c.o
+[246/374] Compiling C object libsystem.a.p/migration_cpu-throttle.c.o
+[247/374] Compiling C object libsystem.a.p/migration_fd.c.o
+[248/374] Compiling C object libsystem.a.p/migration_dirtyrate.c.o
+[249/374] Compiling C object libsystem.a.p/migration_migration-hmp-cmds.c.o
+[250/374] Compiling C object libsystem.a.p/migration_migration.c.o
+[251/374] Compiling C object libsystem.a.p/migration_postcopy-ram.c.o
+[252/374] Compiling C object libsystem.a.p/migration_savevm.c.o
+[253/374] Compiling C object libsystem.a.p/migration_ram.c.o
+[254/374] Compiling C object libsystem.a.p/monitor_fds.c.o
+[255/374] Compiling C object libsystem.a.p/monitor_hmp-cmds.c.o
+[256/374] Compiling C object libsystem.a.p/monitor_qemu-config-qmp.c.o
+[257/374] Compiling C object libsystem.a.p/monitor_hmp.c.o
+[258/374] Compiling C object libsystem.a.p/monitor_qmp-cmds.c.o
+[259/374] Compiling C object libsystem.a.p/net_dgram.c.o
+[260/374] Compiling C object libsystem.a.p/net_filter-mirror.c.o
+[261/374] Compiling C object libsystem.a.p/net_hub.c.o
+[262/374] Compiling C object libsystem.a.p/net_net-hmp-cmds.c.o
+[263/374] Compiling C object libsystem.a.p/net_net.c.o
+[264/374] Compiling C object libsystem.a.p/net_socket.c.o
+[265/374] Compiling C object libsystem.a.p/net_slirp.c.o
+[266/374] Compiling C object libsystem.a.p/net_tap.c.o
+[267/374] Compiling C object libsystem.a.p/replay_replay.c.o
+[268/374] Compiling C object libsystem.a.p/replay_replay-internal.c.o
+[269/374] Compiling C object libsystem.a.p/replay_replay-snapshot.c.o
+[270/374] Compiling C object libsystem.a.p/replay_replay-debugging.c.o
+[271/374] Compiling C object libsystem.a.p/stats_stats-hmp-cmds.c.o
+[272/374] Compiling C object libsystem.a.p/accel_accel-system.c.o
+[273/374] Compiling C object libsystem.a.p/accel_accel-blocker.c.o
+[274/374] Compiling C object libsystem.a.p/accel_accel-irq.c.o
+[275/374] Compiling C object libsystem.a.p/accel_tcg_cpu-exec.c.o
+../accel/tcg/cpu-exec.c:241:19: warning: no previous prototype for function 'xemu_wasm_inv_tb_any' [-Wmissing-prototypes]
+  241 | TranslationBlock *xemu_wasm_inv_tb_any(CPUState *cpu, TCGTBCPUState s)
+      |                   ^
+../accel/tcg/cpu-exec.c:241:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  241 | TranslationBlock *xemu_wasm_inv_tb_any(CPUState *cpu, TCGTBCPUState s)
+      | ^
+      | static 
+1 warning generated.
+[276/374] Compiling C object libsystem.a.p/accel_tcg_tcg-all.c.o
+[277/374] Compiling C object libsystem.a.p/tcg_wasm32.c.o
+In file included from ../tcg/wasm32.c:28:
+In file included from /root/src/xemu-wasm/xemu-astra/include/tcg/tcg.h:31:
+In file included from /root/src/xemu-wasm/xemu-astra/include/qemu/plugin.h:18:
+/root/src/xemu-wasm/xemu-astra/include/hw/core/cpu.h:286:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  286 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../tcg/wasm32.c:58:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   58 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../tcg/wasm32.c:74:38: warning: no previous prototype for function 'wasm32_cur_tb_ptr' [-Wmissing-prototypes]
+   74 | EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
+      |                                      ^
+../tcg/wasm32.c:74:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   74 | EMSCRIPTEN_KEEPALIVE void *volatile *wasm32_cur_tb_ptr(void)
+      |                      ^
+      |                      static 
+../tcg/wasm32.c:177:6: warning: no previous prototype for function 'wasm32_unwind_mem_enabled' [-Wmissing-prototypes]
+  177 | bool wasm32_unwind_mem_enabled(void)
+      |      ^
+../tcg/wasm32.c:177:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  177 | bool wasm32_unwind_mem_enabled(void)
+      | ^
+      | static 
+/root/src/xemu-wasm/emsdk/upstream/lib/clang/24/include/stdbool.h:24:14: note: expanded from macro 'bool'
+   24 | #define bool _Bool
+      |              ^
+../tcg/wasm32.c:290:32: warning: no previous prototype for function 'wasm32_tb_info' [-Wmissing-prototypes]
+  290 | EMSCRIPTEN_KEEPALIVE uint32_t *wasm32_tb_info(void *hdr)
+      |                                ^
+../tcg/wasm32.c:290:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  290 | EMSCRIPTEN_KEEPALIVE uint32_t *wasm32_tb_info(void *hdr)
+      |                      ^
+      |                      static 
+../tcg/wasm32.c:402:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  402 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:3:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-direct.h:109:13: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  109 | #if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+      |             ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:3:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-direct.h:124:13: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  124 | #if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+      |             ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:3:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-direct.h:139:13: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  139 | #if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+      |             ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:4:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-direct-memory.h:25:13: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   25 | #if defined(EMSCRIPTEN) && defined(CONFIG_TCG_WASM_JIT)
+      |             ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:6:
+../tcg/wasm32-direct-blueprint.c.inc:184:16: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  184 |         return false;
+      |                ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:6:
+../tcg/wasm32-direct-blueprint.c.inc:191:20: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  191 |             return false;
+      |                    ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:6:
+../tcg/wasm32-direct-blueprint.c.inc:200:24: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  200 |                 return false;
+      |                        ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:6:
+../tcg/wasm32-direct-blueprint.c.inc:205:28: warning: expression which evaluates to zero treated as a null pointer constant of type 'const uint8_t *' (aka 'const unsigned char *') [-Wnon-literal-null-conversion]
+  205 |                     return false; /* Ambiguous or duplicate direct metadata. */
+      |                            ^~~~~
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h:90:15: note: expanded from macro 'false'
+   90 | #define false (!!0)
+      |               ^~~~~
+In file included from ../tcg/wasm32.c:927:
+In file included from ../tcg/wasm32-direct-region.c.inc:5:
+../tcg/wasm32-direct.c.inc:511:13: warning: unused function 'xwd_decode' [-Wunused-function]
+  511 | static bool xwd_decode(const XwdCapture *c, XwdPlan *p)
+      |             ^~~~~~~~~~
+../tcg/wasm32-direct.c.inc:1130:13: warning: unused function 'xwd_emit' [-Wunused-function]
+ 1130 | static bool xwd_emit(const XwdPlan *p, const XwdLayout *l, bool verify,
+      |             ^~~~~~~~
+16 warnings generated.
+[278/374] Compiling C object libsystem.a.p/accel_tcg_icount-common.c.o
+[279/374] Compiling C object libsystem.a.p/accel_tcg_monitor.c.o
+[280/374] Compiling C object libsystem.a.p/accel_tcg_cputlb.c.o
+../accel/tcg/cputlb.c:995:6: warning: no previous prototype for function 'tlb_flush_host_range' [-Wmissing-prototypes]
+  995 | void tlb_flush_host_range(CPUState *cpu, uintptr_t start, uintptr_t length)
+      |      ^
+../accel/tcg/cputlb.c:995:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  995 | void tlb_flush_host_range(CPUState *cpu, uintptr_t start, uintptr_t length)
+      | ^
+      | static 
+../accel/tcg/cputlb.c:1826:10: warning: no previous prototype for function 'xemu_wasm_ld_i128_fast' [-Wmissing-prototypes]
+ 1826 | uint32_t xemu_wasm_ld_i128_fast(Int128 *ret, CPUArchState *env,
+      |          ^
+../accel/tcg/cputlb.c:1826:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+ 1826 | uint32_t xemu_wasm_ld_i128_fast(Int128 *ret, CPUArchState *env,
+      | ^
+      | static 
+../accel/tcg/cputlb.c:1837:10: warning: no previous prototype for function 'xemu_wasm_st_i128_fast' [-Wmissing-prototypes]
+ 1837 | uint32_t xemu_wasm_st_i128_fast(CPUArchState *env, uint64_t addr,
+      |          ^
+../accel/tcg/cputlb.c:1837:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+ 1837 | uint32_t xemu_wasm_st_i128_fast(CPUArchState *env, uint64_t addr,
+      | ^
+      | static 
+../accel/tcg/cputlb.c:2630:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 2630 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:2698:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 2698 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3104:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3104 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3177:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3177 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3235:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3235 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3273:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3273 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3311:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3311 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+../accel/tcg/cputlb.c:3349:72: warning: incompatible pointer types passing 'int *' to parameter of type 'hwaddr *' (aka 'unsigned long long *') [-Wincompatible-pointer-types]
+ 3349 |             mr2 = address_space_translate(as, p->full->phys_addr, &x2, &l2, true, p->full->attrs);
+      |                                                                        ^~~
+/root/src/xemu-wasm/xemu-astra/include/system/memory.h:3051:61: note: passing argument to parameter 'len' here
+ 3051 |                                                     hwaddr *len, bool is_write,
+      |                                                             ^
+11 warnings generated.
+[281/374] Compiling C object libsystem.a.p/accel_tcg_tcg-accel-ops.c.o
+[282/374] Compiling C object libsystem.a.p/accel_tcg_tcg-accel-ops-icount.c.o
+[283/374] Compiling C object libsystem.a.p/accel_tcg_tcg-accel-ops-mttcg.c.o
+[284/374] Compiling C object libsystem.a.p/accel_tcg_tcg-accel-ops-rr.c.o
+[285/374] Compiling C object libsystem.a.p/accel_dummy-cpus.c.o
+[286/374] Compiling C object libsystem.a.p/accel_tcg_watchpoint.c.o
+[287/374] Compiling C object libcommon.a.p/hw_core_cpu-common.c.o
+[288/374] Compiling C object libcommon.a.p/hw_core_machine-smp.c.o
+[289/374] Compiling C object libcommon.a.p/cpu-common.c.o
+[290/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_machine.c.o
+[291/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_monitor.c.o
+[292/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_cpu-apic.c.o
+[293/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_sev-system-stub.c.o
+[294/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_tcg_system_misc_helper.c.o
+[295/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_tcg_system_fpu_helper.c.o
+[296/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_tcg_system_seg_helper.c.o
+[297/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_fw_cfg.c.o
+[298/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_monitor.c.o
+[299/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_multiboot.c.o
+[300/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_x86.c.o
+[301/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_x86-cpu.c.o
+[302/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_vapic.c.o
+[303/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_x86-iommu-stub.c.o
+[304/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_amd_iommu-stub.c.o
+[305/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_sgx-stub.c.o
+[306/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_acpi-common.c.o
+[307/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_x86-common.c.o
+[308/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_pc.c.o
+[309/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_pc_sysfw.c.o
+[310/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_port92.c.o
+[311/374] Compiling C object libqemu-i386-softmmu.a.p/hw_i386_pc_sysfw_ovmf-stubs.c.o
+[312/374] Compiling C object libqemu-i386-softmmu.a.p/target-info-stub.c.o
+[313/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_helper.c.o
+[314/374] Compiling C object libqemu-i386-softmmu.a.p/target_i386_cpu.c.o
+[315/374] Compiling C object libqemu-i386-softmmu.a.p/hw_intc_apic_common.c.o
+[316/374] Compiling C object libqemu-i386-softmmu.a.p/hw_intc_apic.c.o
+[317/374] Compiling C object libqemu-i386-softmmu.a.p/hw_intc_ioapic.c.o
+[318/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_acpi_xbox.c.o
+[319/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_lpc47m157.c.o
+[320/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_amd_smbus.c.o
+[321/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_smbus_storage.c.o
+[322/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_smbus_xbox_smc.c.o
+[323/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_xbox.c.o
+[324/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_xbox_pci.c.o
+[325/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_nv2a.c.o
+[326/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pbus.c.o
+[327/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pcrtc.c.o
+[328/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pfb.c.o
+[329/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pmc.c.o
+[330/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pfifo.c.o
+[331/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pramdac.c.o
+[332/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_prmcio.c.o
+[333/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_prmdio.c.o
+[334/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_prmvio.c.o
+[335/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_ptimer.c.o
+[336/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pvideo.c.o
+[337/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_stubs.c.o
+[338/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_user.c.o
+[339/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_xemu-wasm-fb.c.o
+../hw/xbox/nv2a/xemu-wasm-fb.c:16:6: warning: no previous prototype for function 'xemu_wasm_fb_update' [-Wmissing-prototypes]
+   16 | void xemu_wasm_fb_update(NV2AState *d)
+      |      ^
+../hw/xbox/nv2a/xemu-wasm-fb.c:16:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   16 | void xemu_wasm_fb_update(NV2AState *d)
+      | ^
+      | static 
+1 warning generated.
+[340/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_profile.c.o
+[341/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_pgraph.c.o
+../hw/xbox/nv2a/pgraph/pgraph.c:435:6: warning: no previous prototype for function 'nv2a_wasm_request_present' [-Wmissing-prototypes]
+  435 | void nv2a_wasm_request_present(void)
+      |      ^
+../hw/xbox/nv2a/pgraph/pgraph.c:435:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  435 | void nv2a_wasm_request_present(void)
+      | ^
+      | static 
+1 warning generated.
+[342/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_rdi.c.o
+[343/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_texture.c.o
+[344/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_vertex.c.o
+[345/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_null_renderer.c.o
+[346/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_blit.c.o
+[347/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_buffer.c.o
+[348/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_command.c.o
+[349/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_display.c.o
+../hw/xbox/nv2a/pgraph/wgpu/display.c:296:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  296 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/nv2a/pgraph/wgpu/display.c:297:27: warning: no previous prototype for function 'xemu_wasm_set_display_filter' [-Wmissing-prototypes]
+  297 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_filter(int f)
+      |                           ^
+../hw/xbox/nv2a/pgraph/wgpu/display.c:297:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  297 | EMSCRIPTEN_KEEPALIVE void xemu_wasm_set_display_filter(int f)
+      |                      ^
+      |                      static 
+2 warnings generated.
+[350/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_draw.c.o
+[351/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_glsl.c.o
+[352/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_renderer.c.o
+In file included from ../hw/xbox/nv2a/pgraph/wgpu/renderer.c:18:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:194:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  194 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/nv2a/pgraph/wgpu/renderer.c:18:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:210:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  210 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/nv2a/pgraph/wgpu/renderer.c:18:
+/root/src/xemu-wasm/xemu-astra/include/qemu/xemu-wasm-stats.h:222:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  222 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/nv2a/pgraph/wgpu/renderer.c:97:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   97 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+4 warnings generated.
+[353/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_reports.c.o
+[354/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_shaders.c.o
+[355/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_surface-compute.c.o
+[356/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_surface-reshape.c.o
+[357/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_surface.c.o
+../hw/xbox/nv2a/pgraph/wgpu/surface.c:493:6: warning: no previous prototype for function 'pgraph_wgpu_on_fifo_idle' [-Wmissing-prototypes]
+  493 | void pgraph_wgpu_on_fifo_idle(NV2AState *d)
+      |      ^
+../hw/xbox/nv2a/pgraph/wgpu/surface.c:493:1: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  493 | void pgraph_wgpu_on_fifo_idle(NV2AState *d)
+      | ^
+      | static 
+1 warning generated.
+[358/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_texture.c.o
+[359/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_nv2a_pgraph_wgpu_vertex.c.o
+[360/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_aci.c.o
+[361/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_apu_apu.c.o
+In file included from ../hw/xbox/mcpx/apu/apu.c:26:
+In file included from ../hw/xbox/mcpx/apu/apu_int.h:24:
+/root/src/xemu-wasm/xemu-astra/include/qemu/osdep.h:181:39: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  181 | #if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
+      |                                       ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/mcpx/apu/apu.c:26:
+In file included from ../hw/xbox/mcpx/apu/apu_int.h:24:
+/root/src/xemu-wasm/xemu-astra/include/qemu/osdep.h:185:13: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  185 | #if defined(EMSCRIPTEN)
+      |             ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/mcpx/apu/apu.c:26:
+In file included from ../hw/xbox/mcpx/apu/apu_int.h:30:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/pci/pci.h:4:
+In file included from /root/src/xemu-wasm/xemu-astra/include/system/memory.h:17:
+In file included from /root/src/xemu-wasm/xemu-astra/include/exec/cpu-common.h:13:
+/root/src/xemu-wasm/xemu-astra/include/hw/core/cpu.h:286:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  286 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/mcpx/apu/apu.c:26:
+In file included from ../hw/xbox/mcpx/apu/apu_int.h:30:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/pci/pci.h:5:
+In file included from /root/src/xemu-wasm/xemu-astra/include/system/dma.h:15:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block.h:27:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block-global-state.h:27:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block-common.h:78:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/blockjob.h:30:
+In file included from /root/src/xemu-wasm/xemu-astra/include/qemu/job.h:32:
+In file included from /root/src/xemu-wasm/xemu-astra/include/qemu/coroutine.h:21:
+/root/src/xemu-wasm/xemu-astra/include/qemu/timer.h:839:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  839 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+In file included from ../hw/xbox/mcpx/apu/apu.c:26:
+In file included from ../hw/xbox/mcpx/apu/apu_int.h:30:
+In file included from /root/src/xemu-wasm/xemu-astra/include/hw/pci/pci.h:5:
+In file included from /root/src/xemu-wasm/xemu-astra/include/system/dma.h:15:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block.h:28:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/block-io.h:27:
+In file included from /root/src/xemu-wasm/xemu-astra/include/block/aio-wait.h:29:
+/root/src/xemu-wasm/xemu-astra/include/qemu/main-loop.h:291:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  291 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:53:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+   53 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:258:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  258 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:265:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  265 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:269:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  269 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:273:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  273 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:283:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  283 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:299:34: warning: no previous prototype for function 'xemu_wasm_apu_state' [-Wmissing-prototypes]
+  299 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_apu_state(void)
+      |                                  ^
+../hw/xbox/mcpx/apu/apu.c:299:28: note: declare 'static' if the function is not intended to be used outside of this translation unit
+  299 | EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_apu_state(void)
+      |                            ^
+      |                            static 
+../hw/xbox/mcpx/apu/apu.c:328:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  328 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:335:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  335 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:345:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  345 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:365:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  365 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:369:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  369 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:385:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  385 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:393:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  393 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:398:8: warning: macro 'EMSCRIPTEN' has been marked as deprecated: use __EMSCRIPTEN__ instead [-Wdeprecated-pragma]
+  398 | #ifdef EMSCRIPTEN
+      |        ^
+/root/src/xemu-wasm/emsdk/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h:35:66: note: macro marked 'deprecated' here
+   35 | #pragma clang deprecated(EMSCRIPTEN, "use __EMSCRIPTEN__ instead")
+      |                                                                  ^
+../hw/xbox/mcpx/apu/apu.c:158:13: warning: unused function 'throttle_record_queue' [-Wunused-function]
+  158 | static void throttle_record_queue(MCPXAPUState *d, int queued_bytes)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+21 warnings generated.
+[362/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_apu_debug.c.o
+[363/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_apu_monitor-wasm-stub.c.o
+../hw/xbox/mcpx/apu/monitor-wasm-stub.c:30:37: warning: no previous prototype for function 'xemu_wasm_audio_ring' [-Wmissing-prototypes]
+   30 | EMSCRIPTEN_KEEPALIVE WasmAudioRing *xemu_wasm_audio_ring(void)
+      |                                     ^
+../hw/xbox/mcpx/apu/monitor-wasm-stub.c:30:22: note: declare 'static' if the function is not intended to be used outside of this translation unit
+   30 | EMSCRIPTEN_KEEPALIVE WasmAudioRing *xemu_wasm_audio_ring(void)
+      |                      ^
+      |                      static 
+1 warning generated.
+[364/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_apu_vp_vp.c.o
+[365/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_apu_dsp_gp_ep.c.o
+../hw/xbox/mcpx/apu/dsp/gp_ep.c:29:16: warning: unused variable 'last_known_jit_pref' [-Wunused-variable]
+   29 |     static int last_known_jit_pref = -1;
+      |                ^~~~~~~~~~~~~~~~~~~
+1 warning generated.
+[366/374] Compiling C object libqemu-i386-softmmu.a.p/hw_xbox_mcpx_nvnet_nvnet.c.o
+[367/374] Compiling C object libqemu-i386-softmmu.a.p/xemu-xbe.c.o
+[368/374] Compiling C object libqemu-i386-softmmu.a.p/xemu-version.c.o
+[369/374] Compiling C object libqemu-i386-softmmu.a.p/monitor_hmp-cmds-target.c.o
+[370/374] Compiling C object libqemu-i386-softmmu.a.p/monitor_hmp-target.c.o
+[371/374] Compiling C object libqemu-i386-softmmu.a.p/accel_stubs_kvm-stub.c.o
+[372/374] Compiling C object libqemu-i386-softmmu.a.p/accel_stubs_mshv-stub.c.o
+[373/374] Compiling C object libqemu-i386-softmmu.a.p/accel_qtest_qtest.c.o
+[374/374] Linking target qemu-system-i386.js
+em++: warning: WASM_BIGINT is deprecated (no longer needed. Should only ever be implicitly disabled by -sWASM=0). Please open a bug if you have a continuing need for this setting [-Wdeprecated]
+warning: Asyncify removelist contained a non-matching pattern: 'absl::*'

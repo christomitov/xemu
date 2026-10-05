@@ -1,0 +1,21 @@
+{
+  "reason": "final_JSON",
+  "elapsed": 61.13225650275126,
+  "option": "XEMU_WASM_GVEC_SSAT16",
+  "arms": [
+    {
+      "arm": 0,
+      "pid": 3687701,
+      "rc": 0,
+      "start": 0.0004836185835301876,
+      "result": "/tmp/astra-lock-pair-sat16-perf14-1-0.json"
+    },
+    {
+      "arm": 1,
+      "pid": 3687702,
+      "rc": 0,
+      "start": 0.000930428970605135,
+      "result": "/tmp/astra-lock-pair-sat16-perf14-1-1.json"
+    }
+  ]
+}

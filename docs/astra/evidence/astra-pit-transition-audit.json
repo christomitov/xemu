@@ -1,0 +1,37 @@
+{
+  "source": "SC saved-state i8254 v3, actual i8254_common.c formulas, existing XBOX PIT_FREQ",
+  "mode": 2,
+  "count": 1125,
+  "steps": [
+    {
+      "timestamp_ns": 134151224550,
+      "output": 0,
+      "next_delay_ns": 889
+    },
+    {
+      "timestamp_ns": 134151225439,
+      "output": 1,
+      "next_delay_ns": 999110
+    },
+    {
+      "timestamp_ns": 134152224549,
+      "output": 0,
+      "next_delay_ns": 889
+    },
+    {
+      "timestamp_ns": 134152225438,
+      "output": 1,
+      "next_delay_ns": 999110
+    },
+    {
+      "timestamp_ns": 134153224548,
+      "output": 0,
+      "next_delay_ns": 889
+    },
+    {
+      "timestamp_ns": 134153225437,
+      "output": 1,
+      "next_delay_ns": 999110
+    }
+  ]
+}

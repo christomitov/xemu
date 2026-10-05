@@ -1,0 +1,344 @@
+{
+  "samples": 35602,
+  "groups": {
+    "host clock reads": {
+      "samples": 4364,
+      "pct": 12.257738329307342,
+      "top_self": [
+        [
+          "read_hpet",
+          2839
+        ],
+        [
+          "clock_gettime@@LINUX_2.6",
+          679
+        ],
+        [
+          "do_syscall_64",
+          265
+        ],
+        [
+          "__seccomp_filter",
+          73
+        ],
+        [
+          "_copy_to_user",
+          72
+        ],
+        [
+          "ktime_get_ts64",
+          61
+        ],
+        [
+          "__x64_sys_clock_gettime",
+          52
+        ],
+        [
+          "node::performance::FastPerformanceNow(v8::Local<v8::Value>)",
+          49
+        ],
+        [
+          "clock_gettime@GLIBC_2.2.5",
+          45
+        ],
+        [
+          "posix_get_monotonic_timespec",
+          42
+        ]
+      ]
+    },
+    "Wasm compile / instantiate / tiering": {
+      "samples": 272,
+      "pct": 0.7640020223582945,
+      "top_self": [
+        [
+          "_int_malloc",
+          9
+        ],
+        [
+          "v8::internal::wasm::WasmFullDecoder<v8::internal::wasm::Decoder::FullValidationTag, v8::internal::wasm::EmptyInterface, (v8::internal::wasm::DecodingMode)0>::DecodeFunctionBody()",
+          8
+        ],
+        [
+          "__memmove_avx_unaligned_erms",
+          5
+        ],
+        [
+          "v8::internal::wasm::GetWireBytesHash(v8::base::Vector<unsigned char const>)",
+          5
+        ],
+        [
+          "v8::internal::wasm::WasmFullDecoder<v8::internal::wasm::Decoder::NoValidationTag, v8::internal::wasm::(anonymous namespace)::LiftoffCompiler, (v8::internal::wasm::DecodingMode)0>::Decode()",
+          5
+        ],
+        [
+          "v8::internal::ThreadIsolation::TryLookupJitPageLocked(unsigned long, unsigned long)",
+          4
+        ],
+        [
+          "v8::internal::Map::GetDerivedMap(v8::internal::Isolate*, v8::internal::Handle<v8::internal::Map>, v8::internal::Handle<v8::internal::JSReceiver>)",
+          4
+        ],
+        [
+          "v8::internal::wasm::ModuleDecoderImpl::DecodeBranchHintsSection()",
+          4
+        ],
+        [
+          "_raw_spin_unlock_irqrestore",
+          3
+        ],
+        [
+          "v8::internal::wasm::TriggerTierUp(v8::internal::Isolate*, v8::internal::Tagged<v8::internal::WasmTrustedInstanceData>, int)",
+          3
+        ]
+      ]
+    },
+    "futex / mutex / notify": {
+      "samples": 85,
+      "pct": 0.23875063198696703,
+      "top_self": [
+        [
+          "_raw_spin_unlock_irqrestore",
+          26
+        ],
+        [
+          "pthread_cond_signal@@GLIBC_2.3.2",
+          8
+        ],
+        [
+          "v8::internal::FutexEmulation::Wake(void*, unsigned int)",
+          8
+        ],
+        [
+          "futex_wake",
+          6
+        ],
+        [
+          "do_syscall_64",
+          5
+        ],
+        [
+          "do_futex",
+          4
+        ],
+        [
+          "futex_ref_get",
+          3
+        ],
+        [
+          "futex_wake_mark",
+          3
+        ],
+        [
+          "__lll_lock_wake",
+          3
+        ],
+        [
+          "v8::internal::Runtime_WasmI32AtomicWait(int, unsigned long*, v8::internal::Isolate*)",
+          2
+        ]
+      ]
+    },
+    "other native": {
+      "samples": 349,
+      "pct": 0.9802820066288411,
+      "top_self": [
+        [
+          "Builtins_LoadGlobalIC",
+          67
+        ],
+        [
+          "Builtins_WasmTaggedToFloat64",
+          44
+        ],
+        [
+          "Builtins_LoadIC",
+          33
+        ],
+        [
+          "Builtins_LoadGlobalICTrampoline",
+          26
+        ],
+        [
+          "Builtins_CallFunction_ReceiverIsAny",
+          20
+        ],
+        [
+          "Builtins_ObjectPrototypeHasOwnProperty",
+          18
+        ],
+        [
+          "v8::internal::wasm::WebAssemblyGlobalSetValue(v8::FunctionCallbackInfo<v8::Value> const&)",
+          10
+        ],
+        [
+          "Builtins_SetPrototypeDelete",
+          8
+        ],
+        [
+          "Builtins_RecordWriteSaveFP",
+          8
+        ],
+        [
+          "_raw_spin_unlock_irq",
+          7
+        ]
+      ]
+    },
+    "JS Map lookup": {
+      "samples": 81,
+      "pct": 0.2275153081287568,
+      "top_self": [
+        [
+          "Builtins_FindOrderedHashMapEntry",
+          81
+        ]
+      ]
+    },
+    "Wasm table get/set": {
+      "samples": 113,
+      "pct": 0.3173978989944385,
+      "top_self": [
+        [
+          "v8::internal::WasmTableObject::SetFunctionTableEntry(v8::internal::Isolate*, v8::internal::Handle<v8::internal::WasmTableObject>, int, v8::internal::Handle<v8::internal::Object>)",
+          40
+        ],
+        [
+          "v8::internal::WasmTableObject::Get(v8::internal::Isolate*, v8::internal::Handle<v8::internal::WasmTableObject>, unsigned int)",
+          19
+        ],
+        [
+          "v8::internal::WasmTableObject::UpdateDispatchTables(v8::internal::Isolate*, v8::internal::Handle<v8::internal::WasmTableObject>, int, v8::internal::wasm::WasmFunction const*, v8::internal::Handle<v8::internal::WasmTrustedInstanceData>)",
+          13
+        ],
+        [
+          "v8::internal::MemoryChunk::GetHeap()",
+          7
+        ],
+        [
+          "v8::internal::WasmExportedFunction::IsWasmExportedFunction(v8::internal::Tagged<v8::internal::Object>)",
+          7
+        ],
+        [
+          "v8::internal::WasmTableObject::ClearDispatchTables(int)",
+          7
+        ],
+        [
+          "v8::internal::WasmTableObject::is_in_bounds(unsigned int)",
+          4
+        ],
+        [
+          "v8::internal::WasmTableObject::Set(v8::internal::Isolate*, v8::internal::Handle<v8::internal::WasmTableObject>, unsigned int, v8::internal::Handle<v8::internal::Object>)",
+          3
+        ],
+        [
+          "bool v8::(anonymous namespace)::(anonymous namespace)::EnforceUint32<char const*>(char const*, v8::Local<v8::Value>, v8::Local<v8::Context>, v8::internal::wasm::ErrorThrower*, unsigned int*)",
+          3
+        ],
+        [
+          "v8::internal::WasmInternalFunction::GetOrCreateExternal(v8::internal::Handle<v8::internal::WasmInternalFunction>)",
+          3
+        ]
+      ]
+    },
+    "other bulk memory": {
+      "samples": 62,
+      "pct": 0.1741475198022583,
+      "top_self": [
+        [
+          "__memmove_avx_unaligned_erms",
+          32
+        ],
+        [
+          "__memset_avx2_unaligned_erms",
+          12
+        ],
+        [
+          "v8::internal::wasm::memory_fill_wrapper(unsigned long, unsigned int, unsigned long, unsigned char, unsigned long)",
+          10
+        ],
+        [
+          "v8::internal::wasm::memory_copy_wrapper(unsigned long, unsigned int, unsigned int, unsigned long, unsigned long, unsigned long)",
+          8
+        ]
+      ]
+    },
+    "exception / longjmp runtime": {
+      "samples": 211,
+      "pct": 0.5926633335205888,
+      "top_self": [
+        [
+          "v8::internal::StackFrameIterator::ComputeStackFrameType(v8::internal::StackFrame::State*) const",
+          28
+        ],
+        [
+          "v8::internal::wasm::WasmCodeLookupCache::GetCacheEntry(unsigned long)",
+          21
+        ],
+        [
+          "v8::internal::Isolate::UnwindAndFindHandler()",
+          14
+        ],
+        [
+          "v8::internal::InnerPointerToCodeCache::GetCacheEntry(unsigned long)",
+          7
+        ],
+        [
+          "v8::internal::Isolate::Throw(v8::internal::Tagged<v8::internal::Object>, v8::internal::MessageLocation*)",
+          7
+        ],
+        [
+          "v8::internal::wasm::WasmCodeManager::LookupCode(v8::internal::Isolate*, unsigned long) const",
+          5
+        ],
+        [
+          "v8::internal::AbstractCode::SourcePosition(v8::internal::Isolate*, int)",
+          5
+        ],
+        [
+          "v8::internal::wasm::NativeModule::Lookup(unsigned long) const",
+          5
+        ],
+        [
+          "v8::internal::WasmFrame::LookupExceptionHandlerInTable()",
+          5
+        ],
+        [
+          "v8::internal::StackFrame::GetCallerState(v8::internal::StackFrame::State*) const",
+          5
+        ]
+      ]
+    }
+  },
+  "clock_callers": {
+    "helper_rdtsc": {
+      "samples": 3914,
+      "pct": 10.993764395258694
+    },
+    "BQL wait timing": {
+      "samples": 357,
+      "pct": 1.0027526543452614
+    },
+    "other stats timing": {
+      "samples": 51,
+      "pct": 0.14325037919218023
+    },
+    "other clock / truncated caller": {
+      "samples": 26,
+      "pct": 0.07302960507836638
+    },
+    "MMIO timing": {
+      "samples": 16,
+      "pct": 0.04494129543284085
+    }
+  },
+  "bulk_memory_self": {
+    "samples": 69,
+    "pct": 0.19380933655412616
+  },
+  "gc_native_stack": {
+    "samples": 6,
+    "pct": 0.016852985787315318
+  },
+  "proc_cpu_system_share": 0.11847389558232932
+}

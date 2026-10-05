@@ -1,0 +1,43 @@
+{
+  "status": "READY_FOR_MAC_MODE2_THEN_ACTIVE_AB",
+  "commit": "55af23ba2c53a4f9e949b254ec8220a0c713ba8e",
+  "branch": "astra-direct-x86-memory",
+  "integration_order_on_fb3fe42765_plus_f128": ["ddfc8097b696007e13dcb927cd84c9c0e0309e8b", "6848b4d0325f9950706a735629ef6fb8736495f1", "55af23ba2c53a4f9e949b254ec8220a0c713ba8e"],
+  "private_full_build": "/tmp/astra-direct-memory-build-final.log",
+  "mode2_gate": {
+    "source": "/tmp/astra-ic-mem-direct-memory-mode2-final.json",
+    "reported_commit": "perf-12-9-g55af23ba2c",
+    "reason": "final_JSON", "rc": 0, "elapsed_seconds": 31.11,
+    "env": {"XEMU_WASM_TB_MB": "64", "XEMU_WASM_DIRECT_X86": "2", "XEMU_WASM_DIRECT_FLAGS": "1", "XEMU_WASM_DIRECT_REGIONS": "1", "XEMU_WASM_DIRECT_MEMORY": "1", "XEMU_WASM_TB_STATS": "0"},
+    "frames_total": 412,
+    "memory_regions": 48, "memory_members": 83,
+    "memory_observed": 36301699, "memory_checked": 36301699,
+    "memory_tb_checked": 9234469, "all_region_checked": 9572963,
+    "mismatch": 0, "memory_unverified": 0,
+    "clocks": "PIT999-1001/s, vblank59-60/s; fully active intro APU1496-1504/s. Last partial APU sample729 before guest-off dashboard. No new TSC measurement.",
+    "caveat": "Counts include dashboard polling, not productive-work shares. No FPS forecast."
+  },
+  "active_smoke_same_production_source_before_commit": {
+    "source": "/tmp/astra-ic-mem-direct-memory-active-wip1.json",
+    "reason": "final_JSON", "rc": 0, "elapsed_seconds": 21.05,
+    "tb_stats": 1,
+    "frames_total": 391, "direct_executions": 9500825,
+    "memory_regions": 54, "memory_members": 99, "canonical_memory_misses": 8637,
+    "clocks": "PIT999-1001/s, vblank59-60/s; completed intro and reached normal dashboard idle.",
+    "caveat": "Diagnostic correctness/progress smoke, NOT a performance pair or an independent full architectural oracle."
+  },
+  "supplemental_eviction_unwind_stress_after_handoff": {
+    "source": "/tmp/astra-ic-mem-direct-memory-cancel-stress.json",
+    "reason": "final_JSON", "rc": 0, "elapsed_seconds": 26.05,
+    "jit_max": 256, "test_unwind": 1000, "forced_unwinds": 51,
+    "jit_evictions": 24528, "jit_rewinds": 23,
+    "memory_checked": 34331720, "memory_tb_checked": 8636230,
+    "memory_regions": 275, "memory_members": 517, "mismatch": 0,
+    "frames_total": 260, "memory_unverified": 0,
+    "caveat": "Counters coexist but cancellation coverage is ZERO. This does not prove a memory-member fault/rewind cancellation path or after-effect continuation."
+  },
+  "semantics": "Direct RAM hit or canonical pre-instruction miss exit. All GPR/lazy-CC plus exact instruction EIP published on miss, requesting original COUNT1/no-goto instruction; no prefix replay or direct softmmu helper. Never adds NOIRQ. Reference mode2 consumes completed original values only; original fault/unwind invocations are cancelled UNVERIFIED and original B retains rewind handling.",
+  "tests": ["User decoder/emitter 2880 hit/miss/shadow probes with mutation negatives and existing 19992 direct probes", "User observer 1369302 native and sanitized checks including 64-bit invocation IDs/open-begin rejection", "ASTRA updated codec/glue/register-region/legacy-region regressions passed after actual integration"],
+  "not_qualified": ["Mac memory-stage gameplay", "FPS gain", "Active memory slow-helper continuation (not implemented)", "Actual memory-member cancellation/after-effect replay from these runs"],
+  "handoff": "Hash and exact prerequisites/flags/counters sent immediately to coordinator and user after committed actual mode2 pass. No TBHeader/WasmContext growth; default-off MEMORY; working tree clean."
+}
