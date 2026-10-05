@@ -29,6 +29,8 @@ prefix = r'''
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <pthread.h>
 #define EMSCRIPTEN 1
 #define EMSCRIPTEN_KEEPALIVE
 #define unlikely(x) (x)
@@ -62,7 +64,27 @@ static const char *wait_site(const char *k,const char *f,int l)
 '''
 body = function(wrappers, 'void qemu_mutex_lock_impl(') + '\n' + function(
     wrappers, 'int qemu_mutex_trylock_impl(')
+common = (ROOT / 'util/qemu-thread-common.h').read_text()
+body += r'''
+#undef qemu_mutex_post_lock
+#define trace_qemu_mutex_unlock(m,f,l) do {(void)m;(void)f;(void)l;} while(0)
+#define trace_qemu_mutex_locked(m,f,l) do {(void)m;(void)f;(void)l;} while(0)
+static QemuMutex *fixture_bql;
+static bool holder_tls;
+static bool mutex_is_bql(QemuMutex *m) { return m==fixture_bql; }
+static void bql_update_status(bool b) { holder_tls=b; }
+''' + function(common, 'static inline void qemu_mutex_post_lock(') + '\n' + function(
+    common, 'static inline void qemu_mutex_pre_unlock(')
 test = r'''
+static void *publisher(void *unused) {
+ (void)unused;
+ for(unsigned i=0;i<100000;i++) {
+  xemu_wasm_lock_census_publish((const char *)(uintptr_t)0x12345678,123);
+  xemu_wasm_lock_census_publish((const char *)(uintptr_t)0x87654321,456);
+ }
+ return NULL;
+}
+
 static unsigned sum(unsigned kind,bool busy) {
  unsigned n=0;
  for(unsigned i=0;i<XWLC_SLOTS;i++) if(xwlc_sites[i].file &&
@@ -99,7 +121,7 @@ int main(void) {
   XWLC_NOTE(XWLC_BQL_WAIT,"io.c",42,true);
   assert(sum(XWLC_BQL,false)==(enabled&&vcpu));
   assert(sum(XWLC_BQL_WAIT,true)==(enabled&&vcpu));
-  assert(strlen(xemu_wasm_lock_census_top())<32768);
+  assert(strlen(xemu_wasm_lock_census_top())<65536);
  }
  memset(xwlc_sites,0,sizeof(xwlc_sites));
  for(unsigned i=0;i<XWLC_SLOTS;i++)
@@ -112,13 +134,37 @@ int main(void) {
                            xwlc_sites[0].line,true);
  assert(xwlc_overflow==2 && xwlc_sites[0].calls==UINT32_MAX);
  assert(strstr(xemu_wasm_lock_census_top(),"overflow|2\n"));
- puts("PASS: census policy/filtering, exact mutex probe/lock counts, phase restoration, table/counter overflow");
+ /* Wasm32 site tokens, represented as opaque 32-bit addresses here. */
+ const char *file=(const char *)(uintptr_t)0x12345678;
+ xemu_wasm_lock_census_enabled=true;xemu_wasm_is_vcpu=0;
+ QemuMutex m={.initialized=true};fixture_bql=&m;
+ qemu_mutex_post_lock(&m,file,123);
+ assert(holder_tls && xemu_wasm_lock_census_holder()==0x123456780000007bULL);
+ qemu_mutex_pre_unlock(&m,file,123);
+ assert(!holder_tls && !xemu_wasm_lock_census_holder());
+ /* Timed waits use these same publications without changing local TLS. */
+ holder_tls=true;XWLC_MUTEX_HOLDER(&m,NULL,0);
+ assert(holder_tls && !xemu_wasm_lock_census_holder());
+ XWLC_MUTEX_HOLDER(&m,file,123);
+ assert(holder_tls && xemu_wasm_lock_census_holder()==0x123456780000007bULL);
+ pthread_t thread;assert(!pthread_create(&thread,NULL,publisher,NULL));
+ for(unsigned i=0;i<100000;i++) {
+  uint64_t h=xemu_wasm_lock_census_holder();
+  assert(h==0x123456780000007bULL || h==0x87654321000001c8ULL);
+ }
+ assert(!pthread_join(thread,NULL));
+ xemu_wasm_lock_census_publish(NULL,0);
+ xemu_wasm_lock_census_wait("waiter.c",77,0,1234);
+ xemu_wasm_lock_census_wait("waiter.c",77,0,5678);
+ xemu_wasm_lock_census_wait("waiter.c",77,0,-100);
+ assert(strstr(xemu_wasm_lock_census_top(),"wait|waiter.c:77|?:0|3|6912"));
+ puts("PASS: census filtering/probes/overflow, BQL publications on all threads, atomic site pairing, waiter intervals");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wasm-lock-census-') as d:
     d = Path(d)
     (d / 'test.c').write_text(prefix + header + impl + mock + body + test)
     subprocess.run([*shlex.split(os.environ.get('CC', 'cc')), '-O1',
-                    '-Wall', '-Wextra', '-Werror', str(d / 'test.c'),
+                    '-Wall', '-Wextra', '-Werror', '-pthread', str(d / 'test.c'),
                     '-o', str(d / 'test')], check=True)
     subprocess.run([str(d / 'test')], check=True)

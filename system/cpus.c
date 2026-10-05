@@ -605,6 +605,10 @@ void bql_lock_impl(const char *file, int line)
         static unsigned long bql_spin_count;
         if (qemu_mutex_trylock(&bql) != 0) {
             bool vcpu = current_cpu != NULL;
+            bool lock_census = vcpu &&
+                qatomic_read(&xemu_wasm_lock_census_enabled);
+            uint64_t holder = lock_census ?
+                xemu_wasm_lock_census_holder() : 0;
             const char *xphase_old_ = xemu_wasm_phase[XPHASE_VCPU];
             if (vcpu) {
                 XWLC_NOTE(XWLC_BQL_WAIT, file, line, true);
@@ -619,9 +623,14 @@ void bql_lock_impl(const char *file, int line)
                     bql_spin_count = 0;
                 }
             }
+            XWLC_HOLDER(file, line);
             if (vcpu) {
                 /* one count per started 20 us waited, by holder */
                 int64_t waited = xemu_wasm_stats_now_ns() - wait_t0;
+                if (lock_census) {
+                    /* Reuse the existing interval: no extra clock calls. */
+                    xemu_wasm_lock_census_wait(file, line, holder, waited);
+                }
                 static const char *keys[64];
                 static const char *kfile[64];
                 static int kline[64];
@@ -658,6 +667,8 @@ void bql_lock_impl(const char *file, int line)
         bql_spin_count = 0;
         bql_holder_file = file;
         bql_holder_line = line;
+        /* Replace the generic try-wrapper site with the BQL request site. */
+        XWLC_HOLDER(file, line);
     }
 #else
     bql_lock_fn(&bql, file, line);

@@ -15,6 +15,7 @@
 
 #include "qemu/thread.h"
 #include "qemu/main-loop.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "trace.h"
 
 static inline void qemu_mutex_post_init(QemuMutex *mutex)
@@ -42,6 +43,7 @@ static inline void qemu_mutex_post_lock(QemuMutex *mutex,
     trace_qemu_mutex_locked(mutex, file, line);
     if (mutex_is_bql(mutex)) {
         bql_update_status(true);
+        XWLC_HOLDER(file, line);
     }
 }
 
@@ -54,6 +56,7 @@ static inline void qemu_mutex_pre_unlock(QemuMutex *mutex,
 #endif
     trace_qemu_mutex_unlock(mutex, file, line);
     if (mutex_is_bql(mutex)) {
+        XWLC_HOLDER(NULL, 0);
         bql_update_status(false);
     }
 }

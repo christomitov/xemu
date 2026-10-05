@@ -17,6 +17,22 @@ extern __thread int xemu_wasm_is_vcpu;
 void xemu_wasm_lock_census_init(void);
 void xemu_wasm_lock_census_note(unsigned kind, const char *file, int line,
                                 bool busy);
+void xemu_wasm_lock_census_publish(const char *file, int line);
+uint64_t xemu_wasm_lock_census_holder(void);
+void xemu_wasm_lock_census_wait(const char *file, int line, uint64_t holder,
+                               int64_t ns);
+
+#define XWLC_HOLDER(file, line) do { \
+    if (unlikely(qatomic_read(&xemu_wasm_lock_census_enabled))) { \
+        xemu_wasm_lock_census_publish(file, line); \
+    } \
+} while (0)
+#define XWLC_MUTEX_HOLDER(m, file, line) do { \
+    if (unlikely(qatomic_read(&xemu_wasm_lock_census_enabled)) && \
+        mutex_is_bql(m)) { \
+        xemu_wasm_lock_census_publish(file, line); \
+    } \
+} while (0)
 
 #define XWLC_NOTE(kind, file, line, busy) do { \
     if (unlikely(qatomic_read(&xemu_wasm_lock_census_enabled) && \
@@ -25,6 +41,8 @@ void xemu_wasm_lock_census_note(unsigned kind, const char *file, int line,
     } \
 } while (0)
 #else
+#define XWLC_HOLDER(file, line) do { } while (0)
+#define XWLC_MUTEX_HOLDER(m, file, line) do { } while (0)
 #define XWLC_NOTE(kind, file, line, busy) do { } while (0)
 #endif
 #endif
