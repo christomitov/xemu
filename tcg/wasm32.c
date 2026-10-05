@@ -157,7 +157,8 @@ EM_JS(void, wasm32_remove_function, (int idx), {
 /*
  * Asyncify.state mirrored into wasm memory for the vCPU thread, so generated
  * code checks "is Asyncify unwinding?" with a load instead of a wasm->JS
- * call to helper.u after each helper that may suspend (XEMU_WASM_UNWIND_MEM).
+ * call to helper.u after each helper that may suspend (XEMU_WASM_UNWIND_MEM=0
+ * restores the call).
  * Only the vCPU worker runs generated code, and only its Asyncify object
  * gets the accessor, so one global is enough.
  */
@@ -178,7 +179,7 @@ bool wasm32_unwind_mem_enabled(void)
     static int enabled = -1;
     if (enabled < 0) {
         const char *e = getenv("XEMU_WASM_UNWIND_MEM");
-        enabled = e && *e == '1';
+        enabled = !(e && *e == '0');      /* default on; =0 restores helper.u */
     }
     return enabled;
 }
