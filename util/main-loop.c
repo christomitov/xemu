@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "qemu/xemu-wasm-stats.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
@@ -362,8 +363,14 @@ static void glib_pollfds_poll(void)
 #endif
     GPollFD *pfds = &g_array_index(gpollfds, GPollFD, glib_pollfds_idx);
 
-    if (g_main_context_check(context, max_priority, pfds, glib_n_poll_fds)) {
+    unsigned scope = XWLD_BEGIN(XWLD_GLIB_CHECK, 0);
+    bool ready = g_main_context_check(context, max_priority, pfds,
+                                      glib_n_poll_fds);
+    XWLD_END(scope);
+    if (ready) {
+        scope = XWLD_BEGIN(XWLD_GLIB_DISPATCH, 0);
         g_main_context_dispatch(context);
+        XWLD_END(scope);
     }
 }
 
@@ -378,9 +385,11 @@ static int os_host_main_loop_wait(int64_t timeout)
 #endif
     int ret;
 
+    unsigned scope = XWLD_BEGIN(XWLD_GLIB_PREPARE, 0);
     g_main_context_acquire(context);
 
     glib_pollfds_fill(&timeout);
+    XWLD_END(scope);
 
     bql_unlock();
     replay_mutex_unlock();
@@ -686,6 +695,8 @@ void main_loop_poll_remove_notifier(Notifier *notify)
 
 void main_loop_wait(int nonblocking)
 {
+    unsigned detail_main = XWLD_MAIN();
+    unsigned detail_scope;
     XSTAT_INC(n_main_iter);
     { static int wasm_n; wasm_n++; if ((wasm_n % 10) == 0) xemu_wasm_dbg_ring_put("[loop] iter %d\n", wasm_n); }
     MainLoopPoll mlpoll = {
@@ -703,7 +714,9 @@ void main_loop_wait(int nonblocking)
     /* poll any events */
     g_array_set_size(gpollfds, 0); /* reset for new iteration */
     /* XXX: separate device handlers from system ones */
+    detail_scope = XWLD_BEGIN(XWLD_NOTIFY, mlpoll.state);
     notifier_list_notify(&main_loop_poll_notifiers, &mlpoll);
+    XWLD_END(detail_scope);
 
     if (mlpoll.timeout == UINT32_MAX) {
         timeout_ns = -1;
@@ -711,13 +724,17 @@ void main_loop_wait(int nonblocking)
         timeout_ns = (uint64_t)mlpoll.timeout * (int64_t)(SCALE_MS);
     }
 
+    detail_scope = XWLD_BEGIN(XWLD_DEADLINE, 0);
     timeout_ns = qemu_soonest_timeout(timeout_ns,
                                       timerlistgroup_deadline_ns(
                                           &main_loop_tlg));
+    XWLD_END(detail_scope);
 #ifdef EMSCRIPTEN
     {
         extern void xemu_wasm_dbg_ring_put(const char *, ...);
+        detail_scope = XWLD_BEGIN(XWLD_DEADLINE, 1);
         int64_t dl = timerlistgroup_deadline_ns(&main_loop_tlg);
+        XWLD_END(detail_scope);
         xemu_wasm_dbg_ring_put("[loop] poll timeout=%lld rt_deadline=%lld\n",
                                (long long)timeout_ns, (long long)dl);
     }
@@ -725,7 +742,9 @@ void main_loop_wait(int nonblocking)
 
     ret = os_host_main_loop_wait(timeout_ns);
     mlpoll.state = ret < 0 ? MAIN_LOOP_POLL_ERR : MAIN_LOOP_POLL_OK;
+    detail_scope = XWLD_BEGIN(XWLD_NOTIFY, mlpoll.state);
     notifier_list_notify(&main_loop_poll_notifiers, &mlpoll);
+    XWLD_END(detail_scope);
 
     if (icount_enabled()) {
         /*
@@ -734,7 +753,10 @@ void main_loop_wait(int nonblocking)
          */
         icount_start_warp_timer();
     }
+    detail_scope = XWLD_BEGIN(XWLD_TIMERS, 0);
     qemu_clock_run_all_timers();
+    XWLD_END(detail_scope);
+    XWLD_END(detail_main);
 }
 
 /* Functions to operate on the main QEMU AioContext.  */

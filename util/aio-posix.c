@@ -14,6 +14,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "block/block.h"
 #include "block/thread-pool.h"
 #include "qapi/error.h"
@@ -324,7 +325,9 @@ static bool aio_dispatch_handler(AioContext *ctx, AioHandler *node)
          */
         QLIST_SAFE_REMOVE(node, node_poll);
 
+        unsigned detail_scope = XWLD_BEGIN(XWLD_FD_POLL, node->io_poll_ready);
         node->io_poll_ready(node->opaque);
+        XWLD_END(detail_scope);
 
         if (!QLIST_IS_INSERTED(node, node_poll)) {
             QLIST_INSERT_HEAD(&ctx->poll_aio_handlers, node, node_poll);
@@ -340,7 +343,9 @@ static bool aio_dispatch_handler(AioContext *ctx, AioHandler *node)
     if (!QLIST_IS_INSERTED(node, node_deleted) &&
         (revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) &&
         node->io_read) {
+        unsigned detail_scope = XWLD_BEGIN(XWLD_FD_READ, node->io_read);
         node->io_read(node->opaque);
+        XWLD_END(detail_scope);
 
         /* aio_notify() does not count as progress */
         if (node->opaque != &ctx->notifier) {
@@ -350,7 +355,9 @@ static bool aio_dispatch_handler(AioContext *ctx, AioHandler *node)
     if (!QLIST_IS_INSERTED(node, node_deleted) &&
         (revents & (G_IO_OUT | G_IO_ERR)) &&
         node->io_write) {
+        unsigned detail_scope = XWLD_BEGIN(XWLD_FD_WRITE, node->io_write);
         node->io_write(node->opaque);
+        XWLD_END(detail_scope);
         progress = true;
     }
 

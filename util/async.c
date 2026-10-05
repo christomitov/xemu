@@ -24,6 +24,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "qapi/error.h"
 #include "block/aio.h"
 #include "block/thread-pool.h"
@@ -181,7 +182,9 @@ void aio_bh_call(QEMUBH *bh)
         reentrancy_guard->engaged_in_io = true;
     }
 
+    unsigned detail_scope = XWLD_BEGIN(XWLD_BH_CB, bh->cb);
     bh->cb(bh->opaque);
+    XWLD_END(detail_scope);
 #ifdef EMSCRIPTEN
     xemu_wasm_lowmem_check("after BH");
 #endif

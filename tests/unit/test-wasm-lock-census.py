@@ -34,6 +34,11 @@ prefix = r'''
 #define EMSCRIPTEN 1
 #define EMSCRIPTEN_KEEPALIVE
 #define unlikely(x) (x)
+#define G_N_ELEMENTS(a) (sizeof(a)/sizeof((a)[0]))
+static int64_t fixture_now;
+static int now_calls;
+static int64_t xemu_wasm_stats_now_ns(void) { now_calls++;return fixture_now; }
+static bool bql_locked(void) { return true; }
 #define qatomic_read(p) __atomic_load_n(p, __ATOMIC_RELAXED)
 #define qatomic_set(p,v) __atomic_store_n(p,v,__ATOMIC_RELAXED)
 #define qatomic_fetch_inc(p) __atomic_fetch_add(p,1,__ATOMIC_RELAXED)
@@ -44,7 +49,9 @@ __thread int xemu_wasm_is_vcpu;
 header = (ROOT / 'include/qemu/xemu-wasm-lock-census.h').read_text().replace(
     '#include "qemu/atomic.h"', '')
 impl = (ROOT / 'util/qemu-wasm-lock-census.c.inc').read_text().replace(
-    '#include <emscripten/emscripten.h>', '')
+    '#include <emscripten/emscripten.h>', '').replace(
+    '#include "qemu-wasm-bql-detail.c.inc"',
+    (ROOT / 'util/qemu-wasm-bql-detail.c.inc').read_text())
 wrappers = (ROOT / 'util/qemu-thread-posix.c').read_text()
 mock = r'''
 typedef struct { bool initialized; int lock; } QemuMutex;
@@ -92,6 +99,7 @@ static unsigned sum(unsigned kind,bool busy) {
  return n;
 }
 int main(void) {
+ unsetenv("XEMU_WASM_BQL_DETAIL");
  const char *values[]={NULL,"","0","invalid","1","1yes"};
  for(unsigned i=0;i<6;i++) {
   if(values[i])setenv("XEMU_WASM_LOCK_CENSUS",values[i],1);
@@ -158,7 +166,42 @@ int main(void) {
  xemu_wasm_lock_census_wait("waiter.c",77,0,5678);
  xemu_wasm_lock_census_wait("waiter.c",77,0,-100);
  assert(strstr(xemu_wasm_lock_census_top(),"wait|waiter.c:77|?:0|3|6912"));
- puts("PASS: census filtering/probes/overflow, BQL publications on all threads, atomic site pairing, waiter intervals");
+ assert(!now_calls); /* Legacy census alone adds no clock calls. */
+ unsetenv("XEMU_WASM_LOCK_CENSUS");
+ for(unsigned i=0;i<6;i++) {
+  if(values[i])setenv("XEMU_WASM_BQL_DETAIL",values[i],1);
+  else unsetenv("XEMU_WASM_BQL_DETAIL");
+  xemu_wasm_lock_census_init();
+  assert(xemu_wasm_bql_detail_enabled==(i>=4));
+  assert(xemu_wasm_lock_census_enabled==(i>=4));
+  assert(!xemu_wasm_lock_calls_enabled);
+ }
+ assert(!xemu_wasm_bql_detail_begin(XWLD_BH_CB,1) && !now_calls);
+ fixture_now=100;unsigned root=xemu_wasm_bql_detail_main();
+ fixture_now=110;unsigned timer=XWLD_BEGIN(XWLD_TIMER_CB,7);
+ fixture_now=120;unsigned bh=XWLD_BEGIN(XWLD_BH_CB,9);
+ fixture_now=130;xemu_wasm_lock_census_publish(NULL,0);
+ assert(!xemu_wasm_lock_census_holder());
+ fixture_now=1130;xemu_wasm_lock_census_publish(file,123);
+ assert(xemu_wasm_lock_census_holder()==xwld_activity());
+ fixture_now=1140;XWLD_END(bh);
+ fixture_now=1150;XWLD_END(timer);
+ fixture_now=1160;XWLD_END(root);
+ fixture_now=1170;xemu_wasm_lock_census_publish(NULL,0);
+ assert(xwld_sites[xwld_slot(XWLD_SETUP,0)].ns==20);
+ assert(xwld_sites[xwld_slot(XWLD_TIMER_CB,7)].ns==20);
+ assert(xwld_sites[xwld_slot(XWLD_BH_CB,9)].ns==20);
+ assert(xwld_sites[xwld_slot(XWLD_OUTER,0)].ns==10);
+ assert(xwld_sites[xwld_slot(XWLD_BH_CB,9)].calls==1);
+ assert(strstr(xemu_wasm_lock_census_top(),"detail|ml:bh:9|1|20"));
+ /* Released 1000 ns excluded; nested callbacks are not double counted. */
+ uint64_t total=0;for(unsigned i=0;i<XWLD_SLOTS;i++)total+=xwld_sites[i].ns;
+ assert(total==70);
+ for(unsigned i=0;i<XWLD_SLOTS;i++) {
+  unsigned t=XWLD_BEGIN(XWLD_TIMER_CB,1000+i);XWLD_END(t);
+ }
+ assert(xwld_overflow==4);
+ puts("PASS: census probes/pairing, nested exclusive held-time scopes, 1000ns release exclusion, detail policy/overflow");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wasm-lock-census-') as d:

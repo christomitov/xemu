@@ -11,7 +11,7 @@ static struct {
 } xwlc_sites[XWLC_SLOTS];
 static uint32_t xwlc_overflow;
 static uint64_t xwlc_holder;
-#define XWLC_WAIT_SLOTS 64
+#define XWLC_WAIT_SLOTS 256
 static struct {
     const char *file;
     int line;
@@ -20,12 +20,20 @@ static struct {
 } xwlc_waits[XWLC_WAIT_SLOTS];
 static uint32_t xwlc_wait_overflow;
 bool xemu_wasm_lock_census_enabled;
+bool xemu_wasm_lock_calls_enabled;
+
+#include "qemu-wasm-bql-detail.c.inc"
 
 void xemu_wasm_lock_census_init(void)
 {
     const char *e = getenv("XEMU_WASM_LOCK_CENSUS");
-    /* Called at vCPU thread startup, before it can record anything. */
-    qatomic_set(&xemu_wasm_lock_census_enabled, e && *e == '1');
+    const char *d = getenv("XEMU_WASM_BQL_DETAIL");
+    bool calls = e && *e == '1';
+    bool detail = d && *d == '1';
+    /* Detail alone avoids counting the millions of retry-loop probes. */
+    qatomic_set(&xemu_wasm_lock_calls_enabled, calls);
+    qatomic_set(&xemu_wasm_lock_census_enabled, calls || detail);
+    qatomic_set(&xemu_wasm_bql_detail_enabled, detail);
 }
 
 void xemu_wasm_lock_census_note(unsigned kind, const char *file, int line,
@@ -69,7 +77,7 @@ void xemu_wasm_lock_census_publish(const char *file, int line)
 {
     uint64_t site = file ? ((uint64_t)(uint32_t)(uintptr_t)file << 32) |
                            (uint32_t)line : 0;
-    qatomic_set(&xwlc_holder, site);
+    qatomic_set(&xwlc_holder, xwld_owner(file != NULL, site));
 }
 
 uint64_t xemu_wasm_lock_census_holder(void)
@@ -113,7 +121,7 @@ void xemu_wasm_lock_census_wait(const char *file, int line, uint64_t holder,
  */
 EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_lock_census_top(void)
 {
-    static char out[65536];
+    static char out[196608];
     static const char *names[] = {"lock", "try", "bql", "bql-wait"};
     size_t n = snprintf(out, sizeof(out), "overflow|%u\nwait-overflow|%u\n",
                         qatomic_read(&xwlc_overflow),
@@ -148,5 +156,6 @@ EMSCRIPTEN_KEEPALIVE const char *xemu_wasm_lock_census_top(void)
                           qatomic_read(&s->ns));
         }
     }
+    xwld_format(out + n, sizeof(out) - n);
     return out;
 }

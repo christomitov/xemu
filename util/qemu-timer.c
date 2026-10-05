@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-wasm-lock-census.h"
 #include "qemu/xemu-wasm-stats.h"
 #ifdef EMSCRIPTEN
 void xemu_wasm_count(const char *key);
@@ -721,7 +722,9 @@ bool timerlist_run_timers(QEMUTimerList *timer_list)
 #ifdef EMSCRIPTEN
         int64_t cb_t0 = xemu_wasm_stats_now_ns();
 #endif
+        unsigned detail_scope = XWLD_BEGIN(XWLD_TIMER_CB, cb);
         cb(opaque);
+        XWLD_END(detail_scope);
 #ifdef EMSCRIPTEN
         xemu_wasm_lowmem_check("post timer cb");
         if (bql_locked()) {
