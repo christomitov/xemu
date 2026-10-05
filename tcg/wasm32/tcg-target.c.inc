@@ -532,11 +532,42 @@ static inline void wasm_set_r(TCGContext *s, TCGReg r)
     wasm_var(s, W_LOCAL_SET, LREG(r));
 }
 
-/* Registers -> their globals, before a call that may unwind (Asyncify). */
-static void wasm_save_regs(TCGContext *s)
+/*
+ * XEMU_WASM_LIVE_SAVE=1: save only the registers whose values a rewind can
+ * still need: those the allocator holds live temps in, the reserved and env
+ * registers, and @extra (operands the resumable block itself re-reads, e.g.
+ * a guest access's address after its temp died). A rewind restores every
+ * register; the unsaved ones are dead, so their stale values never matter.
+ */
+static bool wasm_live_save_enabled(void)
 {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_WASM_LIVE_SAVE");
+        enabled = e && *e == '1';
+    }
+    return enabled;
+}
+
+/* Registers -> their globals, before a call that may unwind (Asyncify). */
+static void wasm_save_regs_live(TCGContext *s, TCGRegSet extra)
+{
+    TCGRegSet live = ~(TCGRegSet)0;
+
+    if (wasm_live_save_enabled()) {
+        live = extra | s->reserved_regs;
+        tcg_regset_set_reg(live, TCG_AREG0);
+        for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+            if (s->reg_to_temp[r]) {
+                tcg_regset_set_reg(live, r);
+            }
+        }
+    }
     in_snapshot = true;
     for (int r = 0; r < TCG_TARGET_NB_REGS; r++) {
+        if (!tcg_regset_test_reg(live, r)) {
+            continue;
+        }
         wasm_snapshot_site(r);
         wasm_var(s, W_LOCAL_GET, LREG(r));
         wasm_var(s, W_GLOBAL_SET, r);
@@ -550,6 +581,12 @@ static void wasm_save_regs(TCGContext *s)
         wasm_var(s, W_GLOBAL_GET, WASM_IC_SELF_GLOBAL);
         wasm_mem(s, W_I32_STORE, WASM_CTX_REWIND_FUNC_OFF);
     }
+}
+
+/* At a helper call: arguments come from the call stack, not registers. */
+static void wasm_save_regs(TCGContext *s)
+{
+    wasm_save_regs_live(s, 0);
 }
 
 /* Push a host address: register @base (i32) plus @offset. */
@@ -2291,7 +2328,7 @@ static void wasm_qemu_ld(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     wasm8(s, W_I64_EXTEND_I32_U);
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
-    wasm_save_regs(s);
+    wasm_save_regs_live(s, BIT(addr));
     wasm_phase(s, "mem_slow_ld");
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
@@ -2339,7 +2376,7 @@ static void wasm_qemu_st(TCGContext *s, TCGReg data, TCGReg addr, MemOpIdx oi)
     }
     wasm_i32_const(s, oi);
     wasm_i32_const(s, (int32_t)(uintptr_t)s->code_ptr);
-    wasm_save_regs(s);
+    wasm_save_regs_live(s, BIT(addr) | BIT(data));
     wasm_phase(s, "mem_slow_st");
     wasm_call_idx(s, func_idx);
     wasm_phase(s, NULL);
