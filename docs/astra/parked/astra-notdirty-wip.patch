@@ -1,0 +1,228 @@
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+index a14232cc63..f4f0442200 100644
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -1450,9 +1450,35 @@ static bool victim_tlb_hit(CPUState *cpu, size_t mmu_idx, size_t index,
+     return false;
+ }
+ 
++/*
++ * A protected code page cannot become fully dirty. Check that mandatory bit
++ * first instead of querying all five clients in physical_memory_is_clean().
++ * Keep the normal query when it is set. If another thread unprotects a page
++ * after the precheck, retaining NOTDIRTY for an extra store is conservative.
++ * Dirty-client writes/barriers, code invalidation and guest stores are intact.
++ */
++static bool notdirty_skip_tlb_cleanup(ram_addr_t ram_addr)
++{
++#if defined(XBOX) && defined(EMSCRIPTEN)
++    static int enabled = -1;
++
++    if (enabled < 0) {
++        const char *e = getenv("XEMU_WASM_NOTDIRTY_FAST");
++        enabled = e && *e == '1';
++    }
++    if (enabled &&
++        !physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
++        XSTAT_INC(n_notdirty_fast_skip);
++        return true;
++    }
++#endif
++    return false;
++}
++
+ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
+                            CPUTLBEntryFull *full, uintptr_t retaddr)
+ {
++    XSMC_PROF_BEGIN("notdirty");
+     ram_addr_t ram_addr = mem_vaddr + full->xlat_section;
+ 
+     trace_memory_notdirty_write_access(mem_vaddr, ram_addr, size);
+@@ -1499,13 +1525,17 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
+      * Set both VGA and migration bits for simplicity and to remove
+      * the notdirty callback faster.
+      */
++    XSMC_PROF_SET("notdirty_dirty");
+     physical_memory_set_dirty_range(ram_addr, size, DIRTY_CLIENTS_NOCODE);
+ 
++    XSMC_PROF_SET("notdirty_tlb");
+     /* We remove the notdirty callback only if the code has been flushed. */
+-    if (!physical_memory_is_clean(ram_addr)) {
++    if (!notdirty_skip_tlb_cleanup(ram_addr) &&
++        !physical_memory_is_clean(ram_addr)) {
+         trace_memory_notdirty_set_dirty(mem_vaddr);
+         tlb_set_dirty(cpu, mem_vaddr);
+     }
++    XSMC_PROF_END();
+ }
+ 
+ static int probe_access_internal(CPUState *cpu, vaddr addr,
+diff --git a/accel/tcg/tb-maint.c b/accel/tcg/tb-maint.c
+index e135c1d976..8034baec50 100644
+--- a/accel/tcg/tb-maint.c
++++ b/accel/tcg/tb-maint.c
+@@ -1406,6 +1406,7 @@ void tb_invalidate_phys_range(CPUState *cpu, tb_page_addr_t start,
+ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
+                                    unsigned len, uintptr_t ra)
+ {
++    XSMC_PROF_BEGIN("smc_bitmap");
+     PageDesc *p = page_find(start >> TARGET_PAGE_BITS);
+ 
+ #if defined(XBOX) && defined(EMSCRIPTEN)
+@@ -1430,11 +1431,13 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
+             p->smc_miss++;
+             page_unlock(p);
+             XSTAT_INC(n_smc_bitmap_miss);
++            XSMC_PROF_END();
+             return;
+         }
+         page_unlock(p);
+     }
+ #endif
++    XSMC_PROF_SET("smc_invalidate");
+     if (p) {
+         ram_addr_t last = start + len - 1;
+         struct page_collection *pages = page_collection_lock(start, last);
+@@ -1443,6 +1446,7 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
+                                               start, last, ra);
+         page_collection_unlock(pages);
+     }
++    XSMC_PROF_END();
+ }
+ 
+ #endif /* CONFIG_USER_ONLY */
+diff --git a/include/qemu/xemu-wasm-stats.h b/include/qemu/xemu-wasm-stats.h
+index 902055b268..12daf3f957 100644
+--- a/include/qemu/xemu-wasm-stats.h
++++ b/include/qemu/xemu-wasm-stats.h
+@@ -173,10 +173,40 @@ void xemu_wasm_phase_sample(void);
+     const char *xphase_old_ = xemu_wasm_phase[t]; xemu_wasm_phase[t] = (name)
+ #define XPHASE_POP(t) (xemu_wasm_phase[t] = xphase_old_)
+ #define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
++
++/* JIT_PROFILE bit 4: C notdirty subphases, without per-store clocks. */
++static inline bool xemu_wasm_smc_profile_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0) {
++        const char *e = getenv("XEMU_WASM_JIT_PROFILE");
++        enabled = e && (atoi(e) & 4);
++    }
++    return enabled;
++}
++
++#define XSMC_PROF_BEGIN(name) \
++    const bool xsmc_prof_ = xemu_wasm_smc_profile_enabled(); \
++    const char *xsmc_old_ = xsmc_prof_ ? xemu_wasm_phase[XPHASE_VCPU] : NULL; \
++    XSMC_PROF_SET(name)
++#define XSMC_PROF_SET(name) do { \
++    if (xsmc_prof_) { \
++        XPHASE_SET(XPHASE_VCPU, name); \
++    } \
++} while (0)
++#define XSMC_PROF_END() do { \
++    if (xsmc_prof_) { \
++        XPHASE_SET(XPHASE_VCPU, xsmc_old_); \
++    } \
++} while (0)
+ #else
+ #define XPHASE_PUSH(t, name) do { } while (0)
+ #define XPHASE_POP(t) do { } while (0)
+ #define XPHASE_SET(t, name) do { } while (0)
++#define XSMC_PROF_BEGIN(name) do { } while (0)
++#define XSMC_PROF_SET(name) do { } while (0)
++#define XSMC_PROF_END() do { } while (0)
+ #define XSTAT_INC(f) do { } while (0)
+ #define XSTAT_ADD(f, v) do { } while (0)
+ #define XSTAT_T0() do { } while (0)
+diff --git a/tcg/wasm32/tcg-target.c.inc b/tcg/wasm32/tcg-target.c.inc
+index 35d1595c6c..54a499b2f1 100644
+--- a/tcg/wasm32/tcg-target.c.inc
++++ b/tcg/wasm32/tcg-target.c.inc
+@@ -727,7 +727,8 @@ static void wasm_phase(TCGContext *s, const char *name)
+ 
+ /*
+  * Opt-in generated-code attribution: 1 = inline helpers/call-site glue,
+- * 2 = inline SoftMMU. Neither adds code when disabled. The extra stores can
++ * 2 = inline SoftMMU (bit 4 selects C notdirty subphases in accel/tcg).
++ * Neither adds generated code when disabled. The extra stores can
+  * perturb optimization and region grouping: compare an uninstrumented run.
+  * Scopes also cover work inside self loops, replacing the heuristic "spin"
+  * tag. For overhead, compare throughput, not spin-subtracted phase busy time.
+diff --git a/tests/unit/test-wasm-phase.py b/tests/unit/test-wasm-phase.py
+index 2758f780a0..d0248f191c 100644
+--- a/tests/unit/test-wasm-phase.py
++++ b/tests/unit/test-wasm-phase.py
+@@ -12,6 +12,7 @@
+ ROOT = Path(__file__).resolve().parents[2]
+ UI = (ROOT / "ui/xemu-wasm.c").read_text()
+ TCG = (ROOT / "tcg/wasm32/tcg-target.c.inc").read_text()
++STATS = (ROOT / "include/qemu/xemu-wasm-stats.h").read_text()
+ 
+ 
+ def function(source, name):
+@@ -43,6 +44,9 @@ def function(source, name):
+ #define EMSCRIPTEN_KEEPALIVE
+ #define EMSCRIPTEN 1
+ #define XBOX 1
++#define XPHASE_VCPU 0
++static const char *volatile xemu_wasm_phase[2];
++#define XPHASE_SET(t, name) (xemu_wasm_phase[t] = (name))
+ #define qatomic_read(p) __atomic_load_n(p, __ATOMIC_SEQ_CST)
+ #define qatomic_set(p,v) __atomic_store_n(p, v, __ATOMIC_SEQ_CST)
+ #define qatomic_inc(p) __atomic_fetch_add(p, 1, __ATOMIC_SEQ_CST)
+@@ -88,10 +92,32 @@ def function(source, name):
+     const char *got = wasm_helper_phase_name(&info);
+     assert((!want && !got) || (want && got && !strcmp(want, got)));
+ }
++static void smc_nested(bool early) {
++    const char *before = xemu_wasm_phase[0];
++    bool enabled = xemu_wasm_smc_profile_enabled();
++    XSMC_PROF_BEGIN("smc_bitmap");
++    assert(!strcmp(xemu_wasm_phase[0], enabled ? "smc_bitmap" : before));
++    if (early) { XSMC_PROF_END(); assert(xemu_wasm_phase[0] == before); return; }
++    XSMC_PROF_SET("smc_invalidate");
++    assert(!strcmp(xemu_wasm_phase[0], enabled ? "smc_invalidate" : before));
++    XSMC_PROF_END();
++    assert(xemu_wasm_phase[0] == before);
++}
+ static void profile_test(const char *arg) {
+     setenv("XEMU_WASM_JIT_PROFILE", arg, 1);
+     unsigned flags = atoi(arg) & 3;
+     assert(wasm_jit_profile() == flags);
++    bool smc = !!(atoi(arg) & 4);
++    assert(xemu_wasm_smc_profile_enabled() == smc);
++    const char *outer = "mem_slow_st";
++    xemu_wasm_phase[0] = outer;
++    XSMC_PROF_BEGIN("notdirty");
++    smc_nested(true); smc_nested(false);
++    XSMC_PROF_SET("notdirty_dirty");
++    assert(!strcmp(xemu_wasm_phase[0], smc ? "notdirty_dirty" : outer));
++    XSMC_PROF_SET("notdirty_tlb");
++    XSMC_PROF_END();
++    assert(xemu_wasm_phase[0] == outer);
+     const char *names[] = {NULL, "rdtsc", "gvec_ssadd16", "fldl_ST0",
+                           "paddsw_mmx", "fxsave"};
+     const char *labels[] = {"jit:call", "jit:call", "jit:gvec", "jit:x87",
+@@ -170,7 +196,10 @@ def function(source, name):
+ def main():
+     start = UI.index("#define PHASE_SLOTS")
+     end = UI.index("static void phase_bump", start)
+-    code = (PREFIX + UI[start:end] + function(UI, "phase_bump") +
++    smc_start = STATS.index("/* JIT_PROFILE bit 4")
++    smc_end = STATS.index("#else\n#define XPHASE_PUSH", smc_start)
++    code = (PREFIX + STATS[smc_start:smc_end] + UI[start:end] +
++            function(UI, "phase_bump") +
+             function(UI, "xemu_wasm_phase_top") +
+             function(TCG, "wasm_helper_phase_name") +
+             function(TCG, "wasm_jit_profile") +
+@@ -185,7 +214,7 @@ def main():
+                         "-std=gnu11", "-O2", "-pthread", str(source),
+                         "-o", str(exe)], check=True)
+         subprocess.run([str(exe)], check=True, timeout=30)
+-        for flags in [0, 1, 2, 3, 7]:
++        for flags in [0, 1, 2, 3, 4, 7]:
+             subprocess.run([str(exe), str(flags)], check=True, timeout=10)
+ 
+ 
