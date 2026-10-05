@@ -1,0 +1,20 @@
+PASS: 819648 C-oracle comparisons (787328 SIMD, 32320 fallback), 96 real Asyncify rewinds/re-yields
+PASS: 48 policy/LIVE_SAVE/IC configurations + ABI/name rejection
+PASS: 819648 C-oracle comparisons (787328 SIMD, 32320 fallback), 96 real Asyncify rewinds/re-yields
+PASS: 48 policy/LIVE_SAVE/IC configurations + ABI/name rejection
+PASS: helper grouping, top-k/overflow/long-name accounting, 500000 concurrent samples retained
+PASS: generated phase mask=0, call groups/reset/default gate
+PASS: generated phase mask=1, call groups/reset/default gate
+PASS: generated phase mask=2, call groups/reset/default gate
+PASS: generated phase mask=3, call groups/reset/default gate
+PASS: generated phase mask=0, call groups/reset/default gate
+PASS: generated phase mask=3, call groups/reset/default gate
+PASS: generated phase mask=8, call groups/reset/default gate
+PASS: generated phase mask=9, call groups/reset/default gate
+PASS: generated phase mask=10, call groups/reset/default gate
+PASS: generated phase mask=11, call groups/reset/default gate
+PASS: generated phase mask=8, call groups/reset/default gate
+PASS: generated phase mask=11, call groups/reset/default gate
+PASS: generated phase mask=0, call groups/reset/default gate
+PASS: 342720 actual emitted-Wasm admission probes (mock leaf)
+PASS: 476 emitter gates/types/default-on/opt-out and phase checks

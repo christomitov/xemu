@@ -1,0 +1,81 @@
+{
+  "rows": [
+    {
+      "pair": 1,
+      "arm": 0,
+      "commit": "perf-12-23-g74fa6fde12",
+      "steady_fps": 6.732,
+      "flips_per_cpu_s": 6.849,
+      "vcpu_cpu_s": 39.42,
+      "cpu_thread": {
+        "tid": "3687715",
+        "ticks": 3942,
+        "name": "node"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0243902439024,
+        "n_vblank": 59.926829268292686,
+        "n_apu_frame": 1498.9268292682927
+      }
+    },
+    {
+      "pair": 1,
+      "arm": 1,
+      "commit": "perf-12-23-g74fa6fde12",
+      "steady_fps": 6.61,
+      "flips_per_cpu_s": 6.751,
+      "vcpu_cpu_s": 39.4,
+      "cpu_thread": {
+        "tid": "3687716",
+        "ticks": 3940,
+        "name": "node"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0243902439024,
+        "n_vblank": 59.926829268292686,
+        "n_apu_frame": 1499.560975609756
+      }
+    },
+    {
+      "pair": 2,
+      "arm": 0,
+      "commit": "perf-12-23-g74fa6fde12",
+      "steady_fps": 6.659,
+      "flips_per_cpu_s": 6.821,
+      "vcpu_cpu_s": 39.29,
+      "cpu_thread": {
+        "tid": "3688501",
+        "ticks": 3929,
+        "name": "node"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0243902439024,
+        "n_vblank": 59.951219512195124,
+        "n_apu_frame": 1499.3170731707316
+      }
+    },
+    {
+      "pair": 2,
+      "arm": 1,
+      "commit": "perf-12-23-g74fa6fde12",
+      "steady_fps": 6.561,
+      "flips_per_cpu_s": 6.682,
+      "vcpu_cpu_s": 39.36,
+      "cpu_thread": {
+        "tid": "3688500",
+        "ticks": 3936,
+        "name": "node"
+      },
+      "clocks": {
+        "n_pit_tick": 1000.0,
+        "n_vblank": 59.951219512195124,
+        "n_apu_frame": 1499.7317073170732
+      }
+    }
+  ],
+  "means": {
+    "0": 6.835,
+    "1": 6.7165
+  },
+  "gain_pct": -1.7337234820775427
+}

@@ -1,0 +1,190 @@
+{
+  "purpose": "obsolete ASTRA binary snapshots/raw smaps and derived dumps; source, patches, decisions, latest gates retained",
+  "files": [
+    {
+      "path": "/tmp/astra-asyncify-compdb.json",
+      "bytes": 4131727,
+      "sha256": "b08733691c87ae5e9b72365b7370155206984722e620b185aeeca168b19f4319"
+    },
+    {
+      "path": "/tmp/astra-asyncify-current.wasm",
+      "bytes": 37220226,
+      "sha256": "3621cd25581eb627cfb653f03eb45c8a195f43581f0993dae43235c335d20895"
+    },
+    {
+      "path": "/tmp/astra-asyncify-postopt-census.json",
+      "bytes": 6508889,
+      "sha256": "35185b423c73788cde5ae9ec8b798eb24669587099b5c9a64a72d9329b22915e"
+    },
+    {
+      "path": "/tmp/astra-asyncify-postopt.wasm",
+      "bytes": 23240290,
+      "sha256": "49ba06202ace24a0ca450f0810fd6e22b65ef635b8ef9fa9782172b6bab44ff0"
+    },
+    {
+      "path": "/tmp/astra-asyncify-private-baseline.json",
+      "bytes": 14226940,
+      "sha256": "84396d979d34d6dc81e4a2cfd868a36f2a1e9fbf7627564451a40ee299a9f0f9"
+    },
+    {
+      "path": "/tmp/astra-asyncify-sections.txt",
+      "bytes": 36881504,
+      "sha256": "5f051b282722b32bc806aecac8b9059aa19e98922d741f0749852ac1526d1084"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-diag2-on-smaps-30.txt",
+      "bytes": 2597216,
+      "sha256": "f6ddcb31dc7ae87e19514a94effc6adfa213df366bae5938c0b2f9fb98915510"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-diag2-on-smaps-55.txt",
+      "bytes": 2861609,
+      "sha256": "d0cacc59278437b2f28eccd9c94fef95a1920e0c456c20cfda55e5fa00f0a326"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-direct-memory-mode2-final-smaps-30.txt",
+      "bytes": 4148867,
+      "sha256": "616870d9bc579efd0f4c953b2b8915a992d2fca3440d0c3757fc8167caeeecb9"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-direct-memory-mode2-wip1-smaps-30.txt",
+      "bytes": 4101284,
+      "sha256": "9d2c7b5f32ec38ff806775ad96e7bef7d942bbb583b0c6b1ac76ff87da8466f9"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-direct-mixed-mode2-final-smaps-30.txt",
+      "bytes": 3926599,
+      "sha256": "c1f660235c7525073dafb0c41f8f85008d7a3c7b6b5d604d59bfdd76805c08b7"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-direct-regions-mode2-1-smaps-30.txt",
+      "bytes": 3806631,
+      "sha256": "a7e8da73a40cb27b67af19785682c768f4bb08ebc88b5bc51a44ec6ab2dada2a"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-malloc-on-smaps-30.txt",
+      "bytes": 3138560,
+      "sha256": "4013132caa514ff6d1200c0c71d09e8513c07af4b95e9e617a5be8e83f69f040"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-malloc-on-smaps-55.txt",
+      "bytes": 3186282,
+      "sha256": "5bcae40efd9ced840b88740916735e6e3cc99f2144b5b26580f5f41bff6c7517"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-memory-dispatch-off1-smaps-30.txt",
+      "bytes": 3941181,
+      "sha256": "a3111c18b4d52b66b0254b053d7c4df06eafc53c7fd104006054299ba51155b8"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-memory-dispatch-off2-smaps-30.txt",
+      "bytes": 4631248,
+      "sha256": "282062ff527c206288d1037dc74df4700dc7da99a96f3d515b80dae56f34815d"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-memory-dispatch-on1-smaps-30.txt",
+      "bytes": 4886257,
+      "sha256": "e14f5c322796ecd69ddae9b01bd2e9f416e3805779c493adde46aef25afab200"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-memory-dispatch-on2-smaps-30.txt",
+      "bytes": 5690828,
+      "sha256": "a9144e020f5c89391af9759e89fc4cc7301f115ba953b186df3e5a5a1d2bc8ab"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-no-region-on-smaps-30.txt",
+      "bytes": 2905728,
+      "sha256": "327cce6304356437c30c7f5433e68e5ddf77ddfbd1be04f0e5ea15a7ddf978e7"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-no-region-on-smaps-55.txt",
+      "bytes": 3089490,
+      "sha256": "fd65125fe2ff0009adfcb96276cbab88965700485a2b233a8baa224c9c6bd13c"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-no-tier-on-smaps-30.txt",
+      "bytes": 2628468,
+      "sha256": "69fd085ccd8d5ac7773069fc88520fb3bd1678d43f90c6747d72a61b475088a7"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-no-tier-on-smaps-55.txt",
+      "bytes": 2867414,
+      "sha256": "07c1184ed22179ae39ccc7317c2aeb11fe8d447fc57d1a25a087754a24367616"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-split-off-smaps-30.txt",
+      "bytes": 2963105,
+      "sha256": "60ef762286c4ed5634d02cc705ba4072c3e086012d0eae4cd045c09a0cade82e"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-split-off-smaps-55.txt",
+      "bytes": 3004930,
+      "sha256": "36afea2d3ed84314871258bc39e90e943eab47648a20dd62c1ac7429c38565c1"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-split-on-smaps-30.txt",
+      "bytes": 2400831,
+      "sha256": "3d25d429bad51c1f97fa863258c364c0e8915c5e8ab99ac2305333781e3fa6e0"
+    },
+    {
+      "path": "/tmp/astra-ic-mem-split-on-smaps-55.txt",
+      "bytes": 2427741,
+      "sha256": "0048652c121d1ef090cca133de5d9e045fb6c53f2964235dade5f886a389c78b"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gate-claude2-save-0-smaps-30.txt",
+      "bytes": 2057377,
+      "sha256": "65ae763de593b44e47952114d39a079514584a0222a66b4981b7f75d1048f1cf"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gate-claude2-save-1-smaps-30.txt",
+      "bytes": 1378238,
+      "sha256": "fe62dd5fa37ddbb5b00c8fce6ea9e669127b0e49193c857cfb5f540a03875a96"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gates-claude1/qemu-system-i386.wasm",
+      "bytes": 23410687,
+      "sha256": "c00da6f1811b54e894d8d7712aa96e4c44d6fbc931e73650cb06b7c282336af2"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gates-claude2/inline-0.qcow2",
+      "bytes": 12189696,
+      "sha256": "7e7563c3f7366ee73c11dbdde4e7039cadcdd977d6cca40ec60ba5e3e2184d90"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gates-claude2/inline-1.qcow2",
+      "bytes": 12189696,
+      "sha256": "f2af1b40097ad80c91b7048befb46bddbb7c0fffbacec351535f26abef5e41d7"
+    },
+    {
+      "path": "/tmp/astra-notdirty-gates-claude2/qemu-system-i386.wasm",
+      "bytes": 23449512,
+      "sha256": "2f6f9e7e8db72daf72e8613c56e3e350f5ae5f246dd6617b8714e88ebb13d970"
+    },
+    {
+      "path": "/tmp/astra-softfloat-remove/census.json",
+      "bytes": 14225813,
+      "sha256": "43fa6cc022449a244640ac25fbc1c5afd65ddcd866ab4847d4525febd0ea347e"
+    },
+    {
+      "path": "/tmp/astra-softfloat-remove/qemu-system-i386.wasm",
+      "bytes": 36845704,
+      "sha256": "e4734033f945bd9f894303623b5df04c12a41eb23d67b722f406630f2d62cede"
+    },
+    {
+      "path": "/tmp/astra-tci-after/qemu-system-i386.wasm",
+      "bytes": 37025576,
+      "sha256": "348ffea400153e2726f35092e39b4dfc6542f06b66197a1291cc8d41830d832b"
+    },
+    {
+      "path": "/tmp/astra-tci-before/qemu-system-i386.wasm",
+      "bytes": 37046838,
+      "sha256": "4ada6ca9ffdcd0b57b182b3b797986a51ffcd3990646f85a7d356d9dc75ca97a"
+    },
+    {
+      "path": "/tmp/astra-wasm-funcnames.json",
+      "bytes": 4383959,
+      "sha256": "3c18e30220b4c1acf40ecadd3876c50c84dce3ee2fda33e178d604478129b6e0"
+    }
+  ]
+}

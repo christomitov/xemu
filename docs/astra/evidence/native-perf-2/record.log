@@ -1,0 +1,2 @@
+[ perf record: Woken up 149 times to write data ]
+[ perf record: Captured and wrote 303.485 MB /tmp/astra-native-perf-2/perf.data (37609 samples) ]

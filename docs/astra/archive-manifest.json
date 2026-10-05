@@ -1,0 +1,674 @@
+[
+  {
+    "source": "/tmp/astra-async-jit-design.md",
+    "destination": "reports/astra-async-jit-design.md",
+    "bytes": 21847,
+    "sha256": "61247a25a6f70c77e59e30b9ad8d9a4a8a348da087a67e71a6faf795dd8be61b"
+  },
+  {
+    "source": "/tmp/astra-direct-memory-attribution.md",
+    "destination": "reports/astra-direct-memory-attribution.md",
+    "bytes": 6198,
+    "sha256": "b39becde0e2686d91820840489f28c194634d7ca148da6c2121551d0f7bbdfea"
+  },
+  {
+    "source": "/tmp/astra-direct-memory-design.md",
+    "destination": "reports/astra-direct-memory-design.md",
+    "bytes": 21882,
+    "sha256": "afcb4f25620ec971d7e1e855ed43c6eb980afc5fc953810ad8ccaabf3a2151d8"
+  },
+  {
+    "source": "/tmp/astra-direct-mixed-design.md",
+    "destination": "reports/astra-direct-mixed-design.md",
+    "bytes": 10970,
+    "sha256": "b6a018cd7905d2961a12d234ce13d5cec4ca5c7f1cc3b7d784fddb0e06c0e469"
+  },
+  {
+    "source": "/tmp/astra-direct-mixed-gameplay-decision.md",
+    "destination": "reports/astra-direct-mixed-gameplay-decision.md",
+    "bytes": 4945,
+    "sha256": "696475f52eea833da88c8323b22f86381342ccc5d1bcc273921d1bd5433243ea"
+  },
+  {
+    "source": "/tmp/astra-direct-x86-design.md",
+    "destination": "reports/astra-direct-x86-design.md",
+    "bytes": 58635,
+    "sha256": "367c9c795b21d683ad9b7e58ad1f3fd746089804aaa6d26ef4b27ba63be31bda"
+  },
+  {
+    "source": "/tmp/astra-gvec-sat16-proposal.md",
+    "destination": "reports/astra-gvec-sat16-proposal.md",
+    "bytes": 4004,
+    "sha256": "48bf377422eeeef34797fdc81d13807ae63562c7179e014d220129f38a51fa9b"
+  },
+  {
+    "source": "/tmp/astra-gvec-sat16-result.md",
+    "destination": "reports/astra-gvec-sat16-result.md",
+    "bytes": 6188,
+    "sha256": "8fb9e33da025f5848c09295b407500f55ef46e8b31479193defb824f5e9279b2"
+  },
+  {
+    "source": "/tmp/astra-live-save-review.md",
+    "destination": "reports/astra-live-save-review.md",
+    "bytes": 8648,
+    "sha256": "07741d09193440ec8efaa667e4237ea841fdef2572fcfd882c8103ce1ced64db"
+  },
+  {
+    "source": "/tmp/astra-native-attribution.md",
+    "destination": "reports/astra-native-attribution.md",
+    "bytes": 8702,
+    "sha256": "b1b05e588359e97d819d71976fc84ec7ceb88fb6aae6e49e67248b3e0fdb5b8a"
+  },
+  {
+    "source": "/tmp/astra-pit-gui-reading.md",
+    "destination": "reports/astra-pit-gui-reading.md",
+    "bytes": 1996,
+    "sha256": "841aa13a8466d8b396007b78cb47fd464f1614564887c62d81bf780fd92d947b"
+  },
+  {
+    "source": "/tmp/astra-vcpu-lock-status.md",
+    "destination": "reports/astra-vcpu-lock-status.md",
+    "bytes": 13657,
+    "sha256": "495de64b87b2400f66bd0b862ebadd552dbf39c72b1f23363c66bb26d4c1c665"
+  },
+  {
+    "source": "/tmp/astra-direct-memory-headless-gate.json",
+    "destination": "evidence/astra-direct-memory-headless-gate.json",
+    "bytes": 3629,
+    "sha256": "67bb3779c6fed2b9e9002d243eade90d8911acb913d1e30d7743677a0b16fce3"
+  },
+  {
+    "source": "/tmp/astra-direct-mixed-headless-gate.json",
+    "destination": "evidence/astra-direct-mixed-headless-gate.json",
+    "bytes": 7625,
+    "sha256": "485b8119bcef4bde5a825644aa24ed391261bede38a0c10450ea2c4357bc8d6b"
+  },
+  {
+    "source": "/tmp/astra-direct-region-headless-gate.json",
+    "destination": "evidence/astra-direct-region-headless-gate.json",
+    "bytes": 2716,
+    "sha256": "791539bbc1e8ab4e10518666d2d3afb2fbcf42f2d79fb17471e782abf501da8c"
+  },
+  {
+    "source": "/tmp/astra-notdirty-gate-decision.json",
+    "destination": "evidence/astra-notdirty-gate-decision.json",
+    "bytes": 4923,
+    "sha256": "4ce911d04434aeeaeba8e8fd96141a46185c4ab346ff87e221fe2d9d140e9343"
+  },
+  {
+    "source": "/tmp/astra-direct-flags-gate-closure.json",
+    "destination": "evidence/astra-direct-flags-gate-closure.json",
+    "bytes": 3598,
+    "sha256": "5a81b0b17c6d1d05f5c06b98e075784469c77e4abd4feed93d5c7fe0edbe2fec"
+  },
+  {
+    "source": "/tmp/astra-lock-detail-1-analysis.json",
+    "destination": "evidence/astra-lock-detail-1-analysis.json",
+    "bytes": 5091,
+    "sha256": "f94c69f886c80b1a708681eea56a68bfd1f249dd98210158ab825d752c7bc0a5"
+  },
+  {
+    "source": "/tmp/astra-lock-holder-analysis-1.json",
+    "destination": "evidence/astra-lock-holder-analysis-1.json",
+    "bytes": 7035,
+    "sha256": "23cea701111861b89f7c2a265a636a48ce43ae333add239522bc2c60cee03712"
+  },
+  {
+    "source": "/tmp/astra-debug-deadline-abba.json",
+    "destination": "evidence/astra-debug-deadline-abba.json",
+    "bytes": 2553,
+    "sha256": "3002be1ff54283ab9915320dc05e50c24e8e605ec2bc3d70000524b64625bfd4"
+  },
+  {
+    "source": "/tmp/astra-sat16-perf14-pairs.json",
+    "destination": "evidence/astra-sat16-perf14-pairs.json",
+    "bytes": 1796,
+    "sha256": "f3374e905f2f201d0a52a1000d98c184a0d09dd0c341453bfd5c9fb24efba70b"
+  },
+  {
+    "source": "/tmp/astra-sat16-admission-sync.json",
+    "destination": "evidence/astra-sat16-admission-sync.json",
+    "bytes": 955,
+    "sha256": "9c7f0955c92059a56f44e0e5e98559cb71425ef35dcbb5940832d72e4a470379"
+  },
+  {
+    "source": "/tmp/astra-pit-transition-audit.json",
+    "destination": "evidence/astra-pit-transition-audit.json",
+    "bytes": 723,
+    "sha256": "5d74fbdcc7c23b3a8ffac0c0d47b6d738acf04364a2839c04ff348a9c5f0e57f"
+  },
+  {
+    "source": "/tmp/astra-prune-20261005.json",
+    "destination": "evidence/astra-prune-20261005.json",
+    "bytes": 6889,
+    "sha256": "66cf83d13f8d0ca840df2c74f642e0068c77898c06c8e062a175fe99039b2ec9"
+  },
+  {
+    "source": "/tmp/astra-notdirty-miss-audit.json",
+    "destination": "evidence/astra-notdirty-miss-audit.json",
+    "bytes": 3581,
+    "sha256": "a19533a6d20d1e2498f6c92743dd59d700e61d2e53420a05627ef9d7a67dd112"
+  },
+  {
+    "source": "/tmp/astra-direct-flags-freeze-audit.json",
+    "destination": "evidence/astra-direct-flags-freeze-audit.json",
+    "bytes": 6541,
+    "sha256": "b8aaf4d1fd83d1b882eb4d444d82af9f49733844610622a51409f50d5dc5775f"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-1-0.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-1-0.json",
+    "bytes": 91943,
+    "sha256": "10a1cadccb8203da4e09b21549a8be33cb94bab9c011689f5b93fda20928bf1c"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-1-1.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-1-1.json",
+    "bytes": 91955,
+    "sha256": "1f74815806927da30e3099892adefcb75d08ab7efc3887a9fc450e2ea70b3792"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-1-outcome.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-1-outcome.json",
+    "bytes": 442,
+    "sha256": "b59a7d09a0af6cc9b94de6c07973511eed328d17ba7d6fead8184e23475770d3"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-1-rss.jsonl",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-1-rss.jsonl",
+    "bytes": 11340,
+    "sha256": "b9500670897ea9f3f0c97912f71265bba175849c1ecb6305eca1ab4d146d82c2"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-2-0.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-2-0.json",
+    "bytes": 91947,
+    "sha256": "f9c5b1fce76225d11d2d2f4f46e65035bf37645ee957bf043afb05c5c5bd0ad1"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-2-1.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-2-1.json",
+    "bytes": 91941,
+    "sha256": "3134f45d6c14a292ed3366e89b3cec6628049c7e36ab18c8108f5a7d19637ac2"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-2-outcome.json",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-2-outcome.json",
+    "bytes": 443,
+    "sha256": "bec363576804e59330a2435cba72ae438cf5f5295c6d617906293a77798ec00b"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-sat16-perf14-2-rss.jsonl",
+    "destination": "evidence/astra-lock-pair-sat16-perf14-2-rss.jsonl",
+    "bytes": 11336,
+    "sha256": "c252301f8c4493d9affc8f5aedefa52d40fc75709c05c9ada2386fcd5505b557"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a1-outcome.json",
+    "destination": "evidence/astra-lock-deadline-a1-outcome.json",
+    "bytes": 67,
+    "sha256": "4164c83431280446293b1931eafb9c643d75e73b3393771fd608996aba552cc4"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a1-rss.jsonl",
+    "destination": "evidence/astra-lock-deadline-a1-rss.jsonl",
+    "bytes": 13981,
+    "sha256": "94d759e5cd335b0c9732119ce7254d3015a5158f2d72bc3e2e195b38cefabd50"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a1.json",
+    "destination": "evidence/astra-lock-deadline-a1.json",
+    "bytes": 91998,
+    "sha256": "de61a16a00ed3eb1fa2e4d5fc2466f28b6a5b3f65e2762d0b60fd88633f237dc"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a2-outcome.json",
+    "destination": "evidence/astra-lock-deadline-a2-outcome.json",
+    "bytes": 67,
+    "sha256": "1035b63d155eebd78fdc638cef5ce0ac62fd4fc4f41a95460654a4c75e073ed3"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a2-rss.jsonl",
+    "destination": "evidence/astra-lock-deadline-a2-rss.jsonl",
+    "bytes": 14089,
+    "sha256": "c9246a22e6492b34a111f364482068bf1486f62838481a48e478406774c74167"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-a2.json",
+    "destination": "evidence/astra-lock-deadline-a2.json",
+    "bytes": 92002,
+    "sha256": "f3be3ec2fb8179567e643747639306304461c5dd0d23cad1418a42cf7c53b758"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b1-outcome.json",
+    "destination": "evidence/astra-lock-deadline-b1-outcome.json",
+    "bytes": 67,
+    "sha256": "b0898bc9ed959245b11107e1e0962e847a118b5247d864c5be102ea8867f7673"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b1-rss.jsonl",
+    "destination": "evidence/astra-lock-deadline-b1-rss.jsonl",
+    "bytes": 14085,
+    "sha256": "374cd872f2193a5609e13d9ab85f10ea0ca9569263b4b592dfd85288a7ddd143"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b1.json",
+    "destination": "evidence/astra-lock-deadline-b1.json",
+    "bytes": 92011,
+    "sha256": "cfeb7317da0af4cce3e107a9e2fca33ba6d1f29dc43f2d4e8c669d150ebb746d"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b2-outcome.json",
+    "destination": "evidence/astra-lock-deadline-b2-outcome.json",
+    "bytes": 67,
+    "sha256": "5086d909980799f7067854b13f8f8bfe8f36a3c44704ead4db9403ebaa3618f0"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b2-rss.jsonl",
+    "destination": "evidence/astra-lock-deadline-b2-rss.jsonl",
+    "bytes": 14087,
+    "sha256": "4b916e6600c495941a1085671a06befa05f78900405a59ce8d7b838fc5e4d839"
+  },
+  {
+    "source": "/tmp/astra-lock-deadline-b2.json",
+    "destination": "evidence/astra-lock-deadline-b2.json",
+    "bytes": 92015,
+    "sha256": "9abf7f6d3521ea0383309e458009d190c737603990ca8ac9533eb29d624735dc"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a1-outcome.json",
+    "destination": "evidence/astra-lock-perf13-a1-outcome.json",
+    "bytes": 67,
+    "sha256": "ac2094ac446c206db8927f23b5e9acf9fe52eff3e39881a8ac528e1b0cbb9617"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a1-rss.jsonl",
+    "destination": "evidence/astra-lock-perf13-a1-rss.jsonl",
+    "bytes": 14083,
+    "sha256": "1e451e13bbffde858828bae8bd42471be5fef4de735931c2a34c0a30cce04b8c"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a1.json",
+    "destination": "evidence/astra-lock-perf13-a1.json",
+    "bytes": 93379,
+    "sha256": "f496cea4b992bd252920efbbb89bcec582eec1e325a3898fb7dcc7271b1f90aa"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a2-outcome.json",
+    "destination": "evidence/astra-lock-perf13-a2-outcome.json",
+    "bytes": 67,
+    "sha256": "95e01e0279d3d6130e5172e927fd515fa23dc3d5fc2c31af024d3062cb97f57a"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a2-rss.jsonl",
+    "destination": "evidence/astra-lock-perf13-a2-rss.jsonl",
+    "bytes": 14070,
+    "sha256": "a12e03b11264bc8f89ebb8c5b690fe6d5bf67bc0b1b30576d4d9036c1b75820e"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-a2.json",
+    "destination": "evidence/astra-lock-perf13-a2.json",
+    "bytes": 93375,
+    "sha256": "98a326b2bae2ed9a2ee2d1080a27f3a3e82f02d705225035f75502edcfd1a3fe"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b1-outcome.json",
+    "destination": "evidence/astra-lock-perf13-b1-outcome.json",
+    "bytes": 67,
+    "sha256": "9aa873828ade9ae792dd5227f6fd28a52a34e7c8b516ae2d6e43d7b67fa156a8"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b1-rss.jsonl",
+    "destination": "evidence/astra-lock-perf13-b1-rss.jsonl",
+    "bytes": 14035,
+    "sha256": "e279bfe4c6d3f528b1b99930f438e077b8e4c6f5238c83ad738e1d05878827ba"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b1.json",
+    "destination": "evidence/astra-lock-perf13-b1.json",
+    "bytes": 93380,
+    "sha256": "3f3b09cc1735e8aa5d08a269205ff792c88b3c1824653e8cd06b00e76dbba412"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b2-outcome.json",
+    "destination": "evidence/astra-lock-perf13-b2-outcome.json",
+    "bytes": 66,
+    "sha256": "7cc2dd89cbf0cf18cda6da9c10626ad6247ddf52f02daaf571d5300c8ac2a544"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b2-rss.jsonl",
+    "destination": "evidence/astra-lock-perf13-b2-rss.jsonl",
+    "bytes": 13923,
+    "sha256": "153d96361a11dc71b0882b272a9c8f61ddcf4d98294a1ff42a666161f3e35282"
+  },
+  {
+    "source": "/tmp/astra-lock-perf13-b2.json",
+    "destination": "evidence/astra-lock-perf13-b2.json",
+    "bytes": 93384,
+    "sha256": "f6283443d5c63b4c56b747e54746315809daa03f4154423402839e6448105b3a"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a1-outcome.json",
+    "destination": "evidence/astra-lock-abba-a1-outcome.json",
+    "bytes": 67,
+    "sha256": "002afedf4cb1312f54345607b3aa0d778f3b6db870e31e880f3f8cee20a94fb6"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a1-rss.jsonl",
+    "destination": "evidence/astra-lock-abba-a1-rss.jsonl",
+    "bytes": 14330,
+    "sha256": "921652903a2751e11188f50493db77ca55b2d236817bf5b400b74bfaa9a0c305"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a1.json",
+    "destination": "evidence/astra-lock-abba-a1.json",
+    "bytes": 93386,
+    "sha256": "9e1b10c294a09dbee43f1e64455a20bcc7b7d9ad9841335ab95fb2f4c300202e"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a2-outcome.json",
+    "destination": "evidence/astra-lock-abba-a2-outcome.json",
+    "bytes": 67,
+    "sha256": "0da8bf5b1970b7ce72d7a6355a25fbe51963ce5c4d941cca5532de4a533af0da"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a2-rss.jsonl",
+    "destination": "evidence/astra-lock-abba-a2-rss.jsonl",
+    "bytes": 14096,
+    "sha256": "be2619a05c5244818995fb44b4425a317aac59d9244fca0e55b084d2efe4ae97"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-a2.json",
+    "destination": "evidence/astra-lock-abba-a2.json",
+    "bytes": 93379,
+    "sha256": "0957408234dc9f7a99ef8c7d017da5f9ad9ec6fc526cff9644760c24aed6ae6b"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b1-outcome.json",
+    "destination": "evidence/astra-lock-abba-b1-outcome.json",
+    "bytes": 67,
+    "sha256": "a12b9c647e8cbdd8bbb2d7915487852592004acc5953f3f97a6b25fb4562389e"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b1-rss.jsonl",
+    "destination": "evidence/astra-lock-abba-b1-rss.jsonl",
+    "bytes": 14094,
+    "sha256": "a5aa6e9c5e7770c7126a6e0a8ce1bb70cc5c20402f986a9397b0e819edc385c1"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b1.json",
+    "destination": "evidence/astra-lock-abba-b1.json",
+    "bytes": 93383,
+    "sha256": "9869e5a4c9630154a59d79f20ea8c30f5e746b68df8bce491fe9828d74f2b827"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b2-outcome.json",
+    "destination": "evidence/astra-lock-abba-b2-outcome.json",
+    "bytes": 67,
+    "sha256": "4d04bd6244cc1cbfc81ddacaf4348618a7688e5fa2a731586700ea50a921f828"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b2-rss.jsonl",
+    "destination": "evidence/astra-lock-abba-b2-rss.jsonl",
+    "bytes": 14018,
+    "sha256": "3fa97b352c53c04c9c17831ee8da65c41c1b01c0e071226cebc41f8fab295db3"
+  },
+  {
+    "source": "/tmp/astra-lock-abba-b2.json",
+    "destination": "evidence/astra-lock-abba-b2.json",
+    "bytes": 93388,
+    "sha256": "0d1a4d8121abd48f65f405b76056ef790b40ccd9308ae0833599bf0994fdf411"
+  },
+  {
+    "source": "/tmp/astra-lock-census-1.json",
+    "destination": "evidence/astra-lock-census-1.json",
+    "bytes": 165308,
+    "sha256": "4eec8030a5c140e3ba43e35cbaf8ea7a8002890250f3ab17ff572ff2d5dc2d58"
+  },
+  {
+    "source": "/tmp/astra-lock-holder-1.json",
+    "destination": "evidence/astra-lock-holder-1.json",
+    "bytes": 246643,
+    "sha256": "01394c6b670c180864ccf05e9df3faeace3d5fd7a06dcbf8ebbff6928fe85bde"
+  },
+  {
+    "source": "/tmp/astra-lock-detail-1.json",
+    "destination": "evidence/astra-lock-detail-1.json",
+    "bytes": 441421,
+    "sha256": "4621c6523b55f7d4238381982c3b1b0af1b8cb1f8f8743710e9d6f096ceecce3"
+  },
+  {
+    "source": "/tmp/astra-gvec-perf14-tests.log",
+    "destination": "evidence/astra-gvec-perf14-tests.log",
+    "bytes": 1349,
+    "sha256": "f0cf116b12671aaa6c85bd5371c22b9473ed20f12d950dcdbad742c6e925b0da"
+  },
+  {
+    "source": "/tmp/astra-gvec-perf14-build.log",
+    "destination": "evidence/astra-gvec-perf14-build.log",
+    "bytes": 27728,
+    "sha256": "657a57f41800276e7be373efd9307d791529f69bbf2ca520ed7b20dc934df00a"
+  },
+  {
+    "source": "/tmp/astra-gvec-perf14-postopt.log",
+    "destination": "evidence/astra-gvec-perf14-postopt.log",
+    "bytes": 88,
+    "sha256": "3db941aad9a6142a8039a45f99cb643b3e396e855ee41bb75c9ec14fb7518f2a"
+  },
+  {
+    "source": "/tmp/astra-gvec-commit-checkpatch.log",
+    "destination": "evidence/astra-gvec-commit-checkpatch.log",
+    "bytes": 382,
+    "sha256": "9fafa1d6d75a7b683c3a9c78b9a78ffee0c313170dbf38b7e63a1da7842d74b9"
+  },
+  {
+    "source": "/tmp/astra-deadline-clean-tests.log",
+    "destination": "evidence/astra-deadline-clean-tests.log",
+    "bytes": 208,
+    "sha256": "68dd9395de4e1ffc3869386214a45c497e5ea443d92156e6f8e258a593073d84"
+  },
+  {
+    "source": "/tmp/astra-deadline-clean-build.log",
+    "destination": "evidence/astra-deadline-clean-build.log",
+    "bytes": 28344,
+    "sha256": "478ba75c7fcc92fb67041b972a04126bc835f29d2476ec9139d504a1c67e722d"
+  },
+  {
+    "source": "/tmp/astra-deadline-clean-postopt.log",
+    "destination": "evidence/astra-deadline-clean-postopt.log",
+    "bytes": 88,
+    "sha256": "fb4467d802a630276f8a1d38f837ddff9adf837221da849326cfb5fc1ed18f18"
+  },
+  {
+    "source": "/tmp/astra-debug-deadline-tests.log",
+    "destination": "evidence/astra-debug-deadline-tests.log",
+    "bytes": 434,
+    "sha256": "e9e798a3c23e396cb5ef3a4a04efd615d3f62c8f342cbbc1169e2f2f2c69f7e0"
+  },
+  {
+    "source": "/tmp/astra-lock-holder-tests.log",
+    "destination": "evidence/astra-lock-holder-tests.log",
+    "bytes": 222,
+    "sha256": "777bcbaf2b66d8c347fc6262024fe46e253b9fe56625d0e028d423f604d2ccab"
+  },
+  {
+    "source": "/tmp/astra-lock-detail-tests.log",
+    "destination": "evidence/astra-lock-detail-tests.log",
+    "bytes": 226,
+    "sha256": "4dd35f29ee1de887db93581be9dbbbc8176ec762eed7f683ea23e4d1062521ee"
+  },
+  {
+    "source": "/tmp/astra-bql-spin-perf13-build.log",
+    "destination": "evidence/astra-bql-spin-perf13-build.log",
+    "bytes": 105118,
+    "sha256": "841eb5eaad950a04c3edcc38f5a95aa7ac42a868f744badd0080de98900d7f4e"
+  },
+  {
+    "source": "/tmp/astra-live-save-fixture-check.log",
+    "destination": "evidence/astra-live-save-fixture-check.log",
+    "bytes": 566,
+    "sha256": "2ddaf8a86ba9acdfa02c9cd993d8fbb8321de8a2c27006cad196d5f0e1e9eb4d"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/native-self-analysis.json",
+    "destination": "evidence/native-perf-2/native-self-analysis.json",
+    "bytes": 2388231,
+    "sha256": "c488c7de67f74092355685d21d2d10c6f4cd65a569cea8d91c320e25834a89ba"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/native-self-analysis.txt",
+    "destination": "evidence/native-perf-2/native-self-analysis.txt",
+    "bytes": 31766,
+    "sha256": "66603b1a228a463670e0ab196a072a69f6a55ac345cb833e7ad4d9ab4dad86d2"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/native-groups.json",
+    "destination": "evidence/native-perf-2/native-groups.json",
+    "bytes": 8828,
+    "sha256": "b58ad851ad8c19a331015f359f81a8757dd43095679ce0c6c1d1d9d6732b4c4c"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/target.json",
+    "destination": "evidence/native-perf-2/target.json",
+    "bytes": 166,
+    "sha256": "63da3296c4e0365c1d5bb69f96a22998ff4be54c75606a1ce301f2c5f1faa75e"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/record.log",
+    "destination": "evidence/native-perf-2/record.log",
+    "bytes": 148,
+    "sha256": "47cb53bee7e73aa03a08597a5afc6aa676e9af567a4834c0fb804efbdea7c363"
+  },
+  {
+    "source": "/tmp/astra-native-perf-2/clocksource.txt",
+    "destination": "evidence/native-perf-2/clocksource.txt",
+    "bytes": 5,
+    "sha256": "e15b84ebd189bbf739a480f5ba65c89fe2c7cdb592ca99df80967ca790641c0c"
+  },
+  {
+    "source": "/tmp/astra-perf-native-report.py",
+    "destination": "tools/astra-perf-native-report.py",
+    "bytes": 6595,
+    "sha256": "c7aa8c8a95a68bcf921de7a7660b3e9d9ce46de16596104b160932d2e5bdd9c8"
+  },
+  {
+    "source": "/tmp/astra-native-group-report.py",
+    "destination": "tools/astra-native-group-report.py",
+    "bytes": 3090,
+    "sha256": "2b79d93a4ece4884a300740d2994b5fc8fb9c30462bad41b644cd7837ad3c764"
+  },
+  {
+    "source": "/tmp/astra-bql-detail-report.py",
+    "destination": "tools/astra-bql-detail-report.py",
+    "bytes": 3127,
+    "sha256": "c5c4a2dff552a344f16f1fa8a31197db132811ca469f2ee916559a562a0aa315"
+  },
+  {
+    "source": "/tmp/astra-prof-symbols.cjs",
+    "destination": "tools/astra-prof-symbols.cjs",
+    "bytes": 356,
+    "sha256": "d53791aad46f1694255f2c52dd18d53742e0f45731a1c6aa9724bd2dbe3f425c"
+  },
+  {
+    "source": "/tmp/astra-native-nm.py",
+    "destination": "tools/astra-native-nm.py",
+    "bytes": 489,
+    "sha256": "dda312231f1a9654b78478ffb1402650e5e6a36dd87959968b8195b688ed1694"
+  },
+  {
+    "source": "/tmp/astra-native-tag.cjs",
+    "destination": "tools/astra-native-tag.cjs",
+    "bytes": 320,
+    "sha256": "b3b24cba3d9706622852d9a4371324090849158bafd46059f126f78c4e5d111a"
+  },
+  {
+    "source": "/tmp/astra-v8tag.cc",
+    "destination": "tools/astra-v8tag.cc",
+    "bytes": 469,
+    "sha256": "58619174f7cb1104782d77466ca99521ca46fc8bf2da60a7b216192e94811a0e"
+  },
+  {
+    "source": "/tmp/astra-native-perf-run.py",
+    "destination": "tools/astra-native-perf-run.py",
+    "bytes": 6728,
+    "sha256": "cddf24418863073b605fb86e6396f233af44ec8a5663a41d84a6954377ce8104"
+  },
+  {
+    "source": "/tmp/astra-lock-run.py",
+    "destination": "tools/astra-lock-run.py",
+    "bytes": 4221,
+    "sha256": "52fa4d6880d7d39fc476ad0bef2e4a8283c5c1894327c5f922f385364ec36ab2"
+  },
+  {
+    "source": "/tmp/astra-lock-pair-run.py",
+    "destination": "tools/astra-lock-pair-run.py",
+    "bytes": 4449,
+    "sha256": "bb372e47b6f61e733bc6699e8fd8efee4d08ade21fe8df4777183ab49fa71a2a"
+  },
+  {
+    "source": "/tmp/astra-lock-bench.mjs",
+    "destination": "tools/astra-lock-bench.mjs",
+    "bytes": 19614,
+    "sha256": "826a893efe91e9a4187b91180e3ae192138538f186fb26bf14cc1bb66999f172"
+  },
+  {
+    "source": "/tmp/astra-gvec-tests.sh",
+    "destination": "tools/astra-gvec-tests.sh",
+    "bytes": 961,
+    "sha256": "df47ac7d0bf62af3bb7296dcdbeca4ea14731d6fe1a8460b8a35a0516850f703"
+  },
+  {
+    "source": "/tmp/astra-gvec-build.sh",
+    "destination": "tools/astra-gvec-build.sh",
+    "bytes": 742,
+    "sha256": "a935923c5dafb05d840fce21b32c2fa6bb583ea9e42a343bbbf154c624fdb9b7"
+  },
+  {
+    "source": "/tmp/astra-deadline-tests.sh",
+    "destination": "tools/astra-deadline-tests.sh",
+    "bytes": 663,
+    "sha256": "f5d1eb4eb422e7da236b26c76e0964a69afaf41f1c414ff27de82efd28e83625"
+  },
+  {
+    "source": "/tmp/astra-runtime-guard.py",
+    "destination": "tools/astra-runtime-guard.py",
+    "bytes": 1269,
+    "sha256": "46e85efcda49ac29dc538fc3c49032b75ed1e5a5a8020d351033307fd9ba81c1"
+  },
+  {
+    "source": "/tmp/astra-unit-command.py",
+    "destination": "tools/astra-unit-command.py",
+    "bytes": 1670,
+    "sha256": "49db79fa6d2aef35ba8d9da0296f725f49f98c7a7ab323bae6f4836a706c3271"
+  },
+  {
+    "source": "/tmp/astra-async-probe-parked.patch",
+    "destination": "parked/astra-async-probe-parked.patch",
+    "bytes": 18857,
+    "sha256": "d072431afebf893c7db120cd3de0068f92b04013081dc51751955ded4536feda"
+  },
+  {
+    "source": "/tmp/astra-notdirty-inline-parked.patch",
+    "destination": "parked/astra-notdirty-inline-parked.patch",
+    "bytes": 10193,
+    "sha256": "d924c9925f317b974bb1078e5b06e32dd8f34e5099f1f89e072ade720209e377"
+  },
+  {
+    "source": "/tmp/astra-notdirty-wip.patch",
+    "destination": "parked/astra-notdirty-wip.patch",
+    "bytes": 9217,
+    "sha256": "216425aebdd3cabef4fd9cf1fd4de8c394ace0677bb78822c887ef0e871313ed"
+  },
+  {
+    "source": "/tmp/astra-attribution-stash.patch",
+    "destination": "parked/astra-attribution-stash.patch",
+    "bytes": 13311,
+    "sha256": "7f7924325239da33e256b29ff76f7215465ffa6ab1006f2abbd7c4eae274b722"
+  },
+  {
+    "source": "/tmp/astra-full-attribution-wip.patch",
+    "destination": "parked/astra-full-attribution-wip.patch",
+    "bytes": 13339,
+    "sha256": "917ddd16659da4d120571d6bb46b4a28cd8c9c729ddf4f0dd667fa6dfdd16a85"
+  }
+]

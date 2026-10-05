@@ -1,0 +1,6 @@
+PASS: census probes/pairing, nested exclusive held-time scopes, 1000ns release exclusion, detail policy/overflow
+PASS: 3456 scheduling/restore/replay/tripwire cases
+PASS: 3456 scheduling/restore/replay/tripwire cases
+PASS: census probes/pairing, nested exclusive held-time scopes, 1000ns release exclusion, detail policy/overflow
+PASS: 3456 scheduling/restore/replay/tripwire cases
+PASS: 3456 scheduling/restore/replay/tripwire cases

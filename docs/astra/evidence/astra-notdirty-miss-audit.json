@@ -1,0 +1,23 @@
+{
+  "decision": "Retain default on after user-reported perf-12 same-build lean confirmation: GR+1.8/+1.9, validSC neutral, R6 pairs neutral/p10 preserved. See /tmp/astra-notdirty-gate-decision.json. SC default2 menu/video-only excluded, replacement pair3 pending. Retain original on3 anomalies and do not credit SC6 outlier as a measured gain. Default changed/deployed by coordinator, not ASTRA.",
+  "source": {
+    "leaf": "accel/tcg/cputlb.c:helper_wasm_notdirty",
+    "bitmap": "accel/tcg/tb-maint.c:tb_wasm_smc_bitmap_miss",
+    "emitter": "tcg/wasm32/tcg-target.c.inc:wasm_notdirty_inline and wasm_qemu_st",
+    "miss_counter": "n_notdirty_inline_miss counts all C-leaf declines, including policy/precondition, changed TLB tag, slow flags, CODE dirty, missing page, busy trylock, absent bitmap/translated blocks and real code overlap. It is not specifically contention or code overlap.",
+    "uncounted_bypass": "Emitted exact-tag/alignment prechecks can bypass the leaf. Those return zero to the original helper without incrementing n_notdirty_inline_miss.",
+    "bounded_work": "Page trylock does not wait; no bitmap creation or code invalidation in leaf. Aligned1/2/4-byte admission tests only a bounded bitmap range. Original fallback remains authoritative.",
+    "success_cost": "Every successful admission also takes the page trylock, checks the bitmap and marks the unchanged dirty clients. Low decline counts do NOT rule out overall lock/bitmap/probe cost.",
+    "generated_code": "Opt-in adds a conditional probe/import in store-TLB-miss arms. Ordinary RAM-hit path instructions and the existing one resumable block per store remain unchanged, but module size/CFG/register allocation/native tiering may change. This is a hypothesis, not measured native attribution."
+  },
+  "existing_lean_reports": [
+    {"file":"/root/src/xemu-wasm/uploads/20261004-102008-hot.json", "t":91.1,"all_miss_max":62540},
+    {"file":"/root/src/xemu-wasm/uploads/20261004-102040-hot.json", "t":123.1,"last60_miss_avg":52.8,"last60_miss_max":69.1,"scope":"Includes much of SC t90-138 sustained slow window; global peak predates this window."},
+    {"file":"/root/src/xemu-wasm/uploads/20261004-103603-hot.json", "t":99,"all_miss_max":61471,"last60_miss_max":136},
+    {"file":"/root/src/xemu-wasm/uploads/20261004-103649-hot.json", "t":145,"last60_miss_avg":38.5,"last60_miss_max":81,"scope":"Includes R6 slow t124-145."},
+    {"file":"/root/src/xemu-wasm/uploads/20261004-103751-hot.json", "t":206.1,"last60_miss_avg":31.1,"last60_miss_max":39,"scope":"Includes end of R6 slow window t146-149."}
+  ],
+  "tooling": "Coordinator reports page-only fix committed/live: timeline and DIP_KEYS now expose inline/decline, slow-store/notdirty, bitmap-miss, invalidation, TB generation, JIT compilation/time and eviction counters under lean settings. Earlier omission was a fixed whitelist, not TB_STATS gating. ASTRA did not edit page.",
+  "repeat_matrix": "SC on5/off5 both TB_STATS=1: matched diagnostic pair only. R6 on5 TB_STATS=1: unmatched, exclude from lean comparison. Primary lean comparisons: R6 on5b/off5, SC on6/off6, R6 on6/off6. Check actual build/env and final completion before interpreting results.",
+  "next": "Correlate total leaf calls (admissions+declines), slow fallback, compile/region activity and FPS on matched routes. If needed use existing phase sampling for probe time; no per-store clocks, unsafe bitmap reads, weakened live checks, guessed contention cooldown or game-specific exception. Diagnostic TB_STATS pairs do not replace lean-default performance results."
+}

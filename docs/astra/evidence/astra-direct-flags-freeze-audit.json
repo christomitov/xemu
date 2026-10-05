@@ -1,0 +1,253 @@
+{
+  "build": "d296c69c69",
+  "candidate": "c9344c8b09490bc0310266391f3449179261e6a8",
+  "env": {
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "cores": 10,
+    "memory_gb": 16,
+    "isolated": true,
+    "screen": "1800x1169@2",
+    "url_flags": "?env=XEMU_WASM_DIRECT_X86=2,XEMU_WASM_DIRECT_FLAGS=1",
+    "page_loaded": "2026-10-04T09:29:45.847Z",
+    "gpu": "apple / metal-3",
+    "build": "d296c69c69",
+    "buildFromFile": true
+  },
+  "freeze_reports": [
+    "20261004-053235-hot.json",
+    "20261004-053341-hot.json"
+  ],
+  "freeze_interval_s": 66.1,
+  "hardirq_delivery_entry_deltas": {
+    "irq:30": {
+      "delta": 66050,
+      "per_s": 999.2435703479578
+    },
+    "irq:31": {
+      "delta": 8260,
+      "per_s": 124.96217851739789
+    },
+    "irq:33": {
+      "delta": 3961,
+      "per_s": 59.92435703479577
+    }
+  },
+  "hardirq_source": "target/i386/tcg/seg_helper.c:do_interrupt_x86_hardirq, counter before do_interrupt_all; does not prove ISR completion",
+  "onset_timeline": [
+    {
+      "t": 63.5,
+      "n_apu_frame": 1504,
+      "n_flip": 60,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 0,
+      "n_draw": 660
+    },
+    {
+      "t": 64.5,
+      "n_apu_frame": 699,
+      "n_flip": 27,
+      "n_present": 60,
+      "n_pit_tick": 999,
+      "n_vblank": 60,
+      "n_disk_read": 114,
+      "n_draw": 285
+    },
+    {
+      "t": 65.5,
+      "n_apu_frame": 0,
+      "n_flip": 0,
+      "n_present": 59,
+      "n_pit_tick": 1001,
+      "n_vblank": 60,
+      "n_disk_read": 99,
+      "n_draw": 0
+    },
+    {
+      "t": 66.5,
+      "n_apu_frame": 0,
+      "n_flip": 65,
+      "n_present": 59,
+      "n_pit_tick": 1000,
+      "n_vblank": 59,
+      "n_disk_read": 106,
+      "n_draw": 0
+    },
+    {
+      "t": 67.5,
+      "n_apu_frame": 0,
+      "n_flip": 90,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 42,
+      "n_draw": 0
+    },
+    {
+      "t": 68.5,
+      "n_apu_frame": 0,
+      "n_flip": 100,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 27,
+      "n_draw": 0
+    },
+    {
+      "t": 69.5,
+      "n_apu_frame": 0,
+      "n_flip": 99.9,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 31,
+      "n_draw": 0
+    },
+    {
+      "t": 70.5,
+      "n_apu_frame": 0,
+      "n_flip": 99,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 38,
+      "n_draw": 0
+    },
+    {
+      "t": 71.5,
+      "n_apu_frame": 0,
+      "n_flip": 86,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 66,
+      "n_draw": 0
+    },
+    {
+      "t": 72.5,
+      "n_apu_frame": 0,
+      "n_flip": 104,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 16,
+      "n_draw": 0
+    },
+    {
+      "t": 73.5,
+      "n_apu_frame": 0,
+      "n_flip": 98,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 2,
+      "n_draw": 0
+    },
+    {
+      "t": 74.5,
+      "n_apu_frame": 0,
+      "n_flip": 98,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 1,
+      "n_draw": 0
+    },
+    {
+      "t": 75.5,
+      "n_apu_frame": 817,
+      "n_flip": 77,
+      "n_present": 44,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 106,
+      "n_draw": 0
+    },
+    {
+      "t": 76.5,
+      "n_apu_frame": 1504,
+      "n_flip": 112,
+      "n_present": 60,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 62,
+      "n_draw": 0
+    },
+    {
+      "t": 77.5,
+      "n_apu_frame": 1496,
+      "n_flip": 111,
+      "n_present": 60,
+      "n_pit_tick": 999,
+      "n_vblank": 60,
+      "n_disk_read": 62,
+      "n_draw": 0
+    },
+    {
+      "t": 78.5,
+      "n_apu_frame": 561,
+      "n_flip": 42,
+      "n_present": 24,
+      "n_pit_tick": 1001,
+      "n_vblank": 60,
+      "n_disk_read": 33,
+      "n_draw": 1
+    },
+    {
+      "t": 79.5,
+      "n_apu_frame": 0,
+      "n_flip": 0,
+      "n_present": 0,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 0,
+      "n_draw": 0
+    },
+    {
+      "t": 80.5,
+      "n_apu_frame": 0,
+      "n_flip": 0,
+      "n_present": 0,
+      "n_pit_tick": 1000,
+      "n_vblank": 60,
+      "n_disk_read": 0,
+      "n_draw": 0
+    }
+  ],
+  "guard_fixture": {
+    "cases": 42,
+    "result": "PASS",
+    "modules": [
+      "43dbfce",
+      "43dbfc2"
+    ],
+    "body_bytes": "unchanged captured Wasm",
+    "descriptors": "mock CPU/context and successor slots (self-loop identity forced for contract test)",
+    "helpers": "actual source CC and verifier compiled to shared-memory Wasm with test-only request injection",
+    "paths": [
+      "entry negative before shadow",
+      "both original unlinked exits",
+      "both foreign successor dispatcher returns",
+      "self-loop request after verifier",
+      "request during shadow flag evaluation",
+      "cross-worker request during loop"
+    ],
+    "artifacts": [
+      "/tmp/astra-freeze-guard.py",
+      "/tmp/astra-freeze-guard.cjs",
+      "/tmp/astra-freeze-guard.log"
+    ],
+    "limitations": "Not full emulator, IRQ-handler execution, guest-timing reproduction, or performance evidence"
+  },
+  "source_audit": {
+    "placement": "original gen_tb_start IRQ guard before direct marker; captured A/B bodies retain the guard",
+    "mode2": "scratch-only shadow, original TCG body once, no active direct exit inserted",
+    "io": "private emitter skips xwd_io in verify mode; original TCG updates remain; verifier only reads can_do_io",
+    "icount": "CF_USE_ICOUNT/COUNT_MASK/NOIRQ excluded; verifier does not touch exit_request/icount",
+    "loop": "self-edge resets LBLOCK and branches to top before guard; nonself direct edges retain original dispatcher path; opaque modules excluded from legacy region fusion",
+    "trysleep": "unchanged dispatcher maintenance; not a general periodic yield, sleeps only at instance cap",
+    "n_cpu_exit": "counts longjmp recovery at cpu_exec_setjmp, not every IRQ/normal CPU return"
+  },
+  "status": "CLOSED as benign SC title idle; FLAGS mode2 gate passed. Matched plain/stage controls show guest-disabled APU and Start recovery. See /tmp/astra-direct-flags-gate-closure.json. Earlier investigation details above are historical; no IRQ/clock/yield workaround or emulator source change was needed."
+}
